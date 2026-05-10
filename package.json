@@ -2,7 +2,7 @@
   "name": "claude-orchestrator",
   "version": "0.1.0",
   "description": "Multi-agent orchestration CLI backed by ZooKeeper — register, assign tasks, communicate, share context",
-  "repository": "github:adamancyzhang/ai-poc",
+  "repository": "github:adamancyzhang/claude-orchestrator-server",
   "license": "MIT",
   "bin": {
     "claude-orchestrator": "bin/claude-orchestrator"

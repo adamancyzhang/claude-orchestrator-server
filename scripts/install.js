@@ -18,7 +18,7 @@ const binaryName = `claude-orchestrator-${platform}-${arch}`;
 
 // Configurable via env var or package.json
 const repo =
-  process.env.ORCHESTRATOR_REPO || "adamancyzhang/ai-poc";
+  process.env.ORCHESTRATOR_REPO || "adamancyzhang/claude-orchestrator-server";
 const version =
   process.env.ORCHESTRATOR_VERSION || "v0.1.0";
 
