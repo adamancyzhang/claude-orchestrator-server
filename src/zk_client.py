@@ -1,9 +1,11 @@
 import json
 import logging
+import threading
+import time
 from typing import Optional
 
 from kazoo.client import KazooClient, KazooState
-from kazoo.exceptions import NoNodeError, NodeExistsError
+from kazoo.exceptions import NoNodeError, NodeExistsError, ConnectionLoss, SessionExpiredError
 
 logger = logging.getLogger(__name__)
 
@@ -21,33 +23,108 @@ class ZkClient:
     def __init__(self, hosts: str = "127.0.0.1:2181"):
         self.hosts = hosts
         self.client: Optional[KazooClient] = None
+        self._lock = threading.Lock()
+        self._connected = False
+        self._running = False
+        self._reconnecting = False
+
+    # ── Connection lifecycle ──
 
     def start(self):
-        self.client = KazooClient(hosts=self.hosts)
-        self.client.add_listener(self._state_listener)
-        self.client.start()
-        self._ensure_paths()
-        logger.info(f"Connected to ZooKeeper at {self.hosts}")
+        self._running = True
+        self._connect()
+
+    def _connect(self):
+        with self._lock:
+            old = self.client
+            if old:
+                # Detach listener BEFORE stopping to prevent LOST → reconnect cascade
+                try:
+                    old.remove_listener(self._state_listener)
+                except Exception:
+                    pass
+                try:
+                    old.stop()
+                    old.close()
+                except Exception:
+                    pass
+            self.client = KazooClient(hosts=self.hosts, timeout=30)
+            self.client.add_listener(self._state_listener)
+            self.client.start(timeout=30)
+            self._ensure_paths()
+            self._connected = True
+            logger.info(f"Connected to ZooKeeper at {self.hosts}")
 
     def _state_listener(self, state: KazooState):
-        if state == KazooState.LOST:
-            logger.warning("ZK session lost")
-        elif state == KazooState.SUSPENDED:
-            logger.warning("ZK session suspended")
+        if state == KazooState.SUSPENDED:
+            logger.warning("ZK session suspended — waiting for auto-reconnect")
+        elif state == KazooState.LOST:
+            logger.warning("ZK session LOST — will attempt reconnection")
+            self._connected = False
+            if self._running and not self._reconnecting:
+                self._reconnecting = True
+                t = threading.Thread(target=self._reconnect_loop, daemon=True)
+                t.start()
         elif state == KazooState.CONNECTED:
             logger.info("ZK connected")
+            self._connected = True
+
+    def _reconnect_loop(self):
+        try:
+            for attempt in range(10):
+                if not self._running:
+                    logger.info("ZK reconnection cancelled — server is shutting down")
+                    return
+                delay = min(2 ** attempt, 30)
+                logger.info(f"ZK reconnection attempt {attempt + 1}/10 (waiting {delay}s)...")
+                time.sleep(delay)
+                if not self._running:
+                    return
+                try:
+                    self._connect()
+                    logger.info("ZK reconnection successful")
+                    return
+                except Exception as e:
+                    logger.error(f"ZK reconnection attempt {attempt + 1} failed: {e}")
+            logger.critical("ZK reconnection FAILED after 10 attempts — server requires restart")
+        finally:
+            self._reconnecting = False
+
+    @property
+    def connected(self) -> bool:
+        return self._connected and self.client is not None and self.client.connected
+
+    def _with_retry(self, func, *args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (ConnectionLoss, SessionExpiredError) as e:
+            logger.warning(f"ZK operation failed: {e} — connection lost, retrying once")
+            if self._running:
+                try:
+                    self._connect()
+                    return func(*args, **kwargs)
+                except Exception as e2:
+                    raise ConnectionError(f"ZK operation failed after reconnect: {e2}") from e
+            raise ConnectionError(f"ZK connection lost: {e}") from e
+
+    def stop(self):
+        self._running = False
+        self._connected = False
+        if self.client:
+            try:
+                self.client.remove_listener(self._state_listener)
+            except Exception:
+                pass
+            self.client.stop()
+            self.client.close()
+            logger.info("ZK client stopped")
 
     def _ensure_paths(self):
         for path in [ROOT_PATH, INSTANCES_PATH, TASKS_PATH, TASKS_PENDING,
                      TASKS_CLAIMED, TASKS_COMPLETED, MESSAGES_PATH, CONTEXT_PATH]:
             self.client.ensure_path(path)
 
-    def stop(self):
-        if self.client:
-            self.client.stop()
-            self.client.close()
-
-    # -- Instance operations --
+    # ── Instance operations ──
 
     def register_instance(self, instance_id: str, data: dict):
         path = f"{INSTANCES_PATH}/{instance_id}"
@@ -84,14 +161,13 @@ class ZkClient:
         except NoNodeError:
             pass
 
-    # -- Task operations --
+    # ── Task operations ──
 
     def create_pending_task(self, data: dict) -> str:
         path_prefix = f"{TASKS_PENDING}/task-"
         path = self.client.create(path_prefix, json.dumps(data).encode(),
                                   sequence=True, makepath=True)
-        task_id = path.split("/")[-1]
-        return task_id
+        return path.split("/")[-1]
 
     def get_pending_task(self, task_id: str) -> Optional[dict]:
         path = f"{TASKS_PENDING}/{task_id}"
@@ -144,7 +220,7 @@ class ZkClient:
         except NoNodeError:
             return []
         results = []
-        for name in children:
+        for name in sorted(children):
             parts = name.split("-", 1)
             if len(parts) == 2:
                 data = self.get_claimed_task(parts[0], parts[1])
@@ -176,21 +252,20 @@ class ZkClient:
         except NoNodeError:
             return []
         results = []
-        for cid in children:
+        for cid in sorted(children):
             data = self.get_completed_task(cid)
             if data:
                 results.append(data)
         return results
 
-    # -- Message operations --
+    # ── Message operations ──
 
     def create_message(self, instance_id: str, data: dict) -> str:
         path_prefix = f"{MESSAGES_PATH}/{instance_id}/msg-"
         self.client.ensure_path(f"{MESSAGES_PATH}/{instance_id}")
         path = self.client.create(path_prefix, json.dumps(data).encode(),
                                   sequence=True)
-        msg_id = path.split("/")[-1]
-        return msg_id
+        return path.split("/")[-1]
 
     def get_message(self, instance_id: str, msg_id: str) -> Optional[dict]:
         path = f"{MESSAGES_PATH}/{instance_id}/{msg_id}"
@@ -223,7 +298,7 @@ class ZkClient:
         except NoNodeError:
             pass
 
-    # -- Context operations --
+    # ── Context operations ──
 
     def set_context(self, key: str, data: dict):
         path = f"{CONTEXT_PATH}/{key}"

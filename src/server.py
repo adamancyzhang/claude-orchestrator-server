@@ -1,5 +1,5 @@
+import atexit
 import logging
-from contextlib import asynccontextmanager
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -14,34 +14,52 @@ from .models import TaskPriority
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# -- Global state, initialized in lifespan --
+# -- Global state, initialized once at module load --
 zk = ZkClient(hosts="127.0.0.1:2181")
 registry = InstanceRegistry(zk)
 task_queue = TaskQueue(zk)
 message_router = MessageRouter(zk)
 context_store = ContextStore(zk)
 
+_zk_started = False
 
-@asynccontextmanager
-async def lifespan(server: FastMCP):
-    zk.start()
-    logger.info("ZooKeeper connected, server ready")
-    try:
-        yield
-    finally:
+
+def _ensure_zk():
+    global _zk_started
+    if not _zk_started:
+        zk.start()
+        _zk_started = True
+        atexit.register(_stop_zk)
+        logger.info("ZooKeeper connected, server ready")
+
+
+def _stop_zk():
+    global _zk_started
+    if _zk_started:
         zk.stop()
-        logger.info("ZooKeeper disconnected, server stopped")
+        _zk_started = False
 
 
-mcp = FastMCP("Claude MCP Server", lifespan=lifespan, host="127.0.0.1", port=3100)
+mcp = FastMCP("Claude MCP Server", host="127.0.0.1", port=3100)
 
 
 # ── Instance Registry tools ──
 
 @mcp.tool()
-async def register_instance(name: str, role: str = "general") -> str:
-    instance = registry.register(name=name, role=role)
-    return instance.model_dump_json(indent=2)
+async def server_status() -> str:
+    zk_ok = zk.connected
+    return f"Server: running\nZooKeeper: {'connected' if zk_ok else 'DISCONNECTED'}\nPort: 3100"
+
+
+@mcp.tool()
+async def register_instance(name: str, role: str = "general",
+                            instance_id: Optional[str] = None) -> str:
+    _ensure_zk()
+    if not zk.connected:
+        return "Error: ZooKeeper is not connected. Please wait for reconnection or restart the server."
+    instance = registry.register(name=name, role=role, instance_id=instance_id)
+    action = "re-registered" if instance_id and instance.id == instance_id else "registered"
+    return f"Instance {action}:\n" + instance.model_dump_json(indent=2)
 
 
 @mcp.tool()
@@ -165,6 +183,7 @@ async def get_context(key: str) -> str:
 
 def main():
     logger.info("Starting Claude MCP Server on 127.0.0.1:3100")
+    _ensure_zk()
     mcp.run(transport="streamable-http")
 
 

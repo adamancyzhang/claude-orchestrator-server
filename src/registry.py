@@ -13,9 +13,21 @@ class InstanceRegistry:
     def __init__(self, zk: ZkClient):
         self.zk = zk
 
-    def register(self, name: str, role: str = "general") -> Instance:
+    def register(self, name: str, role: str = "general",
+                 instance_id: Optional[str] = None) -> Instance:
+        if instance_id:
+            existing = self.zk.get_instance(instance_id)
+            if existing:
+                existing["name"] = name
+                existing["role"] = InstanceRole(role).value if role in [r.value for r in InstanceRole] else InstanceRole.GENERAL.value
+                existing["status"] = InstanceStatus.IDLE.value
+                existing["connected_since"] = datetime.now(timezone.utc).isoformat()
+                self.zk.update_instance(instance_id, existing)
+                logger.info(f"Instance re-registered: {name} ({instance_id}) role={existing['role']}")
+                return Instance(**existing)
+
         instance = Instance(
-            id=uuid4().hex,
+            id=instance_id or uuid4().hex,
             name=name,
             role=InstanceRole(role) if role in [r.value for r in InstanceRole] else InstanceRole.GENERAL,
             status=InstanceStatus.IDLE,

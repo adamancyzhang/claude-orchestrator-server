@@ -21,14 +21,21 @@ async def main():
             tool_names = [t.name for t in tools.tools]
             print(f"Available tools ({len(tool_names)}): {tool_names}\n")
 
+            def _parse_instance(text: str) -> dict:
+                """Extract JSON from register_instance response (may have prefix line)."""
+                if text.startswith("{"):
+                    return json.loads(text)
+                # Format: "Instance registered:\n{...}"
+                return json.loads(text.split("\n", 1)[1])
+
             # 2. Register two instances
             r1 = await session.call_tool("register_instance", {"name": "Tom", "role": "architect"})
-            tom = json.loads(r1.content[0].text)
+            tom = _parse_instance(r1.content[0].text)
             tom_id = tom["id"]
             print(f"[Tom registered] id={tom_id[:8]}... role={tom['role']}")
 
             r2 = await session.call_tool("register_instance", {"name": "Jerry", "role": "developer"})
-            jerry = json.loads(r2.content[0].text)
+            jerry = _parse_instance(r2.content[0].text)
             jerry_id = jerry["id"]
             print(f"[Jerry registered] id={jerry_id[:8]}... role={jerry['role']}\n")
 
