@@ -11,3 +11,7 @@ venv/
 *.log
 .DS_Store
 .idea/
+dist/
+*.spec
+node_modules/
+bin/orchestrator-binary

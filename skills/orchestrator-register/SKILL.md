@@ -1,6 +1,6 @@
 ---
 name: orchestrator-register
-description: Register this Claude Code instance with the Claude MCP Server orchestrator for multi-agent collaboration. Use when joining a team of Claude instances, setting up for distributed task execution, or when the user says "register", "join the orchestrator", "connect to the team", or "上线".
+description: Register this Claude Code instance with the orchestrator for multi-agent collaboration. Use when joining a team of Claude instances, setting up for distributed task execution, or when the user says "register", "join the orchestrator", "connect to the team", or "上线".
 ---
 
 # Orchestrator Registration
@@ -9,7 +9,15 @@ Register this Claude Code instance with the orchestrator so other instances can 
 
 ## Prerequisites
 
-The orchestrator MCP server must be configured in this session's MCP settings. Verify by calling `server_status` — it should report "ZooKeeper: connected".
+The `claude-orchestrator` CLI must be installed (`pip install -e .` from the project root).
+
+Verify ZooKeeper is running:
+
+```bash
+claude-orchestrator status
+```
+
+Should report `"zookeeper": "connected"`.
 
 ## Registration Steps
 
@@ -30,15 +38,17 @@ Choose a distinctive name. Convention: `{Name}-{Role}` (e.g., `Jerry-Dev`, `Lucy
 
 ### 3. Register
 
-Call `register_instance`:
-- `name`: the chosen display name
-- `role`: the chosen role (one of `architect`, `developer`, `tester`, `general`)
+Run:
 
-Save the returned `instance_id` — you will need it for every subsequent orchestrator operation.
+```bash
+claude-orchestrator register --name <name> --role <role>
+```
+
+The CLI saves the returned `instance_id` to `~/.claude-orchestrator/config.json` automatically. All subsequent commands will use it.
 
 ### 4. Verify
 
-Call `list_instances` to confirm your registration and see who else is online.
+Run `claude-orchestrator list-instances` to confirm your registration and see who else is online.
 
 ### 5. Report
 
@@ -48,7 +58,13 @@ List the other active instances with their roles and status.
 
 ## Re-registration
 
-If you have an existing `instance_id`, pass it to `register_instance` to re-register under the same identity. This preserves your task history and message inbox.
+If you have an existing `instance_id`, pass it via `--instance-id` to re-register under the same identity:
+
+```bash
+claude-orchestrator register --name <name> --role <role> --instance-id <id>
+```
+
+This preserves your task history and message inbox.
 
 ## Next Steps
 

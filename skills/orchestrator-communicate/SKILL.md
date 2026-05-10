@@ -9,7 +9,9 @@ Send and receive messages with other instances in the orchestrator.
 
 ## Check for Messages
 
-Call `poll_messages` with your `instance_id`.
+```bash
+claude-orchestrator poll-messages
+```
 
 If messages are returned, process each by type:
 
@@ -23,12 +25,11 @@ Messages are automatically marked as read when polled. The sender will know you'
 
 ## Send a Direct Message
 
-Call `send_message`:
-- `instance_id`: your instance ID
-- `content`: your message
-- `to_instance`: the target instance's ID
+```bash
+claude-orchestrator send-message --to <instance-id> --content "<message>"
+```
 
-Find target instance IDs via `list_instances`.
+Find target instance IDs via `claude-orchestrator list-instances`.
 
 Use direct messages for:
 - Asking a specific instance a question
@@ -38,10 +39,9 @@ Use direct messages for:
 
 ## Broadcast to All Instances
 
-Call `send_message`:
-- `instance_id`: your instance ID
-- `content`: your message
-- `broadcast`: `true`
+```bash
+claude-orchestrator send-message --broadcast --content "<message>"
+```
 
 Use broadcast for:
 - Announcing a completed milestone
@@ -61,7 +61,7 @@ Be judicious with broadcast — don't spam the channel.
 
 ## Finding the Right Instance to Message
 
-Use `list_instances` to see who's online. Message someone based on role:
+Use `claude-orchestrator list-instances` to see who's online. Message someone based on role:
 - **architect** — design questions, architecture decisions
 - **developer** — implementation details, code questions
 - **tester** — test strategy, bug reproduction, quality concerns
@@ -69,8 +69,8 @@ Use `list_instances` to see who's online. Message someone based on role:
 
 ## Shared Context as Persistent Communication
 
-For information that multiple instances will need over time, use `set_context` instead of broadcasting:
-- `set_context(key="ci_status", value="failing: auth tests")` persists for all instances
-- `get_context(key="ci_status")` retrieves it anytime
+For information that multiple instances will need over time, use shared context instead of broadcasting:
+- `claude-orchestrator set-context --key ci_status --value "failing: auth tests"` persists for all instances
+- `claude-orchestrator get-context --key ci_status` retrieves it anytime
 
 This is more efficient than re-broadcasting the same information.

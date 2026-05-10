@@ -9,7 +9,7 @@ Operate as a worker in the orchestrator: claim tasks, execute them, report resul
 
 ## Required State
 
-You need your `instance_id`. If you don't have one, register first with `/orchestrator-register`.
+Your `instance_id` is stored in `~/.claude-orchestrator/config.json` after registration. All CLI commands read it automatically.
 
 ## Work Loop
 
@@ -17,10 +17,12 @@ Execute steps 1-6. After step 6, loop back to step 1.
 
 ### Step 1: Check for incoming messages
 
-Call `poll_messages` with your `instance_id`.
+```bash
+claude-orchestrator poll-messages
+```
 
 If messages are returned:
-- Read each one. If someone is asking you a question, respond via `send_message` before continuing.
+- Read each one. If someone is asking you a question, respond via `claude-orchestrator send-message --to <id> --content "..."` before continuing.
 - If a message is a broadcast announcement, acknowledge it but don't reply unless action is needed.
 - If a message is a help request (`type=help`), respond if you have relevant expertise.
 
@@ -28,20 +30,30 @@ If no messages, proceed to step 2.
 
 ### Step 2: Update heartbeat
 
-Call `heartbeat` with your `instance_id`. This keeps your registration alive and signals you're ready.
+```bash
+claude-orchestrator heartbeat
+```
+
+This keeps your registration alive and signals you're ready.
 
 ### Step 3: Claim a task
 
-Call `claim_task` with your `instance_id`.
+```bash
+claude-orchestrator claim-task
+```
 
-- If the response is "No pending tasks available." — report this to the user and stop the loop. Check back after any new work is assigned.
+- If the output contains `"status": "no_tasks"` — report this to the user and stop the loop. Check back after any new work is assigned.
 - If a task is returned, extract the `id` (task_id), `title`, and `description`.
 
 ### Step 4: Announce and update status
 
 Tell the user: "Claimed task **[task_id]**: **title**"
 
-Call `heartbeat` again with `current_task` set to the task title. This lets other instances see you're busy.
+```bash
+claude-orchestrator heartbeat --current-task "<task title>"
+```
+
+This lets other instances see you're busy.
 
 ### Step 5: Execute the task
 
@@ -54,10 +66,13 @@ If you encounter blockers:
 
 ### Step 6: Complete the task
 
-When the task is fully done, call `complete_task`:
-- `instance_id`: your instance ID
-- `task_id`: the task ID from step 3
-- `result`: a concise summary of what was accomplished. Include relevant details (files changed, tests run, decisions made).
+When the task is fully done:
+
+```bash
+claude-orchestrator complete-task --task-id <task_id> --result "<summary>"
+```
+
+The result should be a concise summary of what was accomplished. Include relevant details (files changed, tests run, decisions made).
 
 ### Step 7: Loop
 
@@ -73,13 +88,13 @@ The orchestrator assigns tasks by priority:
 
 ## Heartbeat Cadence
 
-- Call `heartbeat` at least once every 60 seconds while working on a long task.
+- Call `claude-orchestrator heartbeat` at least once every 60 seconds while working on a long task.
 - ZK session timeout is 30s by default; regular heartbeats prevent your ephemeral nodes from being cleaned up.
 - If your ephemeral nodes are lost, your claimed tasks are automatically released back to the queue.
 
 ## Error Recovery
 
-- **"ZooKeeper is not connected"**: Wait 10 seconds and retry. If persistent, report to user.
-- **"Instance not found"**: Your registration may have expired. Re-register with your previous `instance_id`.
-- **Claim returns None repeatedly**: Someone else is claiming faster. The queue will rebalance — keep trying.
+- **ZooKeeper is not connected**: Wait 10 seconds and retry (ZK auto-reconnects). If persistent, check `docker-compose ps`.
+- **"No instance_id found"**: Your registration may have expired. Re-register: `claude-orchestrator register --name <name> --role <role>`.
+- **Claim returns no_tasks repeatedly**: Someone else is claiming faster. The queue will rebalance — keep trying.
 - **Task already claimed by another instance**: This is normal (optimistic locking). Step 3 will automatically retry with the next task.

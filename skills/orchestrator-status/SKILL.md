@@ -11,13 +11,19 @@ View the current state of the entire orchestrator — health, instances, tasks, 
 
 ### 1. Server health
 
-Call `server_status`. Verify the server is running and ZooKeeper is connected.
+```bash
+claude-orchestrator status
+```
 
-If disconnected, report the issue — no other operations will work until ZK reconnects.
+Verify ZooKeeper is connected. If disconnected, report the issue — no other operations will work until ZK reconnects.
 
 ### 2. Instance overview
 
-Call `list_instances`. For each instance, note:
+```bash
+claude-orchestrator list-instances
+```
+
+For each instance, note:
 - **name** — display name
 - **role** — architect / developer / tester / general
 - **status** — idle (ready for work), busy (working on a task), or blocked (stuck)
@@ -25,7 +31,9 @@ Call `list_instances`. For each instance, note:
 
 ### 3. Task overview
 
-Call `list_tasks` (no status filter) to see all tasks.
+```bash
+claude-orchestrator list-tasks
+```
 
 Group by status and report:
 - **Pending**: tasks waiting to be claimed
@@ -51,11 +59,14 @@ Present a concise summary:
 
 ### Filtering tasks
 
-To see only tasks of a specific status, call `list_tasks` with:
-- `status="pending"` — unclaimed tasks
-- `status="claimed"` — in-progress tasks
-- `status="completed"` — finished tasks
+To see only tasks of a specific status:
+
+```bash
+claude-orchestrator list-tasks --status pending    # unclaimed tasks
+claude-orchestrator list-tasks --status claimed    # in-progress tasks
+claude-orchestrator list-tasks --status completed  # finished tasks
+```
 
 ### Shared context
 
-To view shared context entries, call `get_context` for keys you're interested in. Common keys might include project conventions, current milestone, or active decisions. Ask other instances or check with `list_instances` to discover context keys.
+To view shared context entries, use `claude-orchestrator get-context --key <key>` for keys you're interested in. Common keys might include project conventions, current milestone, or active decisions. Ask other instances or check with `claude-orchestrator list-instances` to discover context keys.
