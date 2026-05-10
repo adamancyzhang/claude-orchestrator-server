@@ -16,63 +16,108 @@ const platform = process.platform; // "darwin", "linux"
 const arch = process.arch === "arm64" ? "arm64" : "x64";
 const binaryName = `claude-orchestrator-${platform}-${arch}`;
 
-// Configurable via env var or package.json
 const repo =
   process.env.ORCHESTRATOR_REPO || "adamancyzhang/claude-orchestrator-server";
 const version =
   process.env.ORCHESTRATOR_VERSION || "v0.1.0";
 
-const url = `https://github.com/${repo}/releases/download/${version}/${binaryName}`;
+// ── Helpers ──
 
-console.log(`Downloading ${binaryName} from ${url}...`);
+function httpGetJSON(url) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, { headers: { "User-Agent": "claude-orchestrator-installer" } }, (res) => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      })
+      .on("error", reject);
+  });
+}
 
 function download(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest, { mode: 0o755 });
     https
-      .get(url, (response) => {
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          file.close();
-          fs.unlinkSync(dest);
-          return download(response.headers.location, dest).then(resolve).catch(reject);
+      .get(
+        url,
+        { headers: { Accept: "application/octet-stream", "User-Agent": "claude-orchestrator-installer" } },
+        (response) => {
+          if (response.statusCode === 302 || response.statusCode === 301) {
+            file.close();
+            fs.unlinkSync(dest);
+            return download(response.headers.location, dest).then(resolve).catch(reject);
+          }
+          if (response.statusCode !== 200) {
+            file.close();
+            fs.unlinkSync(dest);
+            reject(new Error(`Download failed: HTTP ${response.statusCode}`));
+            return;
+          }
+          response.pipe(file);
+          file.on("finish", () => {
+            file.close();
+            resolve();
+          });
         }
-        if (response.statusCode !== 200) {
-          file.close();
-          fs.unlinkSync(dest);
-          reject(
-            new Error(
-              `Download failed: HTTP ${response.statusCode} — ` +
-                `no prebuilt binary for ${platform}-${arch}. ` +
-                `Build it locally: bash scripts/build-binary.sh`
-            )
-          );
-          return;
-        }
-        response.pipe(file);
-        file.on("finish", () => {
-          file.close();
-          resolve();
-        });
-      })
+      )
       .on("error", (err) => {
         file.close();
         try { fs.unlinkSync(dest); } catch (_) {}
-        reject(
-          new Error(
-            `Download failed: ${err.message}. ` +
-              `Build it locally: bash scripts/build-binary.sh`
-          )
-        );
+        reject(err);
       });
   });
 }
 
-download(url, BINARY_PATH)
-  .then(() => {
-    fs.chmodSync(BINARY_PATH, 0o755);
-    console.log(`Installed ${binaryName} to ${BINARY_PATH}`);
-  })
-  .catch((err) => {
-    console.error("Install error:", err.message);
+// ── Main ──
+
+async function install() {
+  // Step 1: Get asset download URL from GitHub Releases API
+  const apiUrl = `https://api.github.com/repos/${repo}/releases/tags/${version}`;
+  console.log(`Resolving ${binaryName} via ${apiUrl}...`);
+
+  let release;
+  try {
+    release = await httpGetJSON(apiUrl);
+  } catch (e) {
+    console.error(`Failed to fetch release info: ${e.message}`);
+    console.error(`Build it locally: bash scripts/build-binary.sh`);
     process.exit(1);
-  });
+  }
+
+  const asset = (release.assets || []).find((a) => a.name === binaryName);
+  if (!asset) {
+    console.error(
+      `No prebuilt binary for ${platform}-${arch}. ` +
+        `Available assets: ${(release.assets || []).map((a) => a.name).join(", ") || "none"}. ` +
+        `Build it locally: bash scripts/build-binary.sh`
+    );
+    process.exit(1);
+  }
+
+  console.log(`Found ${binaryName} (${(asset.size / 1024 / 1024).toFixed(1)} MB), downloading...`);
+
+  // Step 2: Download via asset API URL (requires Accept header)
+  try {
+    await download(asset.url, BINARY_PATH);
+  } catch (e) {
+    console.error(`Download failed: ${e.message}`);
+    console.error(`Build it locally: bash scripts/build-binary.sh`);
+    process.exit(1);
+  }
+
+  fs.chmodSync(BINARY_PATH, 0o755);
+  console.log(`Installed ${binaryName} to ${BINARY_PATH}`);
+}
+
+install();
