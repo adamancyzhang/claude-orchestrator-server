@@ -40,11 +40,15 @@ v0.3.0 是一次根本性的架构变革：**从中心化 MCP Server 模型转�
        │               │              │              │
   ┌────┴────┐    ┌─────┴─────┐  ┌─────┴─────┐  ┌───┴───────────┐
   │ Leader  │    │ Worker A  │  │ Worker B  │  │ CLI (ad-hoc)  │
-  │ (TUI)   │    │           │  │           │  │               │
-  │         │    │ watcher + │  │ watcher + │  │  push_task     │
-  │ 监控全队 │    │ claude -p │  │ claude -p │  │  send_message  │
-  │ 任务分配 │    │ 模板消息   │  │ 模板消息   │  │  list_tasks   │
-  │ 模板指令 │    │           │  │           │  │  ...          │
+  │         │    │           │  │           │  │               │
+  │ TUI     │    │ watcher + │  │ watcher + │  │  push_task    │
+  │ (read-  │    │ $COMMAND  │  │ $COMMAND  │  │  send_message │
+  │  only)  │    │ -p | tee  │  │ -p | tee  │  │    → Leader   │
+  │         │    │           │  │           │  │    → Worker   │
+  │ watcher │    │ worker.md │  │ worker.md │  │  ...          │
+  │ +       │    │ template  │  │ template  │  │               │
+  │ $COMMAND│    │           │  │           │  │               │
+  │ -p |tee │    │           │  │           │  │               │
   └────┬────┘    └─────┬─────┘  └─────┬─────┘  └───────────────┘
        │               │              │
        └───────────────┴──────────────┘
@@ -54,7 +58,8 @@ v0.3.0 是一次根本性的架构变革：**从中心化 MCP Server 模型转�
               │  (共享文件系统)  │
               │  sessions/{id}/ │
               │  ├── task-xx.log│
-              │  └── help-xx.log│
+              │  ├── task-xx.md │
+              │  └── reply-xx   │
               └─────────────────┘
 ```
 
@@ -64,18 +69,18 @@ v0.3.0 严格区分两种身份：
 
 | 身份 | Role | 注册方式 | 启动命令 | 能力 |
 |------|------|---------|---------|------|
-| **Leader** | `leader` | 自动 (启动时创建 `/leader` 节点) | `claude-orchestrator leader` | TUI 监控、任务分派、孤儿回收、模板指令下发 |
-| **Worker** | `developer` / `tester` / `architect` / `general` | 显式注册 (`register --work-dir`) | `claude-orchestrator register --work-dir <dir>` | 认领任务、消息处理、本地 `claude -p` 执行 |
+| **Leader** | `leader` | 自动 (启动时创建 `/leader` 节点) | `claude-orchestrator leader` | TUI 只读监控、watcher 接收 Worker 消息、孤儿回收 |
+| **Worker** | `developer` / `tester` / `architect` / `general` | 显式注册 (`register --work-dir`) | `claude-orchestrator register --work-dir <dir>` | 认领任务、消息处理、本地 `$COMMAND -p` 执行 |
 
-Leader 和 Worker 都通过 `setup` 命令初始化各自的工作环境，`setup --leader` 生成 Leader 配置和 Agent 模板。
+Leader 和 Worker 都通过 `setup` 命令初始化各自的工作环境。两者都运行 watcher 监听消息 — Leader watcher 接收 Worker 的完成报告，Worker watcher 接收 Leader 的任务指令。
 
 ### 核心概念
 
 | 概念 | 说明 | 进程模型 |
 |------|------|---------|
-| **Leader** | 团队协调者，运行 TUI，监控全局状态，使用 `leader.md` 模板生成和发送任务指令 | 长期运行 (`claude-orchestrator leader`) |
-| **Worker** | 工作实例，注册后监听消息，通过 `$COMMAND -p` 处理消息，使用 `worker.md` 模板发送消息 | 长期运行 (`claude-orchestrator register --work-dir`) |
-| **CLI** | 一次性命令，直接操作 ZK | 短期运行 (如 `push-task`, `send-message`) |
+| **Leader** | 团队协调者，TUI 只读显示，watcher 接收 Worker 完成报告并自动处理 | 长期运行 (`claude-orchestrator leader`) |
+| **Worker** | 工作实例，watcher 接收消息并通过 `$COMMAND -p` 处理 | 长期运行 (`claude-orchestrator register --work-dir`) |
+| **CLI** | 一次性命令，直接操作 ZK，是所有消息发送的唯一入口 | 短期运行 (如 `push-task`, `send-message`) |
 
 ### 核心模块
 
@@ -83,7 +88,7 @@ Leader 和 Worker 都通过 `setup` 命令初始化各自的工作环境，`setu
 |------|------|---------|
 | Instance Registry | 实例注册、心跳、存活检测 | 所有节点直连 ZK |
 | Task Queue | 任务入队、认领、完成、超时恢复 | Leader 监控 + Worker 认领 |
-| Message Router | 点对点消息、广播、求助，模板渲染 | ZK Watch + 本地 `$COMMAND -p` |
+| Message Router | 点对点消息、广播、求助，模板渲染 | 所有节点 via ZK sequential + watcher `$COMMAND -p` |
 | Context Store | 全局键值存储 | 所有节点直连 ZK |
 | Recovery Handler | 孤儿任务回收、实例断线处理 | Leader 专属 |
 | Agent Templates | Worker/Leader 消息模板渲染 | `setup` 写入，运行时读取 |
@@ -106,9 +111,37 @@ claude-orchestrator leader [--name <name>]
 2. 创建自身 Instance 节点 (`role=leader`)，获得 `instance_id`
 3. 初始化 CACHE_DIR: `~/.claude-orchestrator/sessions/{instance_id}/`
 4. 加载 `.claude-orchestrator/agents/leader.md` 模板
-5. 初始化 TUI 界面
-6. 注册所有 ZK Watch 监听团队状态变化
-7. 进入事件循环，等待 TUI 输入和 ZK 事件
+5. 启动 **Leader Watcher** 监听 `/messages/{leader_instance_id}/` 上的新消息
+6. 初始化 TUI 界面（**只读显示**，不接收用户输入）
+7. 注册所有 ZK Watch 监听团队状态变化
+8. 进入事件循环，等待 ZK 事件
+
+### 3.2 Leader Watcher
+
+Leader 和 Worker 一样运行 watcher，监听自己的消息目录：
+
+```
+Leader watcher 流程:
+  1. 在 /messages/{leader_instance_id}/ 上设置 ChildWatch
+  2. Watch 触发 → 读取新消息
+  3. 对每条未读消息:
+     - 打印到 TUI 事件日志
+     - $COMMAND -p "$MESSAGE" | tee $CACHE_DIR/{key}.log
+     - 标记消息已读
+  4. 重建 Watch，继续监听
+```
+
+Worker 完成任务后通过 CLI 向 Leader 发送消息：
+
+```bash
+# Worker 通过 CLI 向 Leader 报告完成
+claude-orchestrator send-message --to-name Tom --content \
+  "任务 task-0000000001 已完成，结果路径: sessions/xxx/task-0000000001_result.log。请指示下一步。"
+```
+
+消息通过 ZK `/messages/{leader_id}/msg-{seq}` 到达，Leader watcher 自动处理。
+
+### 3.3 Leader 职责
 
 ### 3.2 Leader 职责
 
@@ -159,22 +192,22 @@ claude-orchestrator leader [--name <name>]
 └─────────────────────────────────────────┘
 ```
 
-### 3.3 Leader TUI
+### 3.4 Leader TUI (只读显示)
 
-TUI 使用终端控制字符实现（无需额外依赖），分为四个区域：
+Leader TUI 使用终端 ANSI 控制字符实现，**仅用于可视化，不接收用户输入**。
 
 **A. 团队面板 (Team Panel)** — 顶部，实时显示所有在线成员：
 
 ```
-┌─ Team: 3 members ─────────────────────────────────────────────┐
-│ Name         Role        Status    Current Task                │
-│ Tom          architect   idle      -                           │
-│ Jerry        developer   busy      task-0000000003             │
-│ Lucy         tester      idle      -                           │
-└────────────────────────────────────────────────────────────────┘
+┌─ Team: 3 members ───────────────────────────────────────────────────┐
+│ Identity  Name    Role        Status    Current Task                 │
+│ Leader    Tom     leader      idle      -                            │
+│ Worker    Jerry   developer   busy      task-0000000003              │
+│ Worker    Lucy    tester      idle      -                            │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-**B. 任务面板 (Task Panel)** — 中部左侧，显示任务队列：
+**B. 任务面板 (Task Panel)** — 中部左侧：
 
 ```
 ┌─ Pending (2) ──────────────────┐  ┌─ In Progress (1) ───────────┐
@@ -183,60 +216,66 @@ TUI 使用终端控制字符实现（无需额外依赖），分为四个区域�
 └────────────────────────────────┘  └──────────────────────────────┘
 ```
 
-**C. 事件日志 (Event Log)** — 中部，滚动显示实时事件：
+**C. 事件日志 (Event Log)** — 中部，滚动显示实时事件（包括 watcher 收到的消息）：
 
 ```
 [10:30:01] ✓ Jerry joined (developer)
-[10:30:05] ✓ Lucy joined (tester)
-[10:30:15] 📋 Task task-0000000003 created: 实现 POST /api/items (→Jerry)
+[10:30:15] 📋 Task task-0000000003 created
 [10:30:20] 🔒 Jerry claimed task-0000000003
-[10:32:45] 📨 Jerry → broadcast: "数据库迁移策略有歧义，请确认"
-[10:33:10] 📨 Tom → Jerry: "用 alembic 的 --sql 模式"
+[10:35:00] 📨 Jerry (via CLI) → Leader: 任务 task-0000000003 已完成，结果路径...
+[10:35:05] 🔄 Leader processing: $COMMAND -p "..." | tee $CACHE_DIR/xxx.log
+[10:35:30] ✅ Leader done. Log: sessions/xxx/xxx.log
+[10:40:00] 📨 Leader (via CLI) → Jerry: 下一步，实现 E2E 测试...
 ```
 
-**D. 命令输入 (Command Input)** — 底部，交互式命令：
+**D. 页脚** — 底部提示：
 
 ```
-> help
-Commands: msg, status, exit
-> msg Jerry "请实现 POST /api/items 接口，完成后告知结果路径"
+Leader: Tom | Instance: a1b2c3... | CACHE_DIR: ~/.claude-orchestrator/sessions/a1b2c3.../
+Press Ctrl+C to stop.
 ```
 
-### 3.4 Leader TUI 命令
+### 3.5 与 Leader 通信
 
-Leader TUI 仅提供 3 个命令，所有其他操作通过外部 CLI 完成：
+Leader TUI 不提供交互式输入。所有消息发送通过外部 CLI 命令完成：
 
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `msg <worker> <content>` | 向 Worker 发送消息（使用 leader.md 模板渲染后发送） | `msg Jerry "实现 POST /api/items 接口，详细任务文档见 ./tasks/task-xxx.md"` |
-| `status` | 刷新团队状态显示 | `status` |
-| `exit` / `quit` | 退出 Leader | `exit` |
+```bash
+# 向 Leader 发送消息（Worker 报告完成等）
+claude-orchestrator send-message --to-name Tom --content \
+  "任务 task-0000000001 已完成，结果路径: sessions/xxx/task-0000000001_result.log。请指示下一步。"
 
-**设计原则**：TUI 聚焦于团队监控和消息发送。任务创建（`push-task`）、任务查看（`list-tasks`）、上下文管理（`set-context`/`get-context`）等操作通过外部 CLI 命令完成，保持 TUI 简洁。
+# Leader 响应 Worker（从 Leader watcher 处理中调用 CLI，或手动）
+claude-orchestrator send-message --to-name Jerry --content \
+  "收到结果，请继续实现 E2E 测试，任务文档见 ./tasks/task-0000000002.md"
+```
 
-### 3.5 Leader 消息发送 (leader.md 模板)
+**设计原则**：所有消息发送通过 ZK 顺序节点 + `send-message` CLI 统一入口，保证消息全局顺序性。TUI 纯只读，避免并发交互导致的消息乱序。
 
-Leader 发送任务指令时，使用 `leader.md` 模板 + Claude 处理：
+### 3.6 Leader 消息发送 (leader.md 模板)
+
+Leader 不通过 TUI 发送消息。消息发送统一通过 CLI `send-message` 命令：
 
 ```
-Leader 发送 task 指令:
+Leader (通过 CLI) 发送任务指令:
   1. 读取 .claude-orchestrator/agents/leader.md 模板
   2. 填充变量:
      - {{leader_name}}: Leader 名称
-     - {{task_id}}: 任务 ID
-     - {{task_title}}: 任务标题
-     - {{task_description}}: 任务描述 (含预期输出、上下文)
+     - {{task_id}}: 任务 ID (如适用)
+     - {{task_doc_path}}: 任务文档相对路径 (如 ./tasks/task-xxx.md)
+     - {{content}}: 任务描述
      - {{created_at}}: 创建时间
      - {{result_path}}: $CACHE_DIR/{uniqueKey}.log
-  3. 生成唯一 key (如 task-{task_id}-{timestamp})
-  4. 通过 $COMMAND -p "处理以下任务指令模板..." | tee $CACHE_DIR/{key}.log
-     执行 Claude 处理并同时输出到终端和日志文件
-  5. 将渲染后的消息 + log 路径写入 ZK /messages/{worker_id}/msg-{seq}
-  
-Worker 收到消息后:
-  1. watcher 触发 $COMMAND -p "$MESSAGE" | tee $CACHE_DIR/{key}_result.log
-  2. 从消息中读取 result_path，可获取 Leader 的详细上下文
-  3. 执行任务，标记完成
+  3. 生成唯一 key，写入任务文档到 CACHE_DIR
+  4. 通过 $COMMAND -p "模板内容..." | tee $CACHE_DIR/{key}.log
+  5. 将渲染后的消息通过 ZK 发送到目标 Worker:
+     claude-orchestrator send-message --to-name <worker> --content "渲染后的消息"
+
+Leader (watcher) 接收 Worker 完成报告:
+  1. watcher 在 /messages/{leader_id}/ 上收到新消息
+  2. 触发 $COMMAND -p "$MESSAGE" | tee $CACHE_DIR/{key}.log
+  3. 从消息中读取 result_path，获取 Worker 的执行结果日志
+  4. Leader 评估完成情况，决定下一步
+  5. 通过 CLI send-message 向 Worker 发送下一步指令
 ```
 
 ## 4. Worker 设计
@@ -526,94 +565,74 @@ claude-orchestrator setup --name Jerry --role developer
 
 ## 9. 通信流程
 
-### 9.1 Leader 分配任务给 Worker (模板指令)
+### 9.1 Leader 分配任务给 Worker (全部通过 CLI)
 
 ```
-Leader (TUI)                ZK                         Worker (Jerry)
+Terminal (Leader CLI)       ZK                         Worker (Jerry watcher)
     │                         │                              │
-    │── task push ───────────>│                              │
-    │   /tasks/pending/       │                              │
-    │   task-0000000003       │                              │
-    │   assignee=Jerry        │                              │
+    │   1. 写入任务文档         │                              │
+    │   $CACHE_DIR/xxx/        │                              │
+    │   tasks/task-xxx.md      │                              │
     │                         │                              │
-    │   读取 leader.md 模板    │                              │
-    │   填充变量 (task_id,     │                              │
-    │   description,          │                              │
-    │   result_path)          │                              │
+    │   2. 读取 leader.md      │                              │
+    │   填充模板变量            │                              │
     │                         │                              │
-    │   $COMMAND -p           │                              │
-    │   "模板内容..." | tee    │                              │
-    │   $CACHE_DIR/task-003   │                              │
-    │   -xxx.log              │                              │
+    │   3. send_message ──────>│                              │
+    │   --to-name Jerry       │── /messages/Jerry/msg-042    │
+    │   (含 task_doc_path)    │   sequential node            │
     │                         │                              │
-    │── send_message ────────>│                              │
-    │   to=Jerry              │── /messages/Jerry/msg-042    │
-    │   content=模板渲染结果    │   (含 result_path 引用)      │
-    │   result_path=...       │                              │
-    │                         │                              │
-    │                         │<── claim_task ───────────────│
-    │                         │── /tasks/claimed/            │
-    │                         │   Jerry-task-0000000003      │
-    │                         │   [EPHEMERAL]                │
-    │                         │── delete /pending/task-...   │
-    │                         │                              │
-    │<── ZK Watch 触发 ──────│                              │
-    │   (TUI: Jerry busy)     │                              │
-    │                         │                              │
-    │                         │   Jerry watcher 收到消息:     │
-    │                         │   $COMMAND -p "msg内容" |    │
-    │                         │   tee $CACHE_DIR/task-003    │
-    │                         │   -xxx_result.log            │
-    │                         │   (可从 result_path 读取      │
-    │                         │    Leader 的详细指令)         │
-    │                         │                              │
-    │                         │<── complete_task ────────────│
-    │                         │── /tasks/completed/task-...  │
-    │                         │── delete /claimed/...        │
-    │                         │                              │
-    │<── ZK Watch 触发 ──────│                              │
-    │   (TUI: Jerry idle)     │                              │
-```
-
-### 9.2 Worker 求助 → 其他 Worker 响应 (模板消息)
-
-```
-Worker A (Jerry)            ZK                         Worker B (Tom)
-    │                         │                              │
-    │   读取 worker.md 模板    │                              │
-    │   填充 {{name}},        │                              │
-    │   {{role}}, {{time}},   │                              │
-    │   {{content}}           │                              │
-    │                         │                              │
-    │── request_help ────────>│                              │
-    │   (模板渲染后的消息)      │── /messages/Tom/msg-042      │
-    │                         │── /messages/Lucy/msg-043     │
-    │                         │   (含 worker 模板变量)        │
-    │                         │                              │
-    │                         │<── ZK Watch 触发 ─────────────│
-    │                         │   Tom watcher:               │
-    │                         │   $COMMAND -p "msg内容" |    │
+    │                         │<── ZK Watch 触发 ───────────│
+    │                         │   Jerry watcher:             │
+    │                         │   $COMMAND -p "$MSG" |      │
     │                         │   tee $CACHE_DIR/            │
-    │                         │   help-msg-042-xxx.log       │
+    │                         │   msg-042-xxx.log            │
+    │                         │   (读取 task_doc_path 指向   │
+    │                         │   的任务文档)                 │
     │                         │                              │
-    │                         │   Tom 的 Claude 分析消息      │
-    │                         │   并生成回复...               │
+    │                         │   4. Jerry 完成任务           │
+    │                         │   claim_task → complete_task │
     │                         │                              │
-    │                         │   读取 worker.md 模板         │
-    │                         │   填充回复变量                │
-    │                         │                              │
-    │                         │── send_message ─────────────>│
-    │                         │   to=Jerry                    │
-    │                         │── /messages/Jerry/msg-044     │
-    │                         │   (模板渲染的回复 +           │
-    │                         │    result_path 引用)          │
+    │                         │   5. send_message ──────────>│
+    │                         │   --to-name Tom              │
+    │                         │   (worker.md 模板:           │
+    │                         │    结果路径 + 下一步指示)     │
+    │                         │── /messages/Tom/msg-043      │
     │                         │                              │
     │<── ZK Watch 触发 ──────│                              │
-    │   Jerry watcher:        │                              │
-    │   $COMMAND -p "回复" |  │                              │
-    │   tee $CACHE_DIR/       │                              │
-    │   reply-msg-044-xxx.log │                              │
+    │   Leader watcher 收到:   │                              │
+    │   $COMMAND -p "完成报告" │                              │
+    │   | tee $CACHE_DIR/      │                              │
+    │   msg-043-xxx.log        │                              │
+    │                         │                              │
+    │   6. Leader 评估结果      │                              │
+    │   决定下一步...           │                              │
 ```
+
+### 9.2 Worker 互助通信 (全部通过 CLI)
+
+```
+Worker A (Jerry CLI)        ZK                         Worker B (Lucy watcher)
+    │                         │                              │
+    │   send_message ────────>│                              │
+    │   --to-name Lucy        │── /messages/Lucy/msg-044     │
+    │   (worker.md 模板)      │                              │
+    │                         │<── ZK Watch 触发 ───────────│
+    │                         │   Lucy watcher:              │
+    │                         │   $COMMAND -p "$MSG" |      │
+    │                         │   tee $CACHE_DIR/            │
+    │                         │   msg-044-xxx.log            │
+    │                         │                              │
+    │                         │   send_message ─────────────>│
+    │                         │   --to-name Jerry            │
+    │                         │── /messages/Jerry/msg-045    │
+    │                         │                              │
+    │<── ZK Watch 触发 ──────│                              │
+    │   Jerry watcher 处理:   │                              │
+    │   $COMMAND -p "回复" | │                              │
+    │   tee $CACHE_DIR/...log │                              │
+```
+
+**关键保证**: 所有消息通过 ZK PERSISTENT_SEQUENTIAL 节点严格排序，无并发冲突。
 
 ### 9.3 Leader 断开 → 自动恢复
 
@@ -902,11 +921,12 @@ claude-orchestrator-server/            ← npm 包根目录
 │   │   └── commands.ts                # CLI 子命令实现
 │   ├── leader/
 │   │   ├── index.ts                   # Leader 启动入口
-│   │   ├── tui.ts                     # TUI 渲染与输入处理
-│   │   ├── monitor.ts                 # ZK Watch 管理 (Worker/任务/消息)
+│   │   ├── tui.ts                     # TUI 只读渲染 (团队面板 + 任务面板 + 事件日志)
+│   │   ├── watcher.ts                 # Leader 消息监听 + $COMMAND -p | tee 处理
+│   │   ├── monitor.ts                 # ZK Watch 管理 (Worker/任务)
 │   │   └── recovery.ts                # 孤儿任务回收
 │   ├── worker/
-│   │   └── watcher.ts                 # 本地消息监听 + $COMMAND -p | tee 处理
+│   │   └── watcher.ts                 # Worker 消息监听 + $COMMAND -p | tee 处理
 │   ├── templates/
 │   │   ├── leader.md                  # 内置 Leader Agent 模板
 │   │   └── worker.md                  # 内置 Worker Agent 模板
@@ -1040,14 +1060,15 @@ Leader TUI:
 | 架构模式 | 中心化 MCP Server | Leader-Worker CLI-native |
 | 身份体系 | 无区分（统一 instance） | Leader / Worker 严格区分 |
 | 通信协议 | Streamable HTTP (SSE) + JSON-RPC | ZK 原生协议 (TCP) |
-| 服务启动 | `claude-orchestrator server` | `claude-orchestrator leader` (TUI, 3 命令: msg/status/exit) |
+| 服务启动 | `claude-orchestrator server` | `claude-orchestrator leader` (TUI 只读, watcher 收消息) |
 | 实例注册 | 通过 MCP 工具或 HTTP REST | CLI 直连 ZK + `setup` 初始化环境 |
-| 消息推送 | MCP Resource Subscription | ZK Watch → `$COMMAND -p "$MSG" \| tee $CACHE_DIR/{key}.log` |
+| 消息发送 | MCP 工具或 HTTP REST | 统一通过 CLI `send-message` (ZK sequential 保证顺序) |
+| 消息接收 | MCP Resource Subscription | ZK Watch → watcher `$COMMAND -p "$MSG" \| tee $CACHE_DIR/{key}.log` |
 | 消息模板 | 无 | `leader.md` (任务文档 + 相对路径) / `worker.md` (结果路径 + 下一步指示) |
 | MCP 依赖 | `@modelcontextprotocol/sdk` | 无 |
 | HTTP 依赖 | Express | 无 |
 | 配置 | `.claude/mcp.json` | `~/.claude-orchestrator/config.json` (含 command, cache_dir) |
-| 可视化 | 无 (依赖 MCP client 日志) | Leader TUI 实时面板 (仅 msg/status/exit) |
+| 可视化 | 无 (依赖 MCP client 日志) | Leader TUI 只读面板 (团队/任务/事件日志) |
 | 任务状态 | 3 种 | 6 种 |
 | 任务恢复 | MCP Server 负责 | Leader 负责 |
 | 共享存储 | 无 | CACHE_DIR 共享日志/结果目录 |

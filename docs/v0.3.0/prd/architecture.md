@@ -9,14 +9,17 @@
 └──────┬──────────────────┬──────────────────┬────────────────────────┘
        │                  │                  │
   ┌────┴────────┐   ┌─────┴─────┐   ┌───────┴──────────┐
-  │ Leader Node │   │ Worker A  │   │ CLI (ad-hoc)     │
-  │             │   │           │   │                  │
-  │ TUI (3 cmd) │   │ watcher   │   │ push-task        │
-  │ msg/status  │   │ $COMMAND  │   │ claim-task       │
-  │ /exit       │   │ -p | tee  │   │ send-message     │
+  │ Leader Node │   │ Worker A  │   │ CLI (message     │
+  │             │   │           │   │   entry point)   │
+  │ TUI (read-  │   │ watcher   │   │                  │
+  │  only)      │   │ $COMMAND  │   │ push-task        │
+  │             │   │ -p | tee  │   │ claim-task       │
+  │ watcher     │   │           │   │ send-message     │
+  │ $COMMAND    │   │ worker.md │   │   → Worker       │
+  │ -p | tee    │   │ template  │   │   → Leader       │
   │             │   │           │   │ complete-task    │
-  │ leader.md   │   │ worker.md │   │ set-context ...  │
-  │ template    │   │ template  │   │                  │
+  │ leader.md   │   │           │   │ ...              │
+  │ template    │   │           │   │                  │
   └─────┬───────┘   └─────┬─────┘   └──────────────────┘
         │                 │
         └────────┬────────┘
@@ -25,8 +28,8 @@
         │   $CACHE_DIR    │
         │  (共享文件系统)   │
         │  sessions/{id}/ │
-        │  ├── task-xx.log│
-        │  └── task-xx.md │
+        │  ├── tasks/*.md │
+        │  └── *.log      │
         └─────────────────┘
 ```
 
@@ -123,97 +126,113 @@ class TaskOrchestrator {
 }
 ```
 
-### Leader 消息发送 (leader.md 模板)
+### Leader 消息收发 (全部通过 CLI + watcher)
 
-Leader TUI 中 `msg` 命令的执行流程：
+Leader 不通过 TUI 发送消息。发送通过 CLI，接收通过 watcher：
+
+**发送 (CLI send-message):**
+
+```bash
+# Leader (或其他任何人) 通过 CLI 向 Worker 发送消息
+claude-orchestrator send-message --to-name Jerry --content \
+  "请实现 POST /api/items 接口，任务文档: ./tasks/task-xxx.md"
+```
+
+**接收 (Leader Watcher):**
 
 ```typescript
-// src/leader/index.ts
-async function handleMsgCommand(targetWorker: string, content: string): Promise<void> {
-  // 1. 生成消息唯一 key
-  const uniqueKey = `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+// src/leader/watcher.ts — Leader watcher 与 Worker watcher 相同结构
+class LeaderWatcher {
+  async start(): Promise<void> {
+    await this.zk.mkdirp(paths.messageDirPath(this.leaderInstanceId));
+    this.watchLoop();
+  }
 
-  // 2. 生成任务文档的相对路径 (写入 CACHE_DIR)
-  const taskDocPath = `./tasks/${uniqueKey}.md`;
-  const fullTaskDocPath = path.join(cacheDir, leaderInstanceId, taskDocPath);
-  const resultPath = `${cacheDirRelative}/${leaderInstanceId}/${uniqueKey}.log`;
+  private async watchLoop(): Promise<void> {
+    if (this.stopped) return;
+    const children = await this.zk.watchMessageDir(
+      this.leaderInstanceId,
+      (newChildren) => {
+        for (const cid of newChildren) this.processMessage(cid);
+        this.watchLoop();
+      }
+    );
+    for (const cid of children) await this.processMessage(cid);
+  }
 
-  // 3. 写入任务文档 (供 Worker 读取)
-  await fs.promises.mkdir(path.dirname(fullTaskDocPath), { recursive: true });
-  await fs.promises.writeFile(fullTaskDocPath, content);
+  private async processMessage(msgId: string): Promise<void> {
+    if (this.inFlight.has(msgId)) return;
+    const data = await this.zk.getMessage(this.leaderInstanceId, msgId);
+    if (!data) return;
+    const msg = MessageSchema.parse({ ...data, id: msgId });
+    if (msg.read) return;
 
-  // 4. 读取 leader.md 模板
-  const template = await loadTemplate("leader.md");
+    this.inFlight.add(msgId);
+    const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
+    const uniqueKey = `msg-${msgId}-${Date.now().toString(36)}`;
 
-  // 5. 填充模板变量
-  const message = template
-    .replace("{{leader_name}}", leaderName)
-    .replace("{{created_at}}", new Date().toISOString())
-    .replace("{{content}}", content)
-    .replace("{{task_doc_path}}", taskDocPath)
-    .replace("{{result_path}}", resultPath);
+    // 通知 TUI
+    this.eventBus.emit({ type: "message_received", from: fromLabel, content: msg.content });
 
-  // 6. 通过 $COMMAND -p 处理消息 (可选，用于增强消息质量)
-  const cmd = `${config.command} -p "${escapeShell(message)}" | tee ${fullResultPath}`;
-  await execCommand(cmd);
+    // 执行处理
+    const logPath = path.join(this.cacheDir, this.leaderInstanceId, `${uniqueKey}.log`);
+    const cmd = `${this.command} -p ${escapeShell(msg.content)}`;
+    const { code } = await this.execWithTee(cmd, logPath);
 
-  // 7. 发送消息到目标 Worker 的 ZK 消息目录
-  await messageRouter.send(leaderInstanceId, leaderName, message, targetWorker);
+    if (code === 0) {
+      this.eventBus.emit({ type: "message_processed", msgId, logPath });
+    }
+
+    await this.zk.updateMessage(this.leaderInstanceId, msgId, {
+      ...msg as unknown as Record<string, unknown>, read: true,
+    });
+    this.inFlight.delete(msgId);
+  }
 }
 ```
 
-### TUI 架构 (简化版)
+### TUI 架构 (只读显示)
 
-Leader TUI 仅提供 3 个命令：`msg`, `status`, `exit`。使用 Node.js 内置 `readline` + ANSI 转义序列。
+Leader TUI 纯只读显示，无命令输入。使用 Node.js 内置 ANSI 转义序列。
 
 ```typescript
 // src/leader/tui.ts
 class LeaderTui {
-  // 重绘屏幕
   render(state: LeaderState): void {
-    process.stdout.write("\x1b[2J\x1b[0;0H");
-    this.renderTeamPanel(state.workers);
-    this.renderEventLog(state.events.slice(-20));
-    this.renderCommandInput();
-  }
-
-  // 命令解析
-  parseCommand(input: string): TuiCommand {
-    if (input === "status") return { type: "status" };
-    if (input === "exit" || input === "quit") return { type: "exit" };
-    const msgMatch = input.match(/^msg\s+(\S+)\s+(.+)/);
-    if (msgMatch) return { type: "msg", worker: msgMatch[1], content: msgMatch[2] };
-    return { type: "unknown", raw: input };
+    process.stdout.write("\x1b[2J\x1b[0;0H"); // 清屏
+    this.renderTeamPanel(state.workers);        // 团队面板
+    this.renderTaskPanels(state.tasks);          // 任务队列
+    this.renderEventLog(state.events.slice(-20)); // 事件日志
+    this.renderFooter(state.leader);             // 页脚 (ID, CACHE_DIR, Ctrl+C)
   }
 }
 ```
 
-### TUI 事件循环
+### Leader 事件循环
+
+Leader 无交互输入，仅监听 ZK 事件和 SIGINT：
 
 ```typescript
-async function tuiLoop(leader: Leader, tui: LeaderTui): Promise<void> {
+async function leaderLoop(leader: Leader, tui: LeaderTui): Promise<void> {
+  // 订阅 EventBus，ZK 事件驱动 TUI 重绘
   leader.eventBus.on("*", (event) => {
     leader.state.apply(event);
     tui.render(leader.state);
   });
 
+  // 初始渲染
   tui.render(leader.state);
 
-  while (true) {
-    const cmd = await tui.readCommand();
-    if (cmd === "exit" || cmd === "quit") break;
-    if (cmd === "status") {
-      tui.render(leader.state);
-      continue;
-    }
-    const msgMatch = cmd.match(/^msg\s+(\S+)\s+(.+)/);
-    if (msgMatch) {
-      await leader.sendMessage(msgMatch[1], msgMatch[2]);
-      tui.render(leader.state);
-      continue;
-    }
-    console.log("Unknown command. Available: msg, status, exit");
-  }
+  // 启动 watcher 监听 Leader 消息目录
+  await leader.startWatcher();
+
+  // 阻塞等待 SIGINT
+  await new Promise<void>((resolve) => {
+    process.once("SIGINT", resolve);
+    process.once("SIGTERM", resolve);
+  });
+
+  await leader.shutdown();
 }
 ```
 
@@ -248,10 +267,11 @@ startLeader(config)
   ├─ 4. 初始化 CACHE_DIR/{instance_id}/
   ├─ 5. 加载 leader.md 模板
   ├─ 6. 初始化 EventBus
-  ├─ 7. 启动 WorkerMonitor (watch /instances)
-  ├─ 8. 启动 TaskOrchestrator (watch /tasks)
-  ├─ 9. 初始化 TUI (team panel + event log + cmd input)
-  └─ 10. 进入事件循环 (等待 TUI 输入 / SIGINT)
+  ├─ 7. 启动 LeaderWatcher (watch /messages/{leader_id})
+  ├─ 8. 启动 WorkerMonitor (watch /instances)
+  ├─ 9. 启动 TaskOrchestrator (watch /tasks)
+  ├─ 10. 初始化 TUI (只读: team panel + task panel + event log + footer)
+  └─ 11. 阻塞等待 SIGINT (所有交互通过外部 CLI 完成)
 ```
 
 ## Worker Watcher 架构

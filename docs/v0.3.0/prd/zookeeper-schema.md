@@ -217,8 +217,9 @@
 | `/instances/{id}` | Leader | DataWatch | 数据变更 | 更新 TUI 中该成员的状态/当前任务 |
 | `/tasks/pending` | Leader | ChildWatch | 子节点增加 | 更新 TUI 任务面板；触发新任务通知 |
 | `/tasks/claimed` | Leader | ChildWatch | 子节点增删 | 子节点增加→任务被认领通知；子节点删除→孤儿任务回收 |
-| `/messages/{id}` | Worker | ChildWatch | 子节点增加 | 读取新消息，`$COMMAND -p "$MSG" \| tee $CACHE_DIR/{key}.log`，标记已读 |
-| `/messages/*` | Leader (可选) | ChildWatch | 子节点增加 | 更新 TUI 事件日志（仅计数/通知，不读内容） |
+| `/messages/{leader_id}` | Leader | ChildWatch | 子节点增加 | Leader watcher 处理 Worker 发来的完成报告，`$COMMAND -p "$MSG" \| tee $CACHE_DIR/{key}.log` |
+| `/messages/{worker_id}` | Worker | ChildWatch | 子节点增加 | Worker watcher 处理 Leader 发来的任务指令，`$COMMAND -p "$MSG" \| tee $CACHE_DIR/{key}.log` |
+| `/messages/*` | Leader (TUI) | 仅计数 | 子节点增加 | 更新 TUI 事件日志（仅显示消息摘要，不读取内容） |
 | `/context/{key}` | 任意节点 | DataWatch | 数据变更 | `watch-context` CLI 命令输出变更 |
 
 ## Watch 重建
