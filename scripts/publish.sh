@@ -75,13 +75,14 @@ echo -e "${YELLOW}Pushing commit and tag...${NC}"
 git push origin master
 git push origin "v${NEW_VERSION}"
 
-# ── 6. Publish to npm ──
-
-echo -e "${YELLOW}Publishing to npm...${NC}"
-npm publish --access public
+# ── 6. Publish to npm (manual — requires OTP) ──
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}  Published v${NEW_VERSION} to npm${NC}"
-echo -e "${GREEN}  https://www.npmjs.com/package/@adamancyzhang/claude-orchestrator${NC}"
+echo -e "${GREEN}  Ready to publish v${NEW_VERSION}${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  Run manually to publish:"
+echo -e "  ${YELLOW}npm publish --access public${NC}"
+echo ""
+echo -e "  https://www.npmjs.com/package/@adamancyzhang/claude-orchestrator"
