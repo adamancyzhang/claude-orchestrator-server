@@ -153,6 +153,7 @@ export const RegisterInstanceInput = z.object({
   name: z.string().min(1),
   role: InstanceRole.default("general"),
   instance_id: z.string().optional(),
+  work_dir: z.string().optional(),
 });
 
 export const HeartbeatInput = z.object({

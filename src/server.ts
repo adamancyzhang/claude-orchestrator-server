@@ -6,6 +6,7 @@ import { ZkClient } from "./zk/client.js";
 import { InstanceRegistry } from "./modules/registry.js";
 import { TaskQueue } from "./modules/task-queue.js";
 import { MessageRouter } from "./modules/message-router.js";
+import { MessageWatcher } from "./modules/message-watcher.js";
 import { ContextStore } from "./modules/context-store.js";
 import {
   InstanceSchema,
@@ -32,6 +33,7 @@ export async function startServer(config: Config): Promise<void> {
   const registry = new InstanceRegistry(zk);
   const taskQueue = new TaskQueue(zk);
   const messageRouter = new MessageRouter(zk);
+  const messageWatcher = new MessageWatcher(zk);
   const contextStore = new ContextStore(zk);
 
   // ── Setup MCP Server ──
@@ -70,19 +72,27 @@ export async function startServer(config: Config): Promise<void> {
       name: z.string().min(1),
       role: z.string().default("general"),
       instance_id: z.string().optional(),
+      work_dir: z.string().optional(),
     },
-    async ({ name, role, instance_id }) => {
+    async ({ name, role, instance_id, work_dir }) => {
       if (!zk.connected) {
         return { content: [{ type: "text", text: "Error: ZooKeeper is not connected." }] };
       }
       const instance = await registry.register(name, role, instance_id);
       const action = instance_id && instance.id === instance_id ? "re-registered" : "registered";
+
+      let watcherNote = "";
+      if (work_dir) {
+        await messageWatcher.startWatching(instance.id, work_dir);
+        watcherNote = `\nMessage watcher started for: ${work_dir}`;
+      }
+
       return {
         content: [
           {
             type: "text",
             text: `Instance ${action}:\n${JSON.stringify(instance, null, 2)}\n\n` +
-              `To receive real-time messages, subscribe to: orchestrator://messages/${instance.id}`,
+              `To receive real-time messages, subscribe to: orchestrator://messages/${instance.id}${watcherNote}`,
           },
         ],
       };
@@ -572,7 +582,7 @@ export async function startServer(config: Config): Promise<void> {
   // REST endpoint for CLI-based registration (uses server's persistent ZK connection)
   app.post("/register", async (req, res) => {
     try {
-      const { name, role, instance_id } = req.body;
+      const { name, role, instance_id, work_dir } = req.body;
       if (!name || typeof name !== "string") {
         res.status(400).json({ error: "name is required" });
         return;
@@ -586,6 +596,9 @@ export async function startServer(config: Config): Promise<void> {
         typeof role === "string" ? role : "general",
         typeof instance_id === "string" ? instance_id : undefined
       );
+      if (typeof work_dir === "string" && work_dir.length > 0) {
+        await messageWatcher.startWatching(instance.id, work_dir);
+      }
       res.json(instance);
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -600,8 +613,9 @@ export async function startServer(config: Config): Promise<void> {
         res.status(400).json({ error: "instance_id is required" });
         return;
       }
+      messageWatcher.stopWatching(instance_id);
       if (!zk.connected) {
-        res.status(503).json({ error: "ZooKeeper is not connected" });
+        res.json({ status: "unregistered", instance_id });
         return;
       }
       await registry.unregister(instance_id);
@@ -615,6 +629,18 @@ export async function startServer(config: Config): Promise<void> {
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", zookeeper: zk.connected ? "connected" : "disconnected" });
   });
+
+  // ── Shutdown handlers ──
+
+  const shutdown = async (signal: string) => {
+    console.log(`\n[server] Received ${signal}, shutting down...`);
+    messageWatcher.stopAll();
+    await zk.disconnect();
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 
   return new Promise((resolve) => {
     app.listen(config.port, config.host, () => {
