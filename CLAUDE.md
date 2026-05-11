@@ -27,7 +27,7 @@ Four modules, all backed by ZooKeeper:
 3. **Message Router** — ZK watches detect new messages; `notifications/resources/updated` notifies instances via MCP protocol; `poll_messages` and `wait_for_message` tools for retrieval
 4. **Shared Context** — Persistent znodes for key-value storage with watch-based change notification
 
-The MCP server exposes 18 tools, 5 resource URIs, and 2 prompts. See `docs/prd/README.md` for the full specification.
+The MCP server exposes 18 tools, 5 resource URIs, and 2 prompts. See `docs/v0.2.0/prd/README.md` for the full specification.
 
 ## Project Structure
 
@@ -35,10 +35,16 @@ The MCP server exposes 18 tools, 5 resource URIs, and 2 prompts. See `docs/prd/R
 ├── package.json
 ├── tsconfig.json
 ├── docker-compose.yml         # ZooKeeper
-├── docs/prd/
-│   ├── README.md              # Full PRD
-│   ├── architecture.md        # Component interaction, SSE, atomicity
-│   └── zookeeper-schema.md    # ZK node tree, data formats, watch strategy
+├── docs/
+│   ├── v0.1.0/                # Archived Python v0.1.0 docs
+│   │   ├── prd/               # Original PRD + architecture + ZK schema
+│   │   └── operations-guide.md
+│   └── v0.2.0/                # Current TypeScript v0.2.0 docs
+│       ├── prd/
+│       │   ├── README.md      # Full PRD (updated for TS)
+│       │   ├── architecture.md # Component interaction, SSE, atomicity
+│       │   └── zookeeper-schema.md # ZK node tree, data formats, watch strategy
+│       └── operations-guide.md # Step-by-step walkthrough (Chinese)
 ├── src/
 │   ├── index.ts               # CLI entry point
 │   ├── server.ts              # MCP server entry + tool/resource/prompt registration
@@ -77,6 +83,57 @@ The MCP server exposes 18 tools, 5 resource URIs, and 2 prompts. See `docs/prd/R
 - **Real-time messages**: No custom SSE events (Claude Code silently drops unregistered notifications). Instead: (1) `resources/subscribe` on `orchestrator://messages/{id}` triggers `notifications/resources/updated` when new messages arrive — Claude Code's MCP SDK handles this natively and re-reads the resource. (2) `wait_for_message` tool for blocking long-poll when actively waiting for a reply. (3) `poll_messages` tool for explicit pull when needed.
 - **No external database**: All state lives in ZooKeeper. Task history and messages use persistent znodes with TTL-based cleanup.
 - **Pure npm distribution**: `npm install -g` installs the CLI directly. No binary downloads needed.
+
+## MCP Tools Reference
+
+| # | Tool | Description |
+|---|------|-------------|
+| 1 | `register_instance` | Join the swarm with a name and role |
+| 2 | `heartbeat` | Stay alive, optionally report current task |
+| 3 | `list_instances` | List all active instances |
+| 4 | `push_task` | Create a task in the queue |
+| 5 | `claim_task` | Atomically claim the next pending task |
+| 6 | `complete_task` | Mark a claimed task as done |
+| 7 | `list_tasks` | View tasks by status (pending/claimed/completed) |
+| 8 | `send_message` | DM or broadcast a message |
+| 9 | `poll_messages` | Check inbox (non-blocking) |
+| 10 | `wait_for_message` | Long-poll — block until message arrives |
+| 11 | `mark_read` | Mark a message as read |
+| 12 | `dismiss_message` | Delete a message |
+| 13 | `request_help` | Broadcast a help request |
+| 14 | `set_context` | Write a shared key-value entry |
+| 15 | `get_context` | Read a shared key-value entry |
+| 16 | `delete_context` | Remove a shared context key |
+| 17 | `list_context_keys` | List all context keys |
+| 18 | `server_status` | Health check (ZK connection, port) |
+
+### MCP Resources
+| URI | Description | Subscription |
+|-----|-------------|:---:|
+| `orchestrator://instances` | Active instance list | — |
+| `orchestrator://tasks/pending` | Pending tasks | — |
+| `orchestrator://tasks/in-progress` | Claimed tasks in progress | — |
+| `orchestrator://messages/{instance_id}` | Instance messages | **Yes** |
+| `orchestrator://context/{key}` | Context value | **Yes** |
+
+### MCP Prompts
+| Prompt | Description |
+|--------|-------------|
+| `orchestrate-task` | Break down a goal into assignable tasks |
+| `team-status` | Summarize current team state |
+
+## Documentation
+
+Docs are organized by version under `docs/`:
+
+- **`docs/v0.1.0/`** — Archived Python v0.1.0 documentation (git history is authoritative)
+- **`docs/v0.2.0/`** — Current TypeScript v0.2.0 docs
+  - `prd/README.md` — Full product requirements document
+  - `prd/architecture.md` — Component interaction, SSE transport, claim atomicity
+  - `prd/zookeeper-schema.md` — ZK node tree, data formats, watch strategy
+  - `operations-guide.md` — Step-by-step operational walkthrough (Chinese)
+
+When making changes that affect the spec, update `docs/v0.2.0/prd/` accordingly. For a new major version, create `docs/vX.Y.0/`.
 
 ## Development Commands
 

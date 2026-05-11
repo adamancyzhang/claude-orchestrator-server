@@ -9,8 +9,8 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@adamancyzhang/claude-orchestrator"><img src="https://img.shields.io/npm/v/@adamancyzhang/claude-orchestrator?color=blue" alt="npm"></a>
   <a href="https://github.com/adamancyzhang/claude-orchestrator-server"><img src="https://img.shields.io/github/license/adamancyzhang/claude-orchestrator-server" alt="license"></a>
-  <a href="https://pypi.org/project/claude-mcp-server/"><img src="https://img.shields.io/pypi/v/claude-mcp-server?color=yellow" alt="PyPI"></a>
-  <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="python">
+  <img src="https://img.shields.io/badge/node-18%2B-green" alt="node">
+  <img src="https://img.shields.io/badge/typescript-5.6%2B-blue" alt="typescript">
   <img src="https://img.shields.io/badge/ZooKeeper-3.8%2B-orange" alt="zookeeper">
 </p>
 
@@ -55,11 +55,8 @@ Behind the scenes, ZooKeeper acts as the coordination backbone: ephemeral nodes 
 ### 1. Install the CLI
 
 ```bash
-# One command, all platforms
 npm install -g @adamancyzhang/claude-orchestrator
 ```
-
-Post-install downloads the right native binary for your OS (macOS/Linux, arm64/x64). If no prebuilt binary matches, `scripts/build-binary.sh` builds one locally.
 
 ### 2. Start ZooKeeper
 
@@ -71,9 +68,12 @@ docker-compose up -d
 
 ```bash
 # From source
-pip install -e ".[dev]"
-python -m src.server
-# → Server listening on http://127.0.0.1:3100
+git clone https://github.com/adamancyzhang/claude-orchestrator-server.git
+cd claude-orchestrator-server
+npm install
+npm run build
+node dist/index.js --server
+# → MCP server listening on http://127.0.0.1:3100
 ```
 
 ### 4. Configure Claude Code
@@ -110,12 +110,12 @@ Now open another terminal, start a second Claude Code instance, and register Jer
 
 | Module | What it does | ZK magic |
 |--------|-------------|----------|
-| **Instance Registry** | Register, heartbeat, discover | Ephemeral nodes → auto-cleanup on disconnect |
+| **Instance Registry** | Register, heartbeat, discover, unregister | Ephemeral nodes → auto-cleanup on disconnect |
 | **Task Queue** | Push → Claim → Complete | Sequential nodes for FIFO, ephemeral claims for atomic locks |
-| **Message Router** | P2P messages, broadcast, help requests | Persistent-sequential nodes, poll-based retrieval |
-| **Context Store** | Shared key-value storage | Persistent nodes, cross-instance visibility |
+| **Message Router** | P2P messages, broadcast, help requests, long-poll | Persistent-sequential nodes, ZK watches for push |
+| **Context Store** | Shared key-value storage, watch for changes | Persistent nodes, cross-instance visibility |
 
-### The MCP Tools
+### The MCP Tools (18)
 
 Each Claude Code instance calls these tools to participate in the swarm:
 
@@ -130,9 +130,15 @@ Each Claude Code instance calls these tools to participate in the swarm:
 | 7 | `list_tasks` | View tasks by status (pending / claimed / completed) |
 | 8 | `send_message` | DM another instance or broadcast to everyone |
 | 9 | `poll_messages` | Check your inbox |
-| 10 | `request_help` | Broadcast a question to the whole team |
-| 11 | `set_context` | Write a shared key-value entry |
-| 12 | `get_context` | Read a shared key-value entry |
+| 10 | `wait_for_message` | Long-poll — block until a message arrives |
+| 11 | `dismiss_message` | Delete a message from your inbox |
+| 12 | `request_help` | Broadcast a question to the whole team |
+| 13 | `set_context` | Write a shared key-value entry |
+| 14 | `get_context` | Read a shared key-value entry |
+| 15 | `delete_context` | Remove a shared context key |
+| 16 | `list_context_keys` | List all context keys |
+| 17 | `mark_read` | Mark a specific message as read |
+| 18 | `server_status` | Health check |
 
 ### Or Use the CLI Directly
 
@@ -157,17 +163,41 @@ claude-orchestrator send-message --to <instance-id> --content "How's PR #42 goin
 # Check inbox
 claude-orchestrator poll-messages
 
+# Wait for messages (blocks until received or timeout)
+claude-orchestrator wait-for-message --timeout 60
+
+# Dismiss a message
+claude-orchestrator dismiss-message --message-id msg-0000000000
+
 # Share context
 claude-orchestrator set-context --key "api_version" --value "v2.1"
 
 # Read shared context
 claude-orchestrator get-context --key "api_version"
 
+# List context keys
+claude-orchestrator list-context-keys
+
+# Delete context
+claude-orchestrator delete-context --key "api_version"
+
+# Watch context for changes
+claude-orchestrator watch-context --key "jwt_strategy"
+
+# Watch for new tasks
+claude-orchestrator watch-tasks
+
+# Unregister
+claude-orchestrator unregister
+
+# Show config
+claude-orchestrator config
+
 # Health check
 claude-orchestrator status
 ```
 
-All CLI commands return JSON. Every command supports `--zk-hosts` (or `ZK_HOSTS` env var) for pointing at a remote ZooKeeper.
+All CLI commands return JSON. Every command supports `--zookeeper` / `-z` (or `ZK_HOSTS` env var) for pointing at a remote ZooKeeper.
 
 ---
 
@@ -211,7 +241,7 @@ heartbeat current_task="task-0000000000"
 ```
 request_help:
   question: "What should the JWT expiry be? Access vs refresh token?"
-  context: "FastAPI + python-jose, ~100K DAU"
+  context: "Express + jsonwebtoken, ~100K DAU"
 ```
 
 **Tom checks messages and replies:**
@@ -266,9 +296,8 @@ No polling required for task claiming — the atomic claim mechanism means Jerry
 
 ### Prerequisites
 
-- Python 3.12+
+- Node.js 18+
 - Docker (for ZooKeeper)
-- Node.js 18+ (for the npm CLI wrapper)
 - Claude Code (for the MCP integration)
 
 ### From Source
@@ -277,33 +306,26 @@ No polling required for task claiming — the atomic claim mechanism means Jerry
 git clone https://github.com/adamancyzhang/claude-orchestrator-server.git
 cd claude-orchestrator-server
 
-# Install Python dependencies
-pip install -e ".[dev]"
+# Install dependencies
+npm install
 
 # Start ZooKeeper
 docker-compose up -d
 
-# Run the server
-python -m src.server
+# Build TypeScript
+npm run build
+
+# Start the server
+node dist/index.js --server
 
 # Or use the CLI directly
-claude-orchestrator status
+node dist/index.js status
 ```
-
-### Build a Standalone Binary
-
-```bash
-bash scripts/build-binary.sh
-# Output: dist/claude-orchestrator-{platform}-{arch}
-```
-
-The binary is a single file with zero dependencies — Python, ZooKeeper client, and all libraries bundled via PyInstaller.
 
 ### Run Tests
 
 ```bash
-# End-to-end MCP verification (requires running server + ZK)
-python tests/verify_mvp.py
+npm test
 ```
 
 ---
@@ -314,7 +336,7 @@ The repo includes Claude Code skills that make the orchestrator even easier to u
 
 | Skill | What it does |
 |-------|-------------|
-| `claude-orchestrator` | Full CLI reference — all 12 commands with examples |
+| `claude-orchestrator` | Full CLI reference — all 21 commands with examples |
 | `orchestrator-register` | Guided registration flow |
 | `orchestrator-status` | Dashboard: health, instances, tasks |
 | `orchestrator-communicate` | Message patterns: poll, DM, broadcast |
@@ -329,11 +351,11 @@ The repo includes Claude Code skills that make the orchestrator even easier to u
 |---------|-----------------|
 | Instance lifecycle | Ephemeral nodes → auto-cleanup. No heartbeat polling needed. |
 | Task ordering | Sequential nodes → guaranteed FIFO. No race conditions. |
-| Claim atomicity | `create(path, ephemeral=True)` is atomic at the ZK level. Only one winner. |
+| Claim atomicity | `create(path, ephemeral=true)` is atomic at the ZK level. Only one winner. |
 | Change notification | Built-in watches → push, not poll. |
-| Dependencies | One dependency (ZK) vs. Redis + Postgres combination. |
+| Dependencies | One dependency (ZK). No external database needed. |
 
-Zero external database. All state lives in ZooKeeper. For archival beyond ZK's data limits, a lightweight SQLite log is the recommended addition.
+Zero external database. All state lives in ZooKeeper.
 
 ---
 
@@ -352,9 +374,10 @@ Zero external database. All state lives in ZooKeeper. For archival beyond ZK's d
 
 | Config | Where | Default |
 |--------|-------|---------|
-| ZK hosts | `--zk-hosts` flag or `ZK_HOSTS` env | `127.0.0.1:2181` |
-| Instance ID | `--instance-id` flag or `~/.claude-orchestrator/config.json` | auto-saved after `register` |
-| MCP server host | `src/server.py` | `127.0.0.1:3100` |
+| ZK hosts | `-z, --zookeeper` flag or `ZK_HOSTS` env | `127.0.0.1:2181` |
+| Instance ID | `-i, --instance-id` flag or `~/.claude-orchestrator/config.json` | auto-saved after `register` |
+| MCP server host | `--host` flag or `ORCHESTRATOR_HOST` env | `127.0.0.1` |
+| MCP server port | `--port` flag or `ORCHESTRATOR_PORT` env | `3100` |
 
 ---
 
@@ -362,30 +385,43 @@ Zero external database. All state lives in ZooKeeper. For archival beyond ZK's d
 
 ```
 ├── src/
-│   ├── server.py          # FastMCP server — 12 tools
-│   ├── cli.py             # Click CLI — 12 commands
-│   ├── zk_client.py       # ZooKeeper CRUD + reconnect
-│   ├── registry.py        # Instance registration + heartbeat
-│   ├── task_queue.py      # Push → Claim → Complete
-│   ├── message_router.py  # Send → Poll → Request Help
-│   ├── context_store.py   # Get → Set shared KV
-│   └── models.py          # Pydantic data models
+│   ├── index.ts               # CLI entry point (commander)
+│   ├── server.ts              # MCP server — 18 tools, 5 resources, 2 prompts
+│   ├── config.ts              # Configuration handling
+│   ├── cli/
+│   │   └── commands.ts        # CLI subcommand implementations
+│   ├── zk/
+│   │   ├── client.ts          # ZooKeeper connection management
+│   │   ├── paths.ts           # ZK path constants
+│   │   └── watcher.ts         # ZK watch manager
+│   ├── modules/
+│   │   ├── registry.ts        # Instance registry
+│   │   ├── task-queue.ts      # Task queue with atomic claim
+│   │   ├── message-router.ts  # Message routing + long-poll
+│   │   └── context-store.ts   # Shared key-value store
+│   ├── models/
+│   │   └── schemas.ts         # Zod schemas and inferred types
+│   └── utils/
+│       └── output.ts          # CLI output formatting
 ├── bin/
-│   └── claude-orchestrator     # npm CLI entry (Node.js shim)
+│   └── claude-orchestrator     # npm CLI entry (Node.js)
 ├── scripts/
-│   ├── install.js              # npm postinstall — download binary
-│   ├── build-binary.sh         # PyInstaller packager
 │   ├── start-zk.sh             # Docker ZK launcher
 │   ├── start-server.sh         # Server launcher
-│   └── stop-all.sh             # Tear down
+│   ├── stop-all.sh             # Tear down
+│   └── publish.sh              # npm publish pipeline
 ├── skills/                     # Claude Code skills
-├── tests/
-│   └── verify_mvp.py           # E2E MCP verification
 ├── docs/
-│   ├── prd/                    # Full spec + architecture
-│   └── operations-guide.md     # Step-by-step walkthrough (Chinese)
+│   ├── v0.1.0/                 # Archived Python v0.1.0 docs
+│   └── v0.2.0/                 # Current TypeScript docs
+│       ├── prd/                # Full spec + architecture
+│       └── operations-guide.md # Step-by-step walkthrough
+├── tests/
+│   ├── unit/
+│   └── integration/
 ├── docker-compose.yml          # ZooKeeper
-└── package.json                # npm package definition
+├── package.json                # npm package definition
+└── tsconfig.json               # TypeScript configuration
 ```
 
 ---
@@ -397,5 +433,5 @@ MIT — use it, fork it, ship it.
 ---
 
 <p align="center">
-  <sub>Built with Python, ZooKeeper, and the MCP protocol. Orchestrate responsibly.</sub>
+  <sub>Built with TypeScript, ZooKeeper, and the MCP protocol. Orchestrate responsibly.</sub>
 </p>

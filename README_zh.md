@@ -9,8 +9,8 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@adamancyzhang/claude-orchestrator"><img src="https://img.shields.io/npm/v/@adamancyzhang/claude-orchestrator?color=blue" alt="npm"></a>
   <a href="https://github.com/adamancyzhang/claude-orchestrator-server"><img src="https://img.shields.io/github/license/adamancyzhang/claude-orchestrator-server" alt="license"></a>
-  <a href="https://pypi.org/project/claude-mcp-server/"><img src="https://img.shields.io/pypi/v/claude-mcp-server?color=yellow" alt="PyPI"></a>
-  <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="python">
+  <img src="https://img.shields.io/badge/node-18%2B-green" alt="node">
+  <img src="https://img.shields.io/badge/typescript-5.6%2B-blue" alt="typescript">
   <img src="https://img.shields.io/badge/ZooKeeper-3.8%2B-orange" alt="zookeeper">
 </p>
 
@@ -43,7 +43,7 @@
          ▲                    ▲                    ▲
          │                    │                    │
     ┌────┴────┐          ┌────┴────┐          ┌────┴────┐
-    │  Tom 🧑  │          │ Jerry 🧑 │          │  Bob 🧑  │
+    │  Tom    │          │ Jerry   │          │  Bob    │
     │ 架构师   │          │ 开发者   │          │ 测试    │
     └─────────┘          └─────────┘          └─────────┘
 ```
@@ -55,11 +55,8 @@
 ### 1. 安装命令行工具
 
 ```bash
-# 一条命令，全平台支持
 npm install -g @adamancyzhang/claude-orchestrator
 ```
-
-安装时自动下载匹配你操作系统和架构的原生二进制文件（macOS/Linux, arm64/x64）。如果没有匹配的预编译包，运行 `scripts/build-binary.sh` 本地构建。
 
 ### 2. 启动 ZooKeeper
 
@@ -71,9 +68,12 @@ docker-compose up -d
 
 ```bash
 # 从源码运行
-pip install -e ".[dev]"
-python -m src.server
-# → 服务监听在 http://127.0.0.1:3100
+git clone https://github.com/adamancyzhang/claude-orchestrator-server.git
+cd claude-orchestrator-server
+npm install
+npm run build
+node dist/index.js --server
+# → MCP server listening on http://127.0.0.1:3100
 ```
 
 ### 4. 配置 Claude Code
@@ -110,12 +110,12 @@ name 设为 "Tom"，role 设为 "architect"。记下返回的 instance_id。
 
 | 模块 | 功能 | ZK 魔法 |
 |------|------|---------|
-| **实例注册** | 注册、心跳、发现 | 临时节点 → 断线自动清理 |
+| **实例注册** | 注册、心跳、发现、注销 | 临时节点 → 断线自动清理 |
 | **任务队列** | 推送 → 认领 → 完成 | 顺序节点保证 FIFO，临时认领节点实现原子锁 |
-| **消息路由** | 点对点消息、广播、求助 | 持久顺序节点，基于轮询的检索 |
-| **上下文存储** | 共享键值存储 | 持久节点，跨实例可见 |
+| **消息路由** | 点对点消息、广播、求助、长轮询 | 持久顺序节点 + ZK Watch 推送 |
+| **上下文存储** | 共享键值存储、变更监听 | 持久节点，跨实例可见 |
 
-### MCP 工具清单
+### MCP 工具清单（18 个）
 
 每个 Claude Code 实例通过调用以下工具参与协作：
 
@@ -130,9 +130,15 @@ name 设为 "Tom"，role 设为 "architect"。记下返回的 instance_id。
 | 7 | `list_tasks` | 按状态查看任务（pending / claimed / completed） |
 | 8 | `send_message` | 私聊其他实例或广播给所有人 |
 | 9 | `poll_messages` | 检查收件箱 |
-| 10 | `request_help` | 向整个团队广播求助 |
-| 11 | `set_context` | 写入共享键值对 |
-| 12 | `get_context` | 读取共享键值对 |
+| 10 | `wait_for_message` | 长轮询 —— 阻塞等待新消息 |
+| 11 | `dismiss_message` | 删除收件箱中的消息 |
+| 12 | `request_help` | 向整个团队广播求助 |
+| 13 | `set_context` | 写入共享键值对 |
+| 14 | `get_context` | 读取共享键值对 |
+| 15 | `delete_context` | 删除共享上下文键 |
+| 16 | `list_context_keys` | 列出所有上下文键 |
+| 17 | `mark_read` | 标记指定消息为已读 |
+| 18 | `server_status` | 健康检查 |
 
 ### 或直接用命令行
 
@@ -157,17 +163,41 @@ claude-orchestrator send-message --to <instance-id> --content "PR #42 进展如�
 # 检查收件箱
 claude-orchestrator poll-messages
 
+# 等待消息（阻塞直到收到或超时）
+claude-orchestrator wait-for-message --timeout 60
+
+# 删除消息
+claude-orchestrator dismiss-message --message-id msg-0000000000
+
 # 共享上下文
 claude-orchestrator set-context --key "api_version" --value "v2.1"
 
 # 读取共享上下文
 claude-orchestrator get-context --key "api_version"
 
+# 列出上下文键
+claude-orchestrator list-context-keys
+
+# 删除上下文
+claude-orchestrator delete-context --key "api_version"
+
+# 监听上下文变更
+claude-orchestrator watch-context --key "jwt_strategy"
+
+# 监听新任务
+claude-orchestrator watch-tasks
+
+# 注销实例
+claude-orchestrator unregister
+
+# 查看配置
+claude-orchestrator config
+
 # 健康检查
 claude-orchestrator status
 ```
 
-所有 CLI 命令返回 JSON 格式。每个命令都支持 `--zk-hosts`（或环境变量 `ZK_HOSTS`）以指向远程 ZooKeeper。
+所有 CLI 命令返回 JSON 格式。每个命令都支持 `--zookeeper` / `-z`（或环境变量 `ZK_HOSTS`）以指向远程 ZooKeeper。
 
 ---
 
@@ -211,7 +241,7 @@ heartbeat current_task="task-0000000000"
 ```
 request_help:
   question: "JWT token 的过期时间应该设多久？access token 和 refresh token 分别怎么处理？"
-  context: "FastAPI + python-jose，用户量预期 10万 DAU"
+  context: "Express + jsonwebtoken，用户量预期 10万 DAU"
 ```
 
 **Tom 检查消息并回复：**
@@ -266,9 +296,8 @@ complete_task task_id="task-0000000000" result="PR #42 — 实现了登录接口
 
 ### 环境要求
 
-- Python 3.12+
+- Node.js 18+
 - Docker（用于 ZooKeeper）
-- Node.js 18+（用于 npm CLI 封装）
 - Claude Code（用于 MCP 集成）
 
 ### 源码安装
@@ -277,44 +306,37 @@ complete_task task_id="task-0000000000" result="PR #42 — 实现了登录接口
 git clone https://github.com/adamancyzhang/claude-orchestrator-server.git
 cd claude-orchestrator-server
 
-# 安装 Python 依赖
-pip install -e ".[dev]"
+# 安装依赖
+npm install
 
 # 启动 ZooKeeper
 docker-compose up -d
 
-# 运行服务端
-python -m src.server
+# 编译 TypeScript
+npm run build
+
+# 启动服务端
+node dist/index.js --server
 
 # 或直接使用 CLI
-claude-orchestrator status
+node dist/index.js status
 ```
-
-### 构建独立二进制
-
-```bash
-bash scripts/build-binary.sh
-# 输出: dist/claude-orchestrator-{platform}-{arch}
-```
-
-二进制文件是零依赖的单文件 —— Python、ZooKeeper 客户端及所有库通过 PyInstaller 打包。
 
 ### 运行测试
 
 ```bash
-# 端到端 MCP 验证（需要先启动 server + ZK）
-python tests/verify_mvp.py
+npm test
 ```
 
 ---
 
 ## 内置技能
 
-仓库内置了 Claude Code 技能，让编排器更好用。克隆后添加到 Claude Code 技能目录即可：
+仓库内置了 Claude Code 技能，让编排器更好用：
 
 | 技能 | 功能 |
 |------|------|
-| `claude-orchestrator` | 完整 CLI 参考 —— 全部 12 条命令及示例 |
+| `claude-orchestrator` | 完整 CLI 参考 —— 全部 21 条命令及示例 |
 | `orchestrator-register` | 引导式注册流程 |
 | `orchestrator-status` | 仪表盘：健康状态、实例、任务 |
 | `orchestrator-communicate` | 消息模式：轮询、私聊、广播 |
@@ -329,11 +351,11 @@ python tests/verify_mvp.py
 |--------|-----------------|
 | 实例生命周期 | 临时节点 → 自动清理。无需心跳轮询。 |
 | 任务排序 | 顺序节点 → 保证 FIFO。无竞态条件。 |
-| 认领原子性 | `create(path, ephemeral=True)` 在 ZK 层面是原子的。只有一个赢家。 |
+| 认领原子性 | `create(path, ephemeral=true)` 在 ZK 层面是原子的。只有一个赢家。 |
 | 变更通知 | 内置 Watch → 推送，而非轮询。 |
-| 依赖项 | 一个依赖（ZK）vs. Redis + Postgres 组合。 |
+| 依赖项 | 一个依赖（ZK）。无需外部数据库。 |
 
-无需外部数据库。所有状态都在 ZooKeeper 中。如需超出 ZK 数据限制的归档，建议添加轻量 SQLite 日志。
+所有状态都在 ZooKeeper 中。零外部数据库。
 
 ---
 
@@ -352,9 +374,10 @@ python tests/verify_mvp.py
 
 | 配置项 | 位置 | 默认值 |
 |--------|------|--------|
-| ZK 地址 | `--zk-hosts` 参数或 `ZK_HOSTS` 环境变量 | `127.0.0.1:2181` |
-| 实例 ID | `--instance-id` 参数或 `~/.claude-orchestrator/config.json` | `register` 后自动保存 |
-| MCP 服务端地址 | `src/server.py` | `127.0.0.1:3100` |
+| ZK 地址 | `-z, --zookeeper` 参数或 `ZK_HOSTS` 环境变量 | `127.0.0.1:2181` |
+| 实例 ID | `-i, --instance-id` 参数或 `~/.claude-orchestrator/config.json` | `register` 后自动保存 |
+| MCP 服务端地址 | `--host` 参数或 `ORCHESTRATOR_HOST` 环境变量 | `127.0.0.1` |
+| MCP 服务端端口 | `--port` 参数或 `ORCHESTRATOR_PORT` 环境变量 | `3100` |
 
 ---
 
@@ -362,30 +385,43 @@ python tests/verify_mvp.py
 
 ```
 ├── src/
-│   ├── server.py          # FastMCP 服务端 —— 12 个工具
-│   ├── cli.py             # Click CLI —— 12 条命令
-│   ├── zk_client.py       # ZooKeeper CRUD + 重连
-│   ├── registry.py        # 实例注册 + 心跳
-│   ├── task_queue.py      # 推送 → 认领 → 完成
-│   ├── message_router.py  # 发送 → 轮询 → 求助
-│   ├── context_store.py   # 获取 → 设置共享 KV
-│   └── models.py          # Pydantic 数据模型
+│   ├── index.ts               # CLI 入口 (commander)
+│   ├── server.ts              # MCP 服务端 — 18 工具, 5 资源, 2 提示
+│   ├── config.ts              # 配置管理
+│   ├── cli/
+│   │   └── commands.ts        # CLI 子命令实现
+│   ├── zk/
+│   │   ├── client.ts          # ZooKeeper 连接管理
+│   │   ├── paths.ts           # ZK 路径常量
+│   │   └── watcher.ts         # ZK Watch 管理器
+│   ├── modules/
+│   │   ├── registry.ts        # 实例注册
+│   │   ├── task-queue.ts      # 任务队列（原子认领）
+│   │   ├── message-router.ts  # 消息路由 + 长轮询
+│   │   └── context-store.ts   # 共享键值存储
+│   ├── models/
+│   │   └── schemas.ts         # Zod 模式 + 推断类型
+│   └── utils/
+│       └── output.ts          # CLI 输出格式化
 ├── bin/
-│   └── claude-orchestrator     # npm CLI 入口（Node.js 桥接）
+│   └── claude-orchestrator     # npm CLI 入口 (Node.js)
 ├── scripts/
-│   ├── install.js              # npm postinstall —— 下载二进制
-│   ├── build-binary.sh         # PyInstaller 打包
 │   ├── start-zk.sh             # Docker ZK 启动器
 │   ├── start-server.sh         # 服务端启动器
-│   └── stop-all.sh             # 一键停止
+│   ├── stop-all.sh             # 一键停止
+│   └── publish.sh              # npm 发布流程
 ├── skills/                     # Claude Code 技能
-├── tests/
-│   └── verify_mvp.py           # 端到端 MCP 验证
 ├── docs/
-│   ├── prd/                    # 完整规格 + 架构
-│   └── operations-guide.md     # 分步操作手册
+│   ├── v0.1.0/                 # 存档：Python v0.1.0 文档
+│   └── v0.2.0/                 # 当前 TypeScript 文档
+│       ├── prd/                # 完整规格 + 架构
+│       └── operations-guide.md # 分步操作手册
+├── tests/
+│   ├── unit/
+│   └── integration/
 ├── docker-compose.yml          # ZooKeeper
-└── package.json                # npm 包定义
+├── package.json                # npm 包定义
+└── tsconfig.json               # TypeScript 配置
 ```
 
 ---
@@ -397,5 +433,5 @@ MIT — 随便用，随便改，随便发。
 ---
 
 <p align="center">
-  <sub>基于 Python、ZooKeeper 和 MCP 协议构建。请负责任地编排。</sub>
+  <sub>基于 TypeScript、ZooKeeper 和 MCP 协议构建。请负责任地编排。</sub>
 </p>
