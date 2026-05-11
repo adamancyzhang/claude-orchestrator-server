@@ -1,12 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as http from "node:http";
 import { ZkClient } from "../zk/client.js";
 import { InstanceRegistry } from "../modules/registry.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { ContextStore } from "../modules/context-store.js";
-import { resolveInstanceId, saveInstanceId, saveInstanceConfig, loadInstanceConfig } from "../config.js";
+import { resolveInstanceId, saveInstanceId, saveInstanceConfig, loadInstanceConfig, loadInstanceId } from "../config.js";
 import { output } from "../utils/output.js";
 import { TaskPriorityName } from "../models/schemas.js";
 
@@ -31,6 +32,53 @@ async function withZk<T>(
   } finally {
     await zk.disconnect();
   }
+}
+
+function registerViaHttp(
+  host: string,
+  port: string,
+  name: string,
+  role: string,
+  instanceId?: string
+): Promise<{ id: string; name: string; role: string }> {
+  const body = JSON.stringify({ name, role, instance_id: instanceId });
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: host,
+        port: parseInt(port, 10),
+        path: "/register",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 5000,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          if (res.statusCode === 200) {
+            try {
+              resolve(JSON.parse(data));
+            } catch {
+              reject(new Error(`Invalid JSON response: ${data}`));
+            }
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+    req.write(body);
+    req.end();
+  });
 }
 
 export async function cmdStatus(zkHosts: string): Promise<void> {
@@ -58,8 +106,23 @@ export async function cmdRegister(
     return;
   }
   const resolvedRole = role || config.role || "general";
+  const resolvedId = instanceId || loadInstanceId() || undefined;
+
+  // Try MCP server REST endpoint first (uses server's persistent ZK connection)
+  const host = config.host || "127.0.0.1";
+  const port = config.port || "3100";
+  try {
+    const instance = await registerViaHttp(host, port, resolvedName, resolvedRole, resolvedId);
+    saveInstanceId(instance.id);
+    saveInstanceConfig({ name: resolvedName, role: resolvedRole });
+    output(instance);
+    return;
+  } catch {
+    // Server not reachable — fall back to direct ZK
+  }
+
   await withZk(zkHosts, async ({ registry }) => {
-    const instance = await registry.register(resolvedName, resolvedRole, instanceId);
+    const instance = await registry.register(resolvedName, resolvedRole, resolvedId);
     saveInstanceId(instance.id);
     saveInstanceConfig({ name: resolvedName, role: resolvedRole });
     output(instance);
@@ -350,7 +413,7 @@ export async function cmdSetup(options: {
 
   // Save instance config for auto-registration
   if (name || role) {
-    saveInstanceConfig({ name, role, port, host });
+    saveInstanceConfig({ name, role, port, host }, isGlobal);
   }
 
   // Optionally create SessionStart hook
@@ -386,6 +449,6 @@ export async function cmdSetup(options: {
     file: mcpFile,
     entry,
     ...(withHook ? { hook: "SessionStart: claude-orchestrator register" } : {}),
-    ...(name ? { instance_config: "saved to ~/.claude-orchestrator/config.json" } : {}),
+    ...(name ? { instance_config: `saved to ${isGlobal ? "~/.claude-orchestrator" : ".claude-orchestrator"}/config.json` } : {}),
   });
 }

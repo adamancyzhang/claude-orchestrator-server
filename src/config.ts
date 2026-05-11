@@ -2,8 +2,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-const CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
+const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
+const GLOBAL_CONFIG_FILE = path.join(GLOBAL_CONFIG_DIR, "config.json");
+
+function projectConfigDir(): string {
+  return path.join(process.cwd(), ".claude-orchestrator");
+}
+
+function projectConfigFile(): string {
+  return path.join(projectConfigDir(), "config.json");
+}
 
 export interface InstanceConfig {
   instance_id?: string;
@@ -44,17 +52,10 @@ export function loadConfig(cliOpts: {
   return { zkHosts, port, host, instanceId };
 }
 
-export function saveInstanceConfig(config: InstanceConfig): void {
-  const existing = loadInstanceConfig();
-  const merged = { ...existing, ...config };
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2));
-}
-
-export function loadInstanceConfig(): InstanceConfig {
+function readConfigFile(filePath: string): InstanceConfig {
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, "utf-8"));
     }
   } catch {
     // ignore corrupt config
@@ -62,8 +63,26 @@ export function loadInstanceConfig(): InstanceConfig {
   return {};
 }
 
-export function saveInstanceId(instanceId: string): void {
-  saveInstanceConfig({ instance_id: instanceId });
+function writeConfigFile(filePath: string, config: InstanceConfig): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
+}
+
+export function saveInstanceConfig(config: InstanceConfig, global = false): void {
+  const filePath = global ? GLOBAL_CONFIG_FILE : projectConfigFile();
+  const existing = readConfigFile(filePath);
+  writeConfigFile(filePath, { ...existing, ...config });
+}
+
+export function loadInstanceConfig(): InstanceConfig {
+  const project = readConfigFile(projectConfigFile());
+  const global = readConfigFile(GLOBAL_CONFIG_FILE);
+  return { ...global, ...project };
+}
+
+export function saveInstanceId(instanceId: string, global = false): void {
+  saveInstanceConfig({ instance_id: instanceId }, global);
 }
 
 export function loadInstanceId(): string | null {

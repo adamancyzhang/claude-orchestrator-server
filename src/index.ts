@@ -46,7 +46,7 @@ program
   )
   .option(
     "-i, --instance-id <id>",
-    "Instance ID (reads from ~/.claude-orchestrator/config.json if omitted)"
+    "Instance ID (reads from .claude-orchestrator/config.json or ~/.claude-orchestrator/config.json if omitted)"
   )
   .hook("preAction", (thisCmd: Command) => {
     const opts = thisCmd.opts();

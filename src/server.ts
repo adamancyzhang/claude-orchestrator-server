@@ -555,6 +555,29 @@ export async function startServer(config: Config): Promise<void> {
     }
   });
 
+  // REST endpoint for CLI-based registration (uses server's persistent ZK connection)
+  app.post("/register", async (req, res) => {
+    try {
+      const { name, role, instance_id } = req.body;
+      if (!name || typeof name !== "string") {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      if (!zk.connected) {
+        res.status(503).json({ error: "ZooKeeper is not connected" });
+        return;
+      }
+      const instance = await registry.register(
+        name,
+        typeof role === "string" ? role : "general",
+        typeof instance_id === "string" ? instance_id : undefined
+      );
+      res.json(instance);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // Health check
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", zookeeper: zk.connected ? "connected" : "disconnected" });
@@ -563,8 +586,9 @@ export async function startServer(config: Config): Promise<void> {
   return new Promise((resolve) => {
     app.listen(config.port, config.host, () => {
       console.log(`MCP server listening on ${config.host}:${config.port}`);
-      console.log(`MCP endpoint: http://${config.host}:${config.port}/mcp`);
-      console.log(`Health check: http://${config.host}:${config.port}/health`);
+      console.log(`MCP endpoint:  http://${config.host}:${config.port}/mcp`);
+      console.log(`Register CLI:  http://${config.host}:${config.port}/register`);
+      console.log(`Health check:  http://${config.host}:${config.port}/health`);
       resolve();
     });
   });

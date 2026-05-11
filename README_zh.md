@@ -367,7 +367,7 @@ npm test
 | 配置项 | 位置 | 默认值 |
 |--------|------|--------|
 | ZK 地址 | `-z, --zookeeper` 参数或 `ZK_HOSTS` 环境变量 | `127.0.0.1:2181` |
-| 实例 ID | `-i, --instance-id` 参数或 `~/.claude-orchestrator/config.json` | `register` 后自动保存 |
+| 实例 ID | `-i, --instance-id` 参数或 `.claude-orchestrator/config.json`（项目）/ `~/.claude-orchestrator/config.json`（全局） | `register` 后自动保存 |
 | MCP 服务端地址 | `--host` 参数或 `ORCHESTRATOR_HOST` 环境变量 | `127.0.0.1` |
 | MCP 服务端端口 | `--port` 参数或 `ORCHESTRATOR_PORT` 环境变量 | `3100` |
 

@@ -12,10 +12,21 @@ Configure a Claude Code project to connect to the orchestrator MCP server. The `
 The `claude-orchestrator setup` command:
 
 1. Writes/updates `.claude/mcp.json` with an `orchestrator` entry pointing to the MCP server
-2. Persists instance name/role to `~/.claude-orchestrator/config.json` for auto-registration
+2. Persists instance name/role to `.claude-orchestrator/config.json` (or `~/.claude-orchestrator/config.json` with `--global`) for auto-registration
 3. Optionally adds a `SessionStart` hook so the instance auto-registers on Claude Code startup
 
 This replaces manually editing JSON files — one command, fully configured.
+
+## How Registration Works
+
+The `SessionStart` hook runs `claude-orchestrator register` which:
+
+1. Reads name/role/instance_id from `.claude-orchestrator/config.json` (project-local first, then global fallback)
+2. Calls the MCP server's `POST /register` endpoint — the server creates an ephemeral ZK node using its persistent connection, so the instance stays visible as long as the server is running
+3. If the MCP server isn't reachable, falls back to direct ZooKeeper connection
+4. Saves the returned `instance_id` and reuses it on subsequent calls (no more duplicate IDs)
+
+**Important:** The MCP server (`claude-orchestrator server`) must be running for instances to appear in ZK. Without the server, instances registered via CLI will disappear when the command exits.
 
 ## Prerequisites
 
@@ -76,7 +87,7 @@ Execute the command. It will:
 
 - Create `.claude/` directory if needed
 - Write `.claude/mcp.json` with the orchestrator entry
-- Save instance config to `~/.claude-orchestrator/config.json`
+- Save instance config to `.claude-orchestrator/config.json` (project-local) or `~/.claude-orchestrator/config.json` (with `--global`)
 - Add `SessionStart` hook if `--with-hook` was used
 
 ### 4. Verify
@@ -113,7 +124,7 @@ Summarize what was configured:
 - "Instance name: **`<name>`**, role: **`<role>`**"
 - If `--with-hook`: "SessionStart hook added — instance will auto-register on Claude Code startup"
 - If `--global`: "Config written to `~/.claude/mcp.json` (global)"
-- "Instance config saved to `~/.claude-orchestrator/config.json`"
+- "Instance config saved to `.claude-orchestrator/config.json`" (or `~/.claude-orchestrator/config.json` if `--global`)
 
 ## Common Scenarios
 
@@ -148,6 +159,6 @@ Just re-run `setup` with the new values. It merges into the existing `.claude/mc
 ## Next Steps
 
 1. **Start ZooKeeper** (if not already): `docker-compose up -d`
-2. **Start the server**: `claude-orchestrator server`
-3. **Restart Claude Code** — the `SessionStart` hook auto-registers, or use `/orchestrator-register` to register manually
+2. **Start the MCP server**: `claude-orchestrator server` — required for instances to persist in ZK
+3. **Restart Claude Code** — the `SessionStart` hook auto-registers via the MCP server, or use `/orchestrator-register` to register manually
 4. Use `/orchestrator-status` to confirm everything is online

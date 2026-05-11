@@ -367,7 +367,7 @@ Zero external database. All state lives in ZooKeeper.
 | Config | Where | Default |
 |--------|-------|---------|
 | ZK hosts | `-z, --zookeeper` flag or `ZK_HOSTS` env | `127.0.0.1:2181` |
-| Instance ID | `-i, --instance-id` flag or `~/.claude-orchestrator/config.json` | auto-saved after `register` |
+| Instance ID | `-i, --instance-id` flag or `.claude-orchestrator/config.json` (project) / `~/.claude-orchestrator/config.json` (global) | auto-saved after `register` |
 | MCP server host | `--host` flag or `ORCHESTRATOR_HOST` env | `127.0.0.1` |
 | MCP server port | `--port` flag or `ORCHESTRATOR_PORT` env | `3100` |
 
