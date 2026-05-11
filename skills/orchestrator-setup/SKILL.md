@@ -13,20 +13,27 @@ The `claude-orchestrator setup` command:
 
 1. Writes/updates `.claude/mcp.json` with an `orchestrator` entry pointing to the MCP server
 2. Persists instance name/role to `.claude-orchestrator/config.json` (or `~/.claude-orchestrator/config.json` with `--global`) for auto-registration
-3. Optionally adds a `SessionStart` hook so the instance auto-registers on Claude Code startup
+3. Optionally adds `SessionStart` + `Stop` hooks so the instance auto-registers on startup and auto-unregisters on exit
 
 This replaces manually editing JSON files — one command, fully configured.
 
 ## How Registration Works
 
-The `SessionStart` hook runs `claude-orchestrator register` which:
+The `--with-hook` flag adds two lifecycle hooks:
+
+- **`SessionStart`**: runs `claude-orchestrator register` — registers the instance via the MCP server when Claude Code starts
+- **`Stop`**: runs `claude-orchestrator unregister` — removes the instance from ZK when Claude Code exits
+
+The `register` command:
 
 1. Reads name/role/instance_id from `.claude-orchestrator/config.json` (project-local first, then global fallback)
 2. Calls the MCP server's `POST /register` endpoint — the server creates an ephemeral ZK node using its persistent connection, so the instance stays visible as long as the server is running
 3. If the MCP server isn't reachable, falls back to direct ZooKeeper connection
 4. Saves the returned `instance_id` and reuses it on subsequent calls (no more duplicate IDs)
 
-**Important:** The MCP server (`claude-orchestrator server`) must be running for instances to appear in ZK. Without the server, instances registered via CLI will disappear when the command exits.
+The `unregister` command calls `POST /unregister` on the MCP server, ensuring the ZK node is removed when Claude Code exits.
+
+**Important:** The MCP server (`claude-orchestrator server`) must be running for instances to appear in ZK and be properly cleaned up.
 
 ## Prerequisites
 
@@ -53,7 +60,7 @@ Ask the user (or infer from context):
 | Instance name? | ask | Convention: `{Name}-{Role}` (e.g., `Jerry-Dev`) |
 | Instance role? | `general` | One of: `architect`, `developer`, `tester`, `general` |
 | Global or local? | local (project `.claude/`) | `--global` writes to `~/.claude/mcp.json` instead |
-| Auto-register hook? | yes | `--with-hook` adds a `SessionStart` hook to auto-register |
+| Auto-register hook? | yes | `--with-hook` adds `SessionStart` (register) + `Stop` (unregister) hooks |
 | Server host/port? | `127.0.0.1:3100` | Only ask if the user mentions a custom setup |
 
 ### 2. Build the command
@@ -88,7 +95,7 @@ Execute the command. It will:
 - Create `.claude/` directory if needed
 - Write `.claude/mcp.json` with the orchestrator entry
 - Save instance config to `.claude-orchestrator/config.json` (project-local) or `~/.claude-orchestrator/config.json` (with `--global`)
-- Add `SessionStart` hook if `--with-hook` was used
+- Add `SessionStart` + `Stop` hooks if `--with-hook` was used
 
 ### 4. Verify
 
@@ -122,7 +129,7 @@ Summarize what was configured:
 
 - "Configured orchestrator MCP server at `http://<host>:<port>/mcp`"
 - "Instance name: **`<name>`**, role: **`<role>`**"
-- If `--with-hook`: "SessionStart hook added — instance will auto-register on Claude Code startup"
+- If `--with-hook`: "SessionStart + Stop hooks added — instance will auto-register on startup and unregister on exit"
 - If `--global`: "Config written to `~/.claude/mcp.json` (global)"
 - "Instance config saved to `.claude-orchestrator/config.json`" (or `~/.claude-orchestrator/config.json` if `--global`)
 

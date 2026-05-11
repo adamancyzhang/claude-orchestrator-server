@@ -81,6 +81,45 @@ function registerViaHttp(
   });
 }
 
+function unregisterViaHttp(
+  host: string,
+  port: string,
+  instanceId: string
+): Promise<void> {
+  const body = JSON.stringify({ instance_id: instanceId });
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: host,
+        port: parseInt(port, 10),
+        path: "/unregister",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 5000,
+      },
+      (res) => {
+        if (res.statusCode === 200) {
+          resolve();
+        } else {
+          let data = "";
+          res.on("data", (chunk) => (data += chunk));
+          res.on("end", () => reject(new Error(`HTTP ${res.statusCode}: ${data}`)));
+        }
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
 export async function cmdStatus(zkHosts: string): Promise<void> {
   await withZk(zkHosts, async ({ zk, registry }) => {
     const connected = zk.connected;
@@ -356,8 +395,21 @@ export async function cmdUnregister(
   zkHosts: string,
   cliInstanceId: string | undefined
 ): Promise<void> {
+  const instanceId = resolveInstanceId(cliInstanceId);
+
+  // Try MCP server REST endpoint first
+  const config = loadInstanceConfig();
+  const host = config.host || "127.0.0.1";
+  const port = config.port || "3100";
+  try {
+    await unregisterViaHttp(host, port, instanceId);
+    output({ status: "unregistered", instance_id: instanceId });
+    return;
+  } catch {
+    // Server not reachable — fall back to direct ZK
+  }
+
   await withZk(zkHosts, async ({ registry }) => {
-    const instanceId = resolveInstanceId(cliInstanceId);
     await registry.unregister(instanceId);
     output({ status: "unregistered", instance_id: instanceId });
   });
@@ -416,7 +468,7 @@ export async function cmdSetup(options: {
     saveInstanceConfig({ name, role, port, host }, isGlobal);
   }
 
-  // Optionally create SessionStart hook
+  // Optionally create SessionStart + Stop hooks
   if (withHook) {
     const settingsFile = path.join(claudeDir, "settings.json");
     let settings: { hooks?: Record<string, unknown[]> } = {};
@@ -429,26 +481,32 @@ export async function cmdSetup(options: {
       }
     }
     settings.hooks = settings.hooks || {};
-    const existingHooks = (settings.hooks["SessionStart"] || []) as unknown[];
-    const hookCommand = "claude-orchestrator register";
-    const alreadyExists = existingHooks.some(
-      (h: unknown) => {
-        const hooks = (h as Record<string, unknown>)?.hooks as Array<Record<string, unknown>> | undefined;
-        return hooks?.[0]?.command === hookCommand;
+
+    const addHook = (hookType: string, command: string) => {
+      const existing = (settings.hooks![hookType] || []) as unknown[];
+      const alreadyExists = existing.some(
+        (h: unknown) => {
+          const hooks = (h as Record<string, unknown>)?.hooks as Array<Record<string, unknown>> | undefined;
+          return hooks?.[0]?.command === command;
+        }
+      );
+      if (!alreadyExists) {
+        existing.push({ matcher: "", hooks: [{ type: "command", command }] });
+        settings.hooks![hookType] = existing;
       }
-    );
-    if (!alreadyExists) {
-      existingHooks.push({ matcher: "", hooks: [{ type: "command", command: hookCommand }] });
-      settings.hooks["SessionStart"] = existingHooks;
-      fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
-    }
+    };
+
+    addHook("SessionStart", "claude-orchestrator register");
+    addHook("Stop", "claude-orchestrator unregister");
+
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
   }
 
   output({
     status: "configured",
     file: mcpFile,
     entry,
-    ...(withHook ? { hook: "SessionStart: claude-orchestrator register" } : {}),
+    ...(withHook ? { hooks: ["SessionStart: claude-orchestrator register", "Stop: claude-orchestrator unregister"] } : {}),
     ...(name ? { instance_config: `saved to ${isGlobal ? "~/.claude-orchestrator" : ".claude-orchestrator"}/config.json` } : {}),
   });
 }

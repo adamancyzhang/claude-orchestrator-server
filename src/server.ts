@@ -578,6 +578,25 @@ export async function startServer(config: Config): Promise<void> {
     }
   });
 
+  // REST endpoint for CLI-based unregistration
+  app.post("/unregister", async (req, res) => {
+    try {
+      const { instance_id } = req.body;
+      if (!instance_id || typeof instance_id !== "string") {
+        res.status(400).json({ error: "instance_id is required" });
+        return;
+      }
+      if (!zk.connected) {
+        res.status(503).json({ error: "ZooKeeper is not connected" });
+        return;
+      }
+      await registry.unregister(instance_id);
+      res.json({ status: "unregistered", instance_id });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // Health check
   app.get("/health", (_req, res) => {
     res.json({ status: "ok", zookeeper: zk.connected ? "connected" : "disconnected" });

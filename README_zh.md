@@ -79,13 +79,13 @@ claude-orchestrator server
 claude-orchestrator setup --name Tom-Architect --role architect --with-hook
 ```
 
-这条命令会将 MCP 连接配置写入 `.claude/mcp.json`，并添加 `SessionStart` 钩子，使 Claude Code 启动时自动注册。
+这条命令会将 MCP 连接配置写入 `.claude/mcp.json`，并添加生命周期钩子：`SessionStart`（自动注册）和 `Stop`（自动注销）。
 
 可选参数：
 - `--global` — 写入 `~/.claude/mcp.json` 而非项目本地配置
 - `--port`, `--host` — 如果服务端运行在其他地址
 - `--name`, `--role` — 设置实例身份
-- `--with-hook` — Claude Code 启动时自动注册
+- `--with-hook` — 添加 SessionStart + Stop 钩子，自动管理实例生命周期
 
 ### 5. 开始使用
 
