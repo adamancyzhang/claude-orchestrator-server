@@ -327,6 +327,7 @@ The repo includes Claude Code skills that make the orchestrator even easier to u
 
 | Skill | What it does |
 |-------|-------------|
+| `claude-code-developer` | Reference for developing Claude Code extensions — hooks, settings, MCP, CLI |
 | `claude-orchestrator` | Full CLI reference — all 21 commands with examples |
 | `orchestrator-setup` | Auto-configure MCP connection and auto-registration hook |
 | `orchestrator-register` | Guided registration flow |

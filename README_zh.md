@@ -327,6 +327,7 @@ npm test
 
 | 技能 | 功能 |
 |------|------|
+| `claude-code-developer` | Claude Code 扩展开发参考 —— 钩子、配置、MCP、CLI |
 | `claude-orchestrator` | 完整 CLI 参考 —— 全部 21 条命令及示例 |
 | `orchestrator-setup` | 自动配置 MCP 连接和自动注册钩子 |
 | `orchestrator-register` | 引导式注册流程 |
