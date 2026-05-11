@@ -4,6 +4,7 @@ import { LeaderEventBus } from "./event-bus.js";
 export class TaskOrchestrator {
   private knownPending = new Set<string>();
   private knownClaimed = new Set<string>();
+  private stopped = false;
 
   constructor(
     private zk: ZkClient,
@@ -15,8 +16,14 @@ export class TaskOrchestrator {
     await this.watchClaimed();
   }
 
+  stop(): void {
+    this.stopped = true;
+  }
+
   private async watchPending(): Promise<void> {
+    if (this.stopped) return;
     const children = await this.zk.watchPendingTasks(async (newChildren) => {
+      if (this.stopped) return;
       for (const id of newChildren) {
         if (!this.knownPending.has(id)) {
           const data = await this.zk.getPendingTask(id);
@@ -38,7 +45,9 @@ export class TaskOrchestrator {
   }
 
   private async watchClaimed(): Promise<void> {
+    if (this.stopped) return;
     const children = await this.zk.watchClaimedTasks(async (newChildren) => {
+      if (this.stopped) return;
       for (const name of newChildren) {
         if (!this.knownClaimed.has(name)) {
           const idx = name.indexOf("-");

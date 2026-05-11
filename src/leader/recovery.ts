@@ -16,6 +16,7 @@ export class TaskRecovery {
   }
 
   private async recoverOrphanedTasks(workerId: string): Promise<void> {
+    if (!this.zk.connected) return;
     const claimed = await this.zk.listClaimedTasks();
     for (const [insId, taskId, data] of claimed) {
       if (insId !== workerId) continue;

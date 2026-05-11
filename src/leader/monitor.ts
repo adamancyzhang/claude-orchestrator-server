@@ -4,6 +4,7 @@ import { LeaderEventBus } from "./event-bus.js";
 export class WorkerMonitor {
   private knownInstances = new Set<string>();
   private instanceNames = new Map<string, string>();
+  private stopped = false;
 
   constructor(
     private zk: ZkClient,
@@ -14,8 +15,14 @@ export class WorkerMonitor {
     await this.watchLoop();
   }
 
+  stop(): void {
+    this.stopped = true;
+  }
+
   private async watchLoop(): Promise<void> {
+    if (this.stopped) return;
     const children = await this.zk.watchInstances(async (newChildren) => {
+      if (this.stopped) return;
       await this.onChildrenChanged(newChildren);
       this.watchLoop();
     });

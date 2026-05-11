@@ -95,7 +95,10 @@ export async function startLeader(config: {
     process.once("SIGTERM", cleanup);
   });
 
-  // Shutdown
+  // Shutdown: stop watchers first, then disconnect
   leaderWatcher.stop();
+  monitor.stop();
+  orchestrator.stop();
+  await new Promise(r => setTimeout(r, 100)); // let pending callbacks drain
   await zk.disconnect();
 }
