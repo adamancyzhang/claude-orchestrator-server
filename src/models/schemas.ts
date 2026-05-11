@@ -186,6 +186,7 @@ export const SendMessageInput = z.object({
   instance_id: z.string(),
   content: z.string().min(1),
   to_instance: z.string().optional(),
+  to_name: z.string().optional(),
   broadcast: z.boolean().default(false),
 });
 

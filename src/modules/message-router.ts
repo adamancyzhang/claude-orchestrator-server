@@ -18,10 +18,27 @@ export class MessageRouter {
     fromName: string,
     content: string,
     toInstance?: string,
-    broadcast: boolean = false
+    broadcast: boolean = false,
+    toName?: string
   ): Promise<Message[]> {
     const messages: Message[] = [];
-    const msgType: MessageType = broadcast ? "broadcast" : "direct";
+
+    // Name-based addressing: resolve to_name to instance_id
+    if (toName) {
+      const name = toName.replace(/^@/, "");
+      if (name.toLowerCase() === "all") {
+        broadcast = true;
+      } else {
+        const instances = await this.zk.listInstances();
+        const match = instances.find((i) => i.name === name);
+        if (!match) {
+          throw new Error(`Instance "${name}" not found`);
+        }
+        toInstance = match.id as string;
+      }
+    }
+
+    let msgType: MessageType = broadcast ? "broadcast" : "direct";
 
     let targets: string[];
     if (broadcast) {
@@ -32,7 +49,7 @@ export class MessageRouter {
     } else if (toInstance) {
       targets = [toInstance];
     } else {
-      throw new Error("Must specify to_instance or broadcast=true");
+      throw new Error("Must specify to_instance, to_name, or broadcast=true");
     }
 
     for (const targetId of targets) {

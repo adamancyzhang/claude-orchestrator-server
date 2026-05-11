@@ -81,7 +81,8 @@ export async function startServer(config: Config): Promise<void> {
         content: [
           {
             type: "text",
-            text: `Instance ${action}:\n${JSON.stringify(instance, null, 2)}`,
+            text: `Instance ${action}:\n${JSON.stringify(instance, null, 2)}\n\n` +
+              `To receive real-time messages, subscribe to: orchestrator://messages/${instance.id}`,
           },
         ],
       };
@@ -187,9 +188,10 @@ export async function startServer(config: Config): Promise<void> {
       instance_id: z.string(),
       content: z.string().min(1),
       to_instance: z.string().optional(),
+      to_name: z.string().optional(),
       broadcast: z.boolean().default(false),
     },
-    async ({ instance_id, content, to_instance, broadcast }) => {
+    async ({ instance_id, content, to_instance, to_name, broadcast }) => {
       const inst = await registry.get(instance_id);
       const fromName = inst?.name ?? instance_id.slice(0, 8);
       const messages = await messageRouter.send(
@@ -197,9 +199,16 @@ export async function startServer(config: Config): Promise<void> {
         fromName,
         content,
         to_instance,
-        broadcast
+        broadcast,
+        to_name
       );
-      const targets = messages.map((m) => m.to_instance);
+      // Push notifications to targets so subscribed clients get real-time delivery
+      const targets = messages.map((m) => m.to_instance!);
+      await Promise.allSettled(
+        targets.map((tid) =>
+          mcp.server.sendResourceUpdated({ uri: `orchestrator://messages/${tid}` })
+        )
+      );
       return {
         content: [{ type: "text", text: `Message sent to: ${JSON.stringify(targets)}` }],
       };
@@ -285,7 +294,12 @@ export async function startServer(config: Config): Promise<void> {
         question,
         context
       );
-      const targets = messages.map((m) => m.to_instance);
+      const targets = messages.map((m) => m.to_instance!);
+      await Promise.allSettled(
+        targets.map((tid) =>
+          mcp.server.sendResourceUpdated({ uri: `orchestrator://messages/${tid}` })
+        )
+      );
       return {
         content: [
           {
@@ -401,8 +415,8 @@ export async function startServer(config: Config): Promise<void> {
       list: undefined,
     }),
     { description: "Messages for a specific instance" },
-    async (uri) => {
-      const instanceId = uri.searchParams.get("instance_id") ?? "";
+    async (uri, variables) => {
+      const instanceId = (variables as Record<string, string>).instance_id ?? "";
       const messages = await messageRouter.poll(instanceId);
       return {
         contents: [
@@ -423,8 +437,8 @@ export async function startServer(config: Config): Promise<void> {
       list: undefined,
     }),
     { description: "Shared context value by key" },
-    async (uri) => {
-      const key = uri.searchParams.get("key") ?? "";
+    async (uri, variables) => {
+      const key = (variables as Record<string, string>).key ?? "";
       const value = await contextStore.get(key);
       return {
         contents: [

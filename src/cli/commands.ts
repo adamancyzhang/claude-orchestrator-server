@@ -245,7 +245,8 @@ export async function cmdSendMessage(
   cliInstanceId: string | undefined,
   content: string,
   toInstance?: string,
-  broadcast: boolean = false
+  broadcast: boolean = false,
+  toName?: string
 ): Promise<void> {
   await withZk(zkHosts, async ({ registry, messageRouter }) => {
     const instanceId = resolveInstanceId(cliInstanceId);
@@ -256,7 +257,8 @@ export async function cmdSendMessage(
       fromName,
       content,
       toInstance,
-      broadcast
+      broadcast,
+      toName
     );
     const targets = messages.map((m) => m.to_instance);
     output({ sent_to: targets, message_count: targets.length });

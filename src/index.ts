@@ -187,19 +187,21 @@ program
   .description("Send a message to another instance or broadcast to all")
   .requiredOption("--content <text>", "Message content")
   .option("--to <id>", "Recipient instance ID")
+  .option("--to-name <name>", "Recipient instance name (e.g. @Tom, @All)")
   .option("--broadcast", "Send to all instances", false)
   .action(async function (this: Command) {
     try {
-      const { content, to, broadcast } = getSubOpts<{
+      const { content, to, toName, broadcast } = getSubOpts<{
         content: string;
         to?: string;
+        toName?: string;
         broadcast: boolean;
       }>(this);
-      if (!to && !broadcast) {
-        throw new Error("Must specify --to or --broadcast");
+      if (!to && !toName && !broadcast) {
+        throw new Error("Must specify --to, --to-name, or --broadcast");
       }
       const { zookeeper, instanceId } = getOpts(this);
-      await cmdSendMessage(zookeeper, instanceId, content, to, broadcast);
+      await cmdSendMessage(zookeeper, instanceId, content, to, broadcast, toName);
     } catch (e) {
       output({ error: String(e) }, true);
     }
