@@ -39,7 +39,7 @@ export async function startServer(config: Config): Promise<void> {
   const mcp = new McpServer(
     {
       name: "ClaudeMCP",
-      version: "0.2.0",
+      version: "0.2.1",
     },
     {
       capabilities: {
