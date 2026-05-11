@@ -1,9 +1,12 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import { ZkClient } from "../zk/client.js";
 import { InstanceRegistry } from "../modules/registry.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { ContextStore } from "../modules/context-store.js";
-import { resolveInstanceId, saveInstanceId } from "../config.js";
+import { resolveInstanceId, saveInstanceId, saveInstanceConfig, loadInstanceConfig } from "../config.js";
 import { output } from "../utils/output.js";
 import { TaskPriorityName } from "../models/schemas.js";
 
@@ -45,12 +48,20 @@ export async function cmdStatus(zkHosts: string): Promise<void> {
 export async function cmdRegister(
   zkHosts: string,
   instanceId: string | undefined,
-  name: string,
-  role: string
+  name?: string,
+  role?: string
 ): Promise<void> {
+  const config = loadInstanceConfig();
+  const resolvedName = name || config.name;
+  if (!resolvedName) {
+    output({ error: "No instance name provided. Use --name or run 'claude-orchestrator setup --name <name>' first." }, true);
+    return;
+  }
+  const resolvedRole = role || config.role || "general";
   await withZk(zkHosts, async ({ registry }) => {
-    const instance = await registry.register(name, role, instanceId);
+    const instance = await registry.register(resolvedName, resolvedRole, instanceId);
     saveInstanceId(instance.id);
+    saveInstanceConfig({ name: resolvedName, role: resolvedRole });
     output(instance);
   });
 }
@@ -286,5 +297,92 @@ export async function cmdUnregister(
     const instanceId = resolveInstanceId(cliInstanceId);
     await registry.unregister(instanceId);
     output({ status: "unregistered", instance_id: instanceId });
+  });
+}
+
+export async function cmdSetup(options: {
+  port: string;
+  host: string;
+  name?: string;
+  role?: string;
+  global: boolean;
+  withHook: boolean;
+}): Promise<void> {
+  const { port, host, name, role, global: isGlobal, withHook } = options;
+
+  const claudeDir = isGlobal
+    ? path.join(os.homedir(), ".claude")
+    : path.join(process.cwd(), ".claude");
+
+  const mcpFile = path.join(claudeDir, "mcp.json");
+
+  const entry: Record<string, unknown> = {
+    type: "http",
+    url: `http://${host}:${port}/mcp`,
+  };
+
+  if (name) {
+    const headers: Record<string, string> = {
+      "X-Instance-Name": name,
+    };
+    if (role) {
+      headers["X-Instance-Role"] = role;
+    }
+    entry["headers"] = headers;
+  }
+
+  // Write .claude/mcp.json
+  let mcpConfig: { mcpServers?: Record<string, unknown> } = {};
+  if (fs.existsSync(mcpFile)) {
+    try {
+      mcpConfig = JSON.parse(fs.readFileSync(mcpFile, "utf-8"));
+    } catch {
+      output({ error: `Failed to parse existing ${mcpFile}` }, true);
+      return;
+    }
+  }
+
+  mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+  mcpConfig.mcpServers["orchestrator"] = entry;
+
+  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.writeFileSync(mcpFile, JSON.stringify(mcpConfig, null, 2) + "\n");
+
+  // Save instance config for auto-registration
+  if (name || role) {
+    saveInstanceConfig({ name, role, port, host });
+  }
+
+  // Optionally create SessionStart hook
+  if (withHook) {
+    const settingsFile = path.join(claudeDir, "settings.json");
+    let settings: { hooks?: Record<string, unknown[]> } = {};
+    if (fs.existsSync(settingsFile)) {
+      try {
+        settings = JSON.parse(fs.readFileSync(settingsFile, "utf-8"));
+      } catch {
+        output({ error: `Failed to parse existing ${settingsFile}` }, true);
+        return;
+      }
+    }
+    settings.hooks = settings.hooks || {};
+    const existingHooks = (settings.hooks["SessionStart"] || []) as unknown[];
+    const hookCommand = "claude-orchestrator register";
+    const alreadyExists = existingHooks.some(
+      (h: unknown) => (h as Record<string, unknown>)?.command === hookCommand
+    );
+    if (!alreadyExists) {
+      existingHooks.push({ matcher: "", command: hookCommand });
+      settings.hooks["SessionStart"] = existingHooks;
+      fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
+    }
+  }
+
+  output({
+    status: "configured",
+    file: mcpFile,
+    entry,
+    ...(withHook ? { hook: "SessionStart: claude-orchestrator register" } : {}),
+    ...(name ? { instance_config: "saved to ~/.claude-orchestrator/config.json" } : {}),
   });
 }

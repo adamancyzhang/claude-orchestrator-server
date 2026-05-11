@@ -22,6 +22,7 @@ import {
   cmdWatchContext,
   cmdWatchTasks,
   cmdUnregister,
+  cmdSetup,
 } from "./cli/commands.js";
 import { output } from "./utils/output.js";
 
@@ -82,11 +83,11 @@ program
 program
   .command("register")
   .description("Register this instance with the orchestrator")
-  .requiredOption("--name <name>", "Display name for this instance")
-  .option("--role <role>", "Instance role", "general")
+  .option("--name <name>", "Display name (reads from config if omitted)")
+  .option("--role <role>", "Instance role (reads from config if omitted)")
   .action(async function (this: Command) {
     try {
-      const { name, role } = getSubOpts<{ name: string; role: string }>(this);
+      const { name, role } = getSubOpts<{ name?: string; role?: string }>(this);
       const { zookeeper, instanceId } = getOpts(this);
       await cmdRegister(zookeeper, instanceId, name, role);
     } catch (e) {
@@ -361,6 +362,27 @@ program
       instance_id: resolvedId || "(not set)",
       config_dir: "~/.claude-orchestrator/",
     });
+  });
+
+program
+  .command("setup")
+  .description("Configure Claude Code MCP connection in the working directory")
+  .option("--port <port>", "Orchestrator server port (default: 3100)", "3100")
+  .option("--host <host>", "Orchestrator server host (default: 127.0.0.1)", "127.0.0.1")
+  .option("--name <name>", "Instance name for X-Instance-Name header")
+  .option("--role <role>", "Instance role for X-Instance-Role header")
+  .option("--global", "Write to ~/.claude/mcp.json instead of local .claude/mcp.json", false)
+  .option("--with-hook", "Add SessionStart hook to auto-register on Claude Code startup", false)
+  .action(async function (this: Command) {
+    const { port, host, name, role, global: isGlobal, withHook } = getSubOpts<{
+      port: string;
+      host: string;
+      name?: string;
+      role?: string;
+      global: boolean;
+      withHook: boolean;
+    }>(this);
+    await cmdSetup({ port, host, name, role, global: isGlobal, withHook });
   });
 
 program

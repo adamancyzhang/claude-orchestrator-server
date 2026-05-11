@@ -5,6 +5,14 @@ import * as os from "node:os";
 const CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
+export interface InstanceConfig {
+  instance_id?: string;
+  name?: string;
+  role?: string;
+  port?: string;
+  host?: string;
+}
+
 export interface Config {
   zkHosts: string;
   port: number;
@@ -36,24 +44,31 @@ export function loadConfig(cliOpts: {
   return { zkHosts, port, host, instanceId };
 }
 
-export function saveInstanceId(instanceId: string): void {
+export function saveInstanceConfig(config: InstanceConfig): void {
+  const existing = loadInstanceConfig();
+  const merged = { ...existing, ...config };
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(
-    CONFIG_FILE,
-    JSON.stringify({ instance_id: instanceId }, null, 2)
-  );
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2));
 }
 
-export function loadInstanceId(): string | null {
+export function loadInstanceConfig(): InstanceConfig {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-      return data.instance_id || null;
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
     }
   } catch {
     // ignore corrupt config
   }
-  return null;
+  return {};
+}
+
+export function saveInstanceId(instanceId: string): void {
+  saveInstanceConfig({ instance_id: instanceId });
+}
+
+export function loadInstanceId(): string | null {
+  const config = loadInstanceConfig();
+  return config.instance_id || null;
 }
 
 export function resolveInstanceId(cliInstanceId?: string): string {
