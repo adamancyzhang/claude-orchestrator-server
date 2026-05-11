@@ -249,9 +249,14 @@ export async function cmdSendMessage(
   toName?: string
 ): Promise<void> {
   await withZk(zkHosts, async ({ registry, messageRouter }) => {
-    const instanceId = resolveInstanceId(cliInstanceId);
-    const inst = await registry.get(instanceId);
-    const fromName = inst?.name ?? instanceId.slice(0, 8);
+    const instanceId = cliInstanceId || loadInstanceId() || "";
+    let fromName: string;
+    if (instanceId) {
+      const inst = await registry.get(instanceId);
+      fromName = inst?.name ?? instanceId.slice(0, 8);
+    } else {
+      fromName = "CLI";
+    }
     const messages = await messageRouter.send(
       instanceId,
       fromName,
@@ -307,9 +312,14 @@ export async function cmdRequestHelp(
   ctx?: string
 ): Promise<void> {
   await withZk(zkHosts, async ({ registry, messageRouter }) => {
-    const instanceId = resolveInstanceId(cliInstanceId);
-    const inst = await registry.get(instanceId);
-    const fromName = inst?.name ?? instanceId.slice(0, 8);
+    const instanceId = cliInstanceId || loadInstanceId() || "";
+    let fromName: string;
+    if (instanceId) {
+      const inst = await registry.get(instanceId);
+      fromName = inst?.name ?? instanceId.slice(0, 8);
+    } else {
+      fromName = "CLI";
+    }
     const messages = await messageRouter.requestHelp(instanceId, fromName, question, ctx);
     const targets = messages.map((m) => m.to_instance);
     output({ sent_to: targets, message_count: targets.length });

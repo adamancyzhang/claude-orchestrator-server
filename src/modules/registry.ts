@@ -30,6 +30,19 @@ export class InstanceRegistry {
       }
     }
 
+    // If no instanceId, look up existing instance by name to avoid duplicates
+    if (!instanceId) {
+      const instances = await this.listAll();
+      const existing = instances.find((i) => i.name === name);
+      if (existing) {
+        existing.role = validRole;
+        existing.status = "idle";
+        existing.connected_since = new Date().toISOString();
+        await this.zk.updateInstance(existing.id, existing);
+        return InstanceSchema.parse(existing);
+      }
+    }
+
     const instance = createInstance({
       id: instanceId,
       name,
