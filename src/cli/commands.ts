@@ -369,10 +369,13 @@ export async function cmdSetup(options: {
     const existingHooks = (settings.hooks["SessionStart"] || []) as unknown[];
     const hookCommand = "claude-orchestrator register";
     const alreadyExists = existingHooks.some(
-      (h: unknown) => (h as Record<string, unknown>)?.command === hookCommand
+      (h: unknown) => {
+        const hooks = (h as Record<string, unknown>)?.hooks as Array<Record<string, unknown>> | undefined;
+        return hooks?.[0]?.command === hookCommand;
+      }
     );
     if (!alreadyExists) {
-      existingHooks.push({ matcher: "", command: hookCommand });
+      existingHooks.push({ matcher: "", hooks: [{ type: "command", command: hookCommand }] });
       settings.hooks["SessionStart"] = existingHooks;
       fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
     }
