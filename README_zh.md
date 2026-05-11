@@ -73,29 +73,25 @@ claude-orchestrator server
 
 ### 4. 配置 Claude Code
 
-在项目目录的 `.claude/mcp.json`（或 `~/.claude/mcp.json`）中：
+使用内置的 setup 命令自动配置项目：
 
-```json
-{
-  "mcpServers": {
-    "orchestrator": {
-      "type": "http",
-      "url": "http://127.0.0.1:3100/mcp"
-    }
-  }
-}
+```bash
+claude-orchestrator setup --name Tom-Architect --role architect --with-hook
 ```
 
-### 5. 注册并开始
+这条命令会将 MCP 连接配置写入 `.claude/mcp.json`，并添加 `SessionStart` 钩子，使 Claude Code 启动时自动注册。
 
-打开 Claude Code，然后说：
+可选参数：
+- `--global` — 写入 `~/.claude/mcp.json` 而非项目本地配置
+- `--port`, `--host` — 如果服务端运行在其他地址
+- `--name`, `--role` — 设置实例身份
+- `--with-hook` — Claude Code 启动时自动注册
 
-```
-我有一个 MCP 工具叫 orchestrator。请调用 register_instance，
-name 设为 "Tom"，role 设为 "architect"。记下返回的 instance_id。
-```
+### 5. 开始使用
 
-再打开第二个终端，启动另一个 Claude Code 实例，将 Jerry 注册为 developer。它们会自动互相发现、传递任务、协作开发。
+在当前项目重启 Claude Code —— `SessionStart` 钩子会自动注册你的实例。也可以使用 `/orchestrator-register` 手动注册。
+
+再打开第二个终端，启动另一个 Claude Code 实例，用不同的 name/role 执行 `claude-orchestrator setup`，它们会自动互相发现、传递任务、协作开发。
 
 ---
 
@@ -332,6 +328,7 @@ npm test
 | 技能 | 功能 |
 |------|------|
 | `claude-orchestrator` | 完整 CLI 参考 —— 全部 21 条命令及示例 |
+| `orchestrator-setup` | 自动配置 MCP 连接和自动注册钩子 |
 | `orchestrator-register` | 引导式注册流程 |
 | `orchestrator-status` | 仪表盘：健康状态、实例、任务 |
 | `orchestrator-communicate` | 消息模式：轮询、私聊、广播 |

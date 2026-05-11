@@ -73,29 +73,25 @@ claude-orchestrator server
 
 ### 4. Configure Claude Code
 
-In your project's `.claude/mcp.json` (or `~/.claude/mcp.json`):
+Use the built-in setup command to auto-configure your project:
 
-```json
-{
-  "mcpServers": {
-    "orchestrator": {
-      "type": "http",
-      "url": "http://127.0.0.1:3100/mcp"
-    }
-  }
-}
+```bash
+claude-orchestrator setup --name Tom-Architect --role architect --with-hook
 ```
 
-### 5. Register & Go
+This writes the MCP connection to `.claude/mcp.json` and adds a `SessionStart` hook so your instance auto-registers when Claude Code starts.
 
-Open Claude Code, then:
+Options:
+- `--global` — write to `~/.claude/mcp.json` instead of local `.claude/mcp.json`
+- `--port`, `--host` — if your server runs on a different address
+- `--name`, `--role` — set instance identity headers
+- `--with-hook` — auto-register on Claude Code startup
 
-```
-I have an MCP tool called orchestrator. Call register_instance
-with name="Tom" and role="architect". Remember my instance_id.
-```
+### 5. Go
 
-Now open another terminal, start a second Claude Code instance, and register Jerry as a developer. They'll discover each other, pass tasks, and collaborate.
+Restart Claude Code in this project — the `SessionStart` hook auto-registers your instance. Or register manually with `/orchestrator-register`.
+
+Now open another terminal, start a second Claude Code instance, run `claude-orchestrator setup` with a different name/role, and they'll discover each other, pass tasks, and collaborate.
 
 ---
 
@@ -332,6 +328,7 @@ The repo includes Claude Code skills that make the orchestrator even easier to u
 | Skill | What it does |
 |-------|-------------|
 | `claude-orchestrator` | Full CLI reference — all 21 commands with examples |
+| `orchestrator-setup` | Auto-configure MCP connection and auto-registration hook |
 | `orchestrator-register` | Guided registration flow |
 | `orchestrator-status` | Dashboard: health, instances, tasks |
 | `orchestrator-communicate` | Message patterns: poll, DM, broadcast |
