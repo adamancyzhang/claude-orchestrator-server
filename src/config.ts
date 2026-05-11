@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
-const GLOBAL_CONFIG_FILE = path.join(GLOBAL_CONFIG_DIR, "config.json");
+export const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
+export const GLOBAL_CONFIG_FILE = path.join(GLOBAL_CONFIG_DIR, "config.json");
 
 function projectConfigDir(): string {
   return path.join(process.cwd(), ".claude-orchestrator");
@@ -17,6 +17,8 @@ export interface InstanceConfig {
   instance_id?: string;
   name?: string;
   role?: string;
+  command?: string;
+  cache_dir?: string;
   port?: string;
   host?: string;
 }
@@ -88,6 +90,17 @@ export function saveInstanceId(instanceId: string, global = false): void {
 export function loadInstanceId(): string | null {
   const config = loadInstanceConfig();
   return config.instance_id || null;
+}
+
+export function loadGlobalConfig(): InstanceConfig {
+  return readConfigFile(GLOBAL_CONFIG_FILE);
+}
+
+export function expandHomeDir(p: string): string {
+  if (p.startsWith("~")) {
+    return path.join(os.homedir(), p.slice(1));
+  }
+  return p;
 }
 
 export function resolveInstanceId(cliInstanceId?: string): string {

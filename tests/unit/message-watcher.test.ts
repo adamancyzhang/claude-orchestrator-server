@@ -4,7 +4,7 @@ import { EventEmitter } from "events";
 const { mockSpawn } = vi.hoisted(() => ({ mockSpawn: vi.fn() }));
 vi.mock("child_process", () => ({ spawn: mockSpawn }));
 
-import { MessageWatcher } from "../../src/modules/message-watcher.js";
+import { WorkerWatcher } from "../../src/worker/watcher.js";
 
 class MockChildProcess extends EventEmitter {
   stdout = new EventEmitter();
@@ -18,9 +18,14 @@ function makeMsg(overrides: Record<string, unknown> = {}) {
     content: "hello",
     from_instance: "from-1",
     from_name: "Alice",
+    from_role: "",
     to_instance: "inst-001",
+    to_name: null,
     created_at: "2024-01-01T00:00:00Z",
     read: false,
+    task_doc_path: null,
+    result_path: null,
+    reply_to: null,
     ...overrides,
   };
 }
@@ -34,63 +39,33 @@ function makeMockZkClient() {
   } as any;
 }
 
-describe("MessageWatcher", () => {
-  let watcher: MessageWatcher;
+describe("WorkerWatcher", () => {
+  let watcher: WorkerWatcher;
   let zk: ReturnType<typeof makeMockZkClient>;
 
   beforeEach(() => {
     zk = makeMockZkClient();
-    watcher = new MessageWatcher(zk);
+    watcher = new WorkerWatcher(zk, "worker-inst-1", "/test/workdir", "claude", "~/.cache/test", "leader-1");
     mockSpawn.mockClear();
   });
 
   afterEach(() => {
-    watcher.stopAll();
+    watcher.stop();
   });
 
-  describe("startWatching", () => {
+  describe("start", () => {
     it("calls mkdirp for the message directory", async () => {
       zk.watchMessageDir.mockResolvedValue([]);
-
-      await watcher.startWatching("inst-001", "/test/dir");
-
+      await watcher.start();
       expect(zk.mkdirp).toHaveBeenCalledWith(
-        "/claude-orchestrator/messages/inst-001"
+        "/claude-orchestrator/messages/worker-inst-1"
       );
     });
 
-    it("stops existing watcher before starting new one", async () => {
-      zk.watchMessageDir.mockResolvedValue([]);
-      await watcher.startWatching("inst-001", "/test/dir1");
-      await watcher.startWatching("inst-001", "/test/dir2");
-
-      expect(zk.mkdirp).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe("stopWatching", () => {
-    it("is idempotent for unknown instance", () => {
-      expect(() => watcher.stopWatching("nonexistent")).not.toThrow();
-    });
-  });
-
-  describe("stopAll", () => {
-    it("stops all watchers without throwing", async () => {
-      zk.watchMessageDir.mockResolvedValue([]);
-      await watcher.startWatching("a", "/a");
-      await watcher.startWatching("b", "/b");
-      watcher.stopAll();
-    });
-  });
-
-  describe("message handling", () => {
     it("reads messages via getMessage for each child", async () => {
       zk.watchMessageDir.mockImplementation(
-        (_id: string, _onChange: unknown) => {
-          return Promise.resolve(["msg-1", "msg-2"]);
-        }
+        (_id: string, _onChange: unknown) => Promise.resolve(["msg-1", "msg-2"])
       );
-
       zk.getMessage.mockImplementation(
         (_id: string, msgId: string) => {
           if (msgId === "msg-1") return makeMsg({ read: true });
@@ -99,95 +74,72 @@ describe("MessageWatcher", () => {
         }
       );
 
-      await watcher.startWatching("inst-001", "/test/dir");
-
-      // Both messages are read, so no spawning. Verify both were read from ZK.
-      expect(zk.getMessage).toHaveBeenCalledWith("inst-001", "msg-1");
-      expect(zk.getMessage).toHaveBeenCalledWith("inst-001", "msg-2");
-    });
-
-    it("spawns claude -p for an unread message", async () => {
-      let watchCb: ((children: string[]) => void) | null = null;
-      zk.watchMessageDir.mockImplementation(
-        (_id: string, onChange: (children: string[]) => void) => {
-          watchCb = onChange;
-          return Promise.resolve(["msg-1"]);
-        }
-      );
-
-      zk.getMessage.mockResolvedValue(makeMsg({ read: false }));
-
-      const child = new MockChildProcess();
-      mockSpawn.mockReturnValue(child);
-
-      await watcher.startWatching("inst-001", "/test/dir");
-
-      // Wait a tick for async processing
+      await watcher.start();
       await new Promise((r) => setTimeout(r, 50));
 
-      expect(mockSpawn).toHaveBeenCalledWith(
-        "claude",
-        ["--session-id", "inst-001", "-p", "[direct from Alice] hello"],
-        expect.objectContaining({ cwd: "/test/dir" })
-      );
-
-      // Simulate successful exit
-      child.emit("exit", 0, null);
+      expect(zk.getMessage).toHaveBeenCalledWith("worker-inst-1", "msg-1");
+      expect(zk.getMessage).toHaveBeenCalledWith("worker-inst-1", "msg-2");
     });
 
-    it("marks message as read after claude exits", async () => {
-      let watchCb: ((children: string[]) => void) | null = null;
+    it("processes unread messages via execWithTee", async () => {
       zk.watchMessageDir.mockImplementation(
-        (_id: string, onChange: (children: string[]) => void) => {
-          watchCb = onChange;
-          return Promise.resolve(["msg-1"]);
-        }
+        (_id: string, _onChange: unknown) => Promise.resolve(["msg-1"])
       );
-
       zk.getMessage.mockResolvedValue(makeMsg({ read: false }));
 
       const child = new MockChildProcess();
       mockSpawn.mockReturnValue(child);
 
-      await watcher.startWatching("inst-001", "/test/dir");
+      await watcher.start();
       await new Promise((r) => setTimeout(r, 50));
 
       expect(mockSpawn).toHaveBeenCalled();
+      const callArgs = mockSpawn.mock.calls[0];
+      expect(callArgs[0]).toBe("sh");
+      expect(callArgs[1][1]).toContain("tee");
 
-      // Exit the child
-      child.emit("exit", 0, null);
+      child.emit("exit", 0);
+    });
 
-      // Wait for async mark-as-read
+    it("marks message as read after processing", async () => {
+      zk.watchMessageDir.mockImplementation(
+        (_id: string, _onChange: unknown) => Promise.resolve(["msg-1"])
+      );
+      zk.getMessage.mockResolvedValue(makeMsg({ read: false }));
+
+      const child = new MockChildProcess();
+      mockSpawn.mockReturnValue(child);
+
+      await watcher.start();
+      await new Promise((r) => setTimeout(r, 50));
+
+      child.emit("exit", 0);
       await new Promise((r) => setTimeout(r, 50));
 
       expect(zk.updateMessage).toHaveBeenCalledWith(
-        "inst-001",
+        "worker-inst-1",
         "msg-1",
         expect.objectContaining({ read: true })
       );
     });
 
-    it("marks message as read even when claude fails", async () => {
+    it("marks message as read even when processing fails", async () => {
       zk.watchMessageDir.mockImplementation(
-        (_id: string, onChange: (children: string[]) => void) => {
-          return Promise.resolve(["msg-1"]);
-        }
+        (_id: string, _onChange: unknown) => Promise.resolve(["msg-1"])
       );
-
       zk.getMessage.mockResolvedValue(makeMsg({ read: false }));
 
       const child = new MockChildProcess();
       mockSpawn.mockReturnValue(child);
 
-      await watcher.startWatching("inst-001", "/test/dir");
+      await watcher.start();
       await new Promise((r) => setTimeout(r, 50));
 
-      child.emit("exit", 1, null);
-
+      child.emit("exit", 1);
       await new Promise((r) => setTimeout(r, 50));
 
       expect(zk.updateMessage).toHaveBeenCalledWith(
-        "inst-001",
+        "worker-inst-1",
         "msg-1",
         expect.objectContaining({ read: true })
       );
@@ -195,25 +147,25 @@ describe("MessageWatcher", () => {
 
     it("handles spawn error gracefully", async () => {
       zk.watchMessageDir.mockImplementation(
-        (_id: string, onChange: (children: string[]) => void) => {
-          return Promise.resolve(["msg-1"]);
-        }
+        (_id: string, _onChange: unknown) => Promise.resolve(["msg-1"])
       );
-
       zk.getMessage.mockResolvedValue(makeMsg({ read: false }));
 
       const child = new MockChildProcess();
       mockSpawn.mockReturnValue(child);
 
-      await watcher.startWatching("inst-001", "/test/dir");
+      await watcher.start();
       await new Promise((r) => setTimeout(r, 50));
 
       child.emit("error", new Error("claude not found"));
-
       await new Promise((r) => setTimeout(r, 50));
 
-      // Should still mark as read
       expect(zk.updateMessage).toHaveBeenCalled();
+    });
+
+    it("stops gracefully", () => {
+      expect(() => watcher.stop()).not.toThrow();
+      expect(watcher.stopped).toBe(true);
     });
   });
 });

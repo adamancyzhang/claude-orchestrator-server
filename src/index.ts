@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { loadConfig, loadInstanceId } from "./config.js";
+import { loadInstanceId, loadGlobalConfig } from "./config.js";
 import {
   cmdStatus,
   cmdRegister,
@@ -23,6 +23,9 @@ import {
   cmdWatchTasks,
   cmdUnregister,
   cmdSetup,
+  cmdTaskBlock,
+  cmdTaskFail,
+  cmdTaskRetry,
 } from "./cli/commands.js";
 import { output } from "./utils/output.js";
 
@@ -173,7 +176,7 @@ program
 program
   .command("list-tasks")
   .description("List tasks, optionally filtered by status")
-  .option("--status <status>", "Filter: pending, claimed, completed")
+  .option("--status <status>", "Filter: pending, claimed, in_progress, completed, blocked, failed")
   .action(async function (this: Command) {
     try {
       const { status } = getSubOpts<{ status?: string }>(this);
@@ -369,48 +372,87 @@ program
 
 program
   .command("setup")
-  .description("Configure Claude Code MCP connection in the working directory")
-  .option("--port <port>", "Orchestrator server port (default: 3100)", "3100")
-  .option("--host <host>", "Orchestrator server host (default: 127.0.0.1)", "127.0.0.1")
-  .option("--name <name>", "Instance name for X-Instance-Name header")
-  .option("--role <role>", "Instance role for X-Instance-Role header")
-  .option("--global", "Write to ~/.claude/mcp.json instead of local .claude/mcp.json", false)
+  .description("Initialize orchestrator environment and agent templates")
+  .option("--leader", "Initialize as Leader environment", false)
+  .option("--name <name>", "Instance display name")
+  .option("--role <role>", "Instance role (developer/tester/architect/general)")
+  .option("--cache-dir <path>", "Shared cache directory (default: ~/.claude-orchestrator/sessions)")
+  .option("--command <cmd>", "Claude CLI command (default: claude --dangerously-skip-permissions -v)")
+  .option("--global", "Write config only to ~/.claude-orchestrator/", false)
   .action(async function (this: Command) {
-    const { port, host, name, role, global: isGlobal } = getSubOpts<{
-      port: string;
-      host: string;
+    const { leader, name, role, cacheDir, command, global: isGlobal } = getSubOpts<{
+      leader: boolean;
       name?: string;
       role?: string;
+      cacheDir?: string;
+      command?: string;
       global: boolean;
     }>(this);
-    await cmdSetup({ port, host, name, role, global: isGlobal });
+    const { instanceId } = getOpts(this);
+    await cmdSetup({ leader, name, role, cacheDir, command, global: isGlobal, instanceId });
+  });
+
+
+program
+  .command("task-block")
+  .description("Mark a claimed task as blocked")
+  .requiredOption("--task-id <id>", "Task ID")
+  .requiredOption("--reason <text>", "Blocking reason")
+  .action(async function (this: Command) {
+    try {
+      const { taskId, reason } = getSubOpts<{ taskId: string; reason: string }>(this);
+      const { zookeeper, instanceId } = getOpts(this);
+      await cmdTaskBlock(zookeeper, instanceId, taskId, reason);
+    } catch (e) {
+      output({ error: String(e) }, true);
+    }
   });
 
 program
-  .command("server")
-  .description("Start MCP server")
-  .option("--port <port>", "Server port (env: ORCHESTRATOR_PORT)", process.env.ORCHESTRATOR_PORT || "3100")
-  .option("--host <host>", "Server host (env: ORCHESTRATOR_HOST)", process.env.ORCHESTRATOR_HOST || "127.0.0.1")
-  .option("--name <name>", "Instance name for the server")
-  .option("--role <role>", "Instance role for the server")
+  .command("task-fail")
+  .description("Mark a claimed task as failed")
+  .requiredOption("--task-id <id>", "Task ID")
+  .requiredOption("--reason <text>", "Failure reason")
   .action(async function (this: Command) {
-    const { port, host, name, role } = getSubOpts<{
-      port: string;
-      host: string;
-      name?: string;
-      role?: string;
-    }>(this);
-    const { zookeeper } = getOpts(this);
-
-    const { startServer } = await import("./server.js");
-    const config = loadConfig({ zookeeper, port, host });
-
     try {
-      await startServer(config);
+      const { taskId, reason } = getSubOpts<{ taskId: string; reason: string }>(this);
+      const { zookeeper, instanceId } = getOpts(this);
+      await cmdTaskFail(zookeeper, instanceId, taskId, reason);
     } catch (e) {
-      console.error("Failed to start server:", e);
-      process.exit(1);
+      output({ error: String(e) }, true);
     }
+  });
+
+program
+  .command("task-retry")
+  .description("Re-queue a failed task for retry")
+  .requiredOption("--task-id <id>", "Task ID to retry")
+  .action(async function (this: Command) {
+    try {
+      const { taskId } = getSubOpts<{ taskId: string }>(this);
+      const { zookeeper, instanceId } = getOpts(this);
+      await cmdTaskRetry(zookeeper, instanceId, taskId);
+    } catch (e) {
+      output({ error: String(e) }, true);
+    }
+  });
+
+program
+  .command("leader")
+  .description("Start Leader node (TUI orchestration console)")
+  .option("--name <name>", "Leader display name")
+  .action(async function (this: Command) {
+    const { name } = getSubOpts<{ name?: string }>(this);
+    const { zookeeper, instanceId } = getOpts(this);
+    const { startLeader } = await import("./leader/index.js");
+    const globalConfig = loadGlobalConfig();
+    await startLeader({
+      zkHosts: zookeeper,
+      name,
+      instanceId,
+      command: globalConfig.command,
+      cacheDir: globalConfig.cache_dir,
+    });
   });
 
 // ── Main entry ──

@@ -1,0 +1,46 @@
+import { ZkClient } from "../zk/client.js";
+import { LeaderEventBus } from "./event-bus.js";
+
+const MAX_RETRIES = 3;
+
+export class TaskRecovery {
+  constructor(
+    private zk: ZkClient,
+    private eventBus: LeaderEventBus,
+  ) {}
+
+  start(): void {
+    this.eventBus.on("worker_left", (event) => {
+      this.recoverOrphanedTasks(event.instanceId as string);
+    });
+  }
+
+  private async recoverOrphanedTasks(workerId: string): Promise<void> {
+    const claimed = await this.zk.listClaimedTasks();
+    for (const [insId, taskId, data] of claimed) {
+      if (insId !== workerId) continue;
+
+      const retryCount = (data.retry_count as number ?? 0) + 1;
+      if (retryCount > MAX_RETRIES) {
+        await this.zk.saveCompletedTask(taskId, {
+          ...data,
+          status: "failed",
+          completed_at: new Date().toISOString(),
+          retry_count: retryCount,
+          fail_reason: `Max retries (${MAX_RETRIES}) exceeded after worker disconnect`,
+        });
+        await this.zk.deleteClaimedTask(insId, taskId);
+        this.eventBus.emit({ type: "task_failed", taskId, reason: "Max retries exceeded" });
+      } else {
+        const taskData = { ...data };
+        taskData.retry_count = retryCount;
+        taskData.status = "pending";
+        delete taskData.claimed_by;
+        delete taskData.claimed_at;
+        const newTaskId = await this.zk.createPendingTask(taskData);
+        await this.zk.deleteClaimedTask(insId, taskId);
+        this.eventBus.emit({ type: "task_recovered", taskId, newTaskId, retryCount });
+      }
+    }
+  }
+}

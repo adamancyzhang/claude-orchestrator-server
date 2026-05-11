@@ -1,5 +1,6 @@
 export const ROOT = "/claude-orchestrator";
 
+export const LEADER = `${ROOT}/leader`;
 export const INSTANCES = `${ROOT}/instances`;
 export const TASKS = `${ROOT}/tasks`;
 export const TASKS_PENDING = `${TASKS}/pending`;
@@ -34,6 +35,10 @@ export function messagePath(instanceId: string, msgId: string): string {
 
 export function contextPath(key: string): string {
   return `${CONTEXT}/${key}`;
+}
+
+export function leaderPath(): string {
+  return LEADER;
 }
 
 export const ALL_ENSURE_PATHS = [

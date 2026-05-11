@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { ZkClient } from "../zk/client.js";
 import {
   MessageSchema,
@@ -124,6 +126,26 @@ export class MessageRouter {
     await this.zk.deleteMessage(instanceId, messageId);
   }
 
+  async sendWithTemplate(
+    fromInstance: string,
+    fromName: string,
+    fromRole: string,
+    content: string,
+    templateName: "leader.md" | "worker.md",
+    variables: Record<string, string>,
+    templateDir: string,
+    toInstance?: string,
+    broadcast: boolean = false,
+    toName?: string,
+  ): Promise<Message[]> {
+    const templatePath = path.join(templateDir, "agents", templateName);
+    const rendered = await renderTemplate(templatePath, {
+      ...variables,
+      content,
+    });
+    return this.send(fromInstance, fromName, rendered, toInstance, broadcast, toName);
+  }
+
   async requestHelp(
     fromInstance: string,
     fromName: string,
@@ -153,4 +175,15 @@ export class MessageRouter {
     }
     return messages;
   }
+}
+
+export async function renderTemplate(
+  templatePath: string,
+  variables: Record<string, string>,
+): Promise<string> {
+  let content = await fs.promises.readFile(templatePath, "utf-8");
+  for (const [key, value] of Object.entries(variables)) {
+    content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+  }
+  return content;
 }

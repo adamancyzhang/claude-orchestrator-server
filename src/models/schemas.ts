@@ -2,13 +2,13 @@ import { z } from "zod";
 
 // ── Enums ──
 
-export const InstanceStatus = z.enum(["idle", "busy", "blocked"]);
+export const InstanceStatus = z.enum(["idle", "busy"]);
 export type InstanceStatus = z.infer<typeof InstanceStatus>;
 
-export const InstanceRole = z.enum(["architect", "developer", "tester", "general"]);
+export const InstanceRole = z.enum(["architect", "developer", "tester", "general", "leader"]);
 export type InstanceRole = z.infer<typeof InstanceRole>;
 
-export const TaskStatus = z.enum(["pending", "claimed", "completed"]);
+export const TaskStatus = z.enum(["pending", "claimed", "in_progress", "completed", "blocked", "failed"]);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
 export const TaskPriority = z.number().int().min(0).max(2);
@@ -36,6 +36,7 @@ export const InstanceSchema = z.object({
   status: InstanceStatus.default("idle"),
   current_task_id: z.string().nullable().default(null),
   connected_since: z.string(),
+  work_dir: z.string().nullable().default(null),
 });
 export type Instance = z.infer<typeof InstanceSchema>;
 
@@ -52,6 +53,13 @@ export const TaskSchema = z.object({
   completed_at: z.string().nullable().default(null),
   claimed_by: z.string().nullable().default(null),
   result: z.string().nullable().default(null),
+  retry_count: z.number().int().default(0),
+  blocked_reason: z.string().nullable().default(null),
+  fail_reason: z.string().nullable().default(null),
+  created_by_name: z.string().default(""),
+  assigned_to_name: z.string().nullable().default(null),
+  completed_by_name: z.string().nullable().default(null),
+  duration_seconds: z.number().nullable().default(null),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -60,10 +68,15 @@ export const MessageSchema = z.object({
   type: MessageType.default("direct"),
   from_instance: z.string().default(""),
   from_name: z.string().default(""),
+  from_role: z.string().default(""),
   to_instance: z.string().nullable().default(null),
+  to_name: z.string().nullable().default(null),
   content: z.string(),
   created_at: z.string(),
   read: z.boolean().default(false),
+  task_doc_path: z.string().nullable().default(null),
+  result_path: z.string().nullable().default(null),
+  reply_to: z.string().nullable().default(null),
 });
 export type Message = z.infer<typeof MessageSchema>;
 
@@ -81,6 +94,7 @@ export function createInstance(overrides: {
   id?: string;
   name: string;
   role?: InstanceRole;
+  workDir?: string;
 }): Instance {
   return InstanceSchema.parse({
     id: overrides.id ?? crypto.randomUUID().replace(/-/g, ""),
@@ -89,6 +103,7 @@ export function createInstance(overrides: {
     status: "idle",
     current_task_id: null,
     connected_since: utcNow(),
+    work_dir: overrides.workDir ?? null,
   });
 }
 
@@ -98,6 +113,8 @@ export function createTask(overrides: {
   priority?: number;
   created_by?: string;
   assigned_to?: string | null;
+  created_by_name?: string;
+  assigned_to_name?: string | null;
 }): Task {
   return TaskSchema.parse({
     id: "",
@@ -112,6 +129,13 @@ export function createTask(overrides: {
     completed_at: null,
     claimed_by: null,
     result: null,
+    retry_count: 0,
+    blocked_reason: null,
+    fail_reason: null,
+    created_by_name: overrides.created_by_name ?? "",
+    assigned_to_name: overrides.assigned_to_name ?? null,
+    completed_by_name: null,
+    duration_seconds: null,
   });
 }
 
@@ -119,18 +143,28 @@ export function createMessage(overrides: {
   type?: MessageType;
   from_instance: string;
   from_name: string;
+  from_role?: string;
   to_instance: string;
+  to_name?: string | null;
   content: string;
+  task_doc_path?: string | null;
+  result_path?: string | null;
+  reply_to?: string | null;
 }): Message {
   return MessageSchema.parse({
     id: "",
     type: overrides.type ?? "direct",
     from_instance: overrides.from_instance,
     from_name: overrides.from_name,
+    from_role: overrides.from_role ?? "",
     to_instance: overrides.to_instance,
+    to_name: overrides.to_name ?? null,
     content: overrides.content,
     created_at: utcNow(),
     read: false,
+    task_doc_path: overrides.task_doc_path ?? null,
+    result_path: overrides.result_path ?? null,
+    reply_to: overrides.reply_to ?? null,
   });
 }
 

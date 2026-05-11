@@ -270,6 +270,17 @@ export class ZkClient {
     });
   }
 
+  // ── Leader operations ──
+
+  async createLeader(data: Record<string, unknown>): Promise<void> {
+    await this.create(paths.LEADER, encodeJson(data), CreateMode.EPHEMERAL);
+  }
+
+  async getLeader(): Promise<Record<string, unknown> | null> {
+    const raw = await this.getData(paths.LEADER);
+    return raw ? decodeJson(raw) : null;
+  }
+
   // ── Instance operations ──
 
   async registerInstance(instanceId: string, data: Record<string, unknown>): Promise<void> {
@@ -370,6 +381,10 @@ export class ZkClient {
       results.push([instanceId, taskId, data]);
     }
     return results;
+  }
+
+  async updateClaimedTask(instanceId: string, taskId: string, data: Record<string, unknown>): Promise<void> {
+    await this.setData(paths.claimedTaskPath(instanceId, taskId), encodeJson(data));
   }
 
   async deleteClaimedTask(instanceId: string, taskId: string): Promise<void> {
@@ -473,7 +488,15 @@ export class ZkClient {
     return this.getChildren(paths.CONTEXT);
   }
 
-  // ── Watch operations (delegates to external watcher setup) ──
+  // ── Watch operations ──
+
+  watchInstances(onChange: (children: string[]) => void): Promise<string[]> {
+    return this.getChildrenWithWatch(paths.INSTANCES, onChange);
+  }
+
+  watchClaimedTasks(onChange: (children: string[]) => void): Promise<string[]> {
+    return this.getChildrenWithWatch(paths.TASKS_CLAIMED, onChange);
+  }
 
   watchMessageDir(
     instanceId: string,
