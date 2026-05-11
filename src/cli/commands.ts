@@ -2,14 +2,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as http from "node:http";
+import { spawn } from "child_process";
 import { ZkClient } from "../zk/client.js";
+import * as paths from "../zk/paths.js";
 import { InstanceRegistry } from "../modules/registry.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { ContextStore } from "../modules/context-store.js";
 import { resolveInstanceId, saveInstanceId, saveInstanceConfig, loadInstanceConfig, loadInstanceId } from "../config.js";
 import { output } from "../utils/output.js";
-import { TaskPriorityName } from "../models/schemas.js";
+import { TaskPriorityName, MessageSchema } from "../models/schemas.js";
 
 async function withZk<T>(
   hosts: string,
@@ -136,7 +138,8 @@ export async function cmdRegister(
   zkHosts: string,
   instanceId: string | undefined,
   name?: string,
-  role?: string
+  role?: string,
+  workDir?: string
 ): Promise<void> {
   const config = loadInstanceConfig();
   const resolvedName = name || config.name;
@@ -147,7 +150,129 @@ export async function cmdRegister(
   const resolvedRole = role || config.role || "general";
   const resolvedId = instanceId || loadInstanceId() || undefined;
 
-  // Try MCP server REST endpoint first (uses server's persistent ZK connection)
+  // ── Mode 1: with work_dir → persistent local watcher ──
+  if (workDir) {
+    const zk = new ZkClient(zkHosts);
+    await zk.connect();
+    const registry = new InstanceRegistry(zk);
+
+    const instance = await registry.register(resolvedName, resolvedRole, resolvedId);
+    saveInstanceId(instance.id);
+    saveInstanceConfig({ name: resolvedName, role: resolvedRole });
+    output(instance);
+
+    console.log(`\nWatching for messages on instance ${instance.id.slice(0, 8)}...`);
+    console.log(`Work dir: ${workDir}`);
+    console.log("Press Ctrl+C to stop.\n");
+
+    const inFlight = new Set<string>();
+    let stopped = false;
+
+    const onSigint = () => {
+      stopped = true;
+      console.log("\nShutting down...");
+    };
+    process.on("SIGINT", onSigint);
+
+    const processMessage = async (msgId: string) => {
+      if (inFlight.has(msgId)) return;
+      const data = await zk.getMessage(instance.id, msgId);
+      if (!data) return;
+      const msg = MessageSchema.parse({ ...data, id: msgId });
+      if (msg.read) return;
+
+      inFlight.add(msgId);
+
+      const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
+      const timestamp = new Date().toLocaleTimeString();
+
+      console.log(`[${timestamp}] 📨 Message from ${fromLabel} (${msg.type}):`);
+      console.log(`  ${msg.content}\n`);
+
+      // Spawn claude -p
+      const prompt = `[${msg.type} from ${fromLabel}] ${msg.content}`;
+      console.log(`[${timestamp}] 🔄 Processing with claude -p...`);
+
+      try {
+        const child = spawn("claude", ["--session-id", instance.id, "-p", prompt], {
+          cwd: workDir,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: { ...process.env },
+        });
+
+        let stdout = "";
+        let stderr = "";
+        child.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
+        child.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+
+        const { code, error } = await new Promise<{ code: number; error: Error | null }>((resolve) => {
+          child.on("exit", (code) => resolve({ code: code ?? -1, error: null }));
+          child.on("error", (err) => resolve({ code: -1, error: err }));
+        });
+
+        if (error) {
+          console.error(`[${timestamp}] ❌ claude failed: ${error.message}\n`);
+        } else if (code !== 0) {
+          console.error(`[${timestamp}] ❌ claude exited ${code}\n`);
+          if (stderr) console.error(`  stderr: ${stderr.slice(0, 500)}\n`);
+        } else {
+          console.log(`[${timestamp}] ✅ Response:`);
+          console.log(`  ${stdout.slice(0, 2000)}\n`);
+        }
+      } catch (err) {
+        console.error(`[${timestamp}] ❌ Unexpected error: ${String(err)}\n`);
+      }
+
+      // Mark as read
+      try {
+        msg.read = true;
+        await zk.updateMessage(instance.id, msgId, msg as unknown as Record<string, unknown>);
+      } catch {
+        // best effort
+      }
+
+      inFlight.delete(msgId);
+    };
+
+    const watchLoop = async () => {
+      if (stopped) return;
+      try {
+        const children = await zk.watchMessageDir(instance.id, async (newChildren: string[]) => {
+          for (const cid of newChildren) {
+            await processMessage(cid);
+          }
+          watchLoop();
+        });
+        for (const cid of children) {
+          await processMessage(cid);
+        }
+      } catch {
+        if (!stopped) watchLoop();
+      }
+    };
+
+    await zk.mkdirp(paths.messageDirPath(instance.id));
+    watchLoop();
+
+    // Block until SIGINT
+    await new Promise<void>((resolve) => {
+      const check = setInterval(() => {
+        if (stopped) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 200);
+    });
+
+    await registry.unregister(instance.id);
+    await zk.disconnect();
+    process.removeListener("SIGINT", onSigint);
+    console.log("Unregistered. Goodbye.");
+    return;
+  }
+
+  // ── Mode 2: no work_dir → one-shot register ──
+
   const host = config.host || "127.0.0.1";
   const port = config.port || "3100";
   try {
@@ -433,9 +558,8 @@ export async function cmdSetup(options: {
   name?: string;
   role?: string;
   global: boolean;
-  withHook: boolean;
 }): Promise<void> {
-  const { port, host, name, role, global: isGlobal, withHook } = options;
+  const { port, host, name, role, global: isGlobal } = options;
 
   const claudeDir = isGlobal
     ? path.join(os.homedir(), ".claude")
@@ -480,45 +604,10 @@ export async function cmdSetup(options: {
     saveInstanceConfig({ name, role, port, host }, isGlobal);
   }
 
-  // Optionally create SessionStart + Stop hooks
-  if (withHook) {
-    const settingsFile = path.join(claudeDir, "settings.json");
-    let settings: { hooks?: Record<string, unknown[]> } = {};
-    if (fs.existsSync(settingsFile)) {
-      try {
-        settings = JSON.parse(fs.readFileSync(settingsFile, "utf-8"));
-      } catch {
-        output({ error: `Failed to parse existing ${settingsFile}` }, true);
-        return;
-      }
-    }
-    settings.hooks = settings.hooks || {};
-
-    const addHook = (hookType: string, command: string) => {
-      const existing = (settings.hooks![hookType] || []) as unknown[];
-      const alreadyExists = existing.some(
-        (h: unknown) => {
-          const hooks = (h as Record<string, unknown>)?.hooks as Array<Record<string, unknown>> | undefined;
-          return hooks?.[0]?.command === command;
-        }
-      );
-      if (!alreadyExists) {
-        existing.push({ matcher: "", hooks: [{ type: "command", command }] });
-        settings.hooks![hookType] = existing;
-      }
-    };
-
-    addHook("SessionStart", "claude-orchestrator register");
-    addHook("SessionEnd", "claude-orchestrator unregister");
-
-    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
-  }
-
   output({
     status: "configured",
     file: mcpFile,
     entry,
-    ...(withHook ? { hooks: ["SessionStart: claude-orchestrator register", "SessionEnd: claude-orchestrator unregister"] } : {}),
     ...(name ? { instance_config: `saved to ${isGlobal ? "~/.claude-orchestrator" : ".claude-orchestrator"}/config.json` } : {}),
   });
 }

@@ -82,14 +82,15 @@ program
 
 program
   .command("register")
-  .description("Register this instance with the orchestrator")
+  .description("Register this instance and listen for messages (Ctrl+C to stop)")
   .option("--name <name>", "Display name (reads from config if omitted)")
   .option("--role <role>", "Instance role (reads from config if omitted)")
+  .option("--work-dir <path>", "Working directory for claude -p message processing")
   .action(async function (this: Command) {
     try {
-      const { name, role } = getSubOpts<{ name?: string; role?: string }>(this);
+      const { name, role, workDir } = getSubOpts<{ name?: string; role?: string; workDir?: string }>(this);
       const { zookeeper, instanceId } = getOpts(this);
-      await cmdRegister(zookeeper, instanceId, name, role);
+      await cmdRegister(zookeeper, instanceId, name, role, workDir);
     } catch (e) {
       output({ error: String(e) }, true);
     }
@@ -374,17 +375,15 @@ program
   .option("--name <name>", "Instance name for X-Instance-Name header")
   .option("--role <role>", "Instance role for X-Instance-Role header")
   .option("--global", "Write to ~/.claude/mcp.json instead of local .claude/mcp.json", false)
-  .option("--with-hook", "Add SessionStart hook to auto-register on Claude Code startup", false)
   .action(async function (this: Command) {
-    const { port, host, name, role, global: isGlobal, withHook } = getSubOpts<{
+    const { port, host, name, role, global: isGlobal } = getSubOpts<{
       port: string;
       host: string;
       name?: string;
       role?: string;
       global: boolean;
-      withHook: boolean;
     }>(this);
-    await cmdSetup({ port, host, name, role, global: isGlobal, withHook });
+    await cmdSetup({ port, host, name, role, global: isGlobal });
   });
 
 program
