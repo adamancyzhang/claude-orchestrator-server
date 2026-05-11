@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js --server",
+    "start": "node dist/index.js server",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"

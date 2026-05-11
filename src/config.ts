@@ -10,7 +10,6 @@ export interface Config {
   port: number;
   host: string;
   instanceId?: string;
-  serverMode: boolean;
 }
 
 export function loadConfig(cliOpts: {
@@ -18,7 +17,6 @@ export function loadConfig(cliOpts: {
   port?: string;
   host?: string;
   instanceId?: string;
-  server?: boolean;
 }): Config {
   const zkHosts =
     cliOpts.zookeeper ||
@@ -35,13 +33,7 @@ export function loadConfig(cliOpts: {
 
   const instanceId = cliOpts.instanceId || loadInstanceId() || undefined;
 
-  return {
-    zkHosts,
-    port,
-    host,
-    instanceId,
-    serverMode: cliOpts.server === true,
-  };
+  return { zkHosts, port, host, instanceId };
 }
 
 export function saveInstanceId(instanceId: string): void {

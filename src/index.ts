@@ -42,7 +42,6 @@ program
     "-i, --instance-id <id>",
     "Instance ID (reads from ~/.claude-orchestrator/config.json if omitted)"
   )
-  .option("-s, --server", "Start in MCP server mode")
   .hook("preAction", (thisCmd: Command) => {
     const opts = thisCmd.opts();
     if (process.env.ZK_HOSTS && (!opts.zookeeper || opts.zookeeper === "127.0.0.1:2181")) {
@@ -359,26 +358,24 @@ program
     });
   });
 
-// ── Main entry ──
-
-async function main() {
-  const serverIndex = process.argv.indexOf("--server");
-  const sIndex = process.argv.indexOf("-s");
-
-  if (serverIndex !== -1 || sIndex !== -1) {
-    if (serverIndex !== -1) process.argv.splice(serverIndex, 1);
-    if (sIndex !== -1) process.argv.splice(sIndex, 1);
-
-    program.parseOptions(process.argv.slice(2));
-    const opts = program.opts();
+program
+  .command("server")
+  .description("Start MCP server")
+  .option("--port <port>", "Server port (env: ORCHESTRATOR_PORT)", process.env.ORCHESTRATOR_PORT || "3100")
+  .option("--host <host>", "Server host (env: ORCHESTRATOR_HOST)", process.env.ORCHESTRATOR_HOST || "127.0.0.1")
+  .option("--name <name>", "Instance name for the server")
+  .option("--role <role>", "Instance role for the server")
+  .action(async function (this: Command) {
+    const { port, host, name, role } = getSubOpts<{
+      port: string;
+      host: string;
+      name?: string;
+      role?: string;
+    }>(this);
+    const { zookeeper } = getOpts(this);
 
     const { startServer } = await import("./server.js");
-    const config = loadConfig({
-      zookeeper: opts.zookeeper,
-      port: process.env.ORCHESTRATOR_PORT,
-      host: process.env.ORCHESTRATOR_HOST,
-      instanceId: opts.instanceId,
-    });
+    const config = loadConfig({ zookeeper, port, host });
 
     try {
       await startServer(config);
@@ -386,9 +383,11 @@ async function main() {
       console.error("Failed to start server:", e);
       process.exit(1);
     }
-    return;
-  }
+  });
 
+// ── Main entry ──
+
+async function main() {
   program.parse();
 }
 

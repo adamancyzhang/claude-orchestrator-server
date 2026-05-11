@@ -72,7 +72,7 @@ git clone https://github.com/adamancyzhang/claude-orchestrator-server.git
 cd claude-orchestrator-server
 npm install
 npm run build
-node dist/index.js --server
+node dist/index.js server
 # → MCP server listening on http://127.0.0.1:3100
 ```
 
@@ -316,7 +316,7 @@ docker-compose up -d
 npm run build
 
 # Start the server
-node dist/index.js --server
+node dist/index.js server
 
 # Or use the CLI directly
 node dist/index.js status

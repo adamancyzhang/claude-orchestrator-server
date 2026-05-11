@@ -148,7 +148,7 @@ npm install
 npm run build
 
 # Start MCP server
-node dist/index.js --server
+node dist/index.js server
 
 # Run CLI commands
 node dist/index.js status
@@ -161,7 +161,7 @@ npm test
 ## CLI Usage
 
 ```
-claude-orchestrator --server              # Start MCP server
+claude-orchestrator server [options]      # Start MCP server
 claude-orchestrator <command> [options]   # CLI command mode
 
 Global options:
@@ -170,13 +170,10 @@ Global options:
   -h, --help                Show help
   -V, --version             Show version
 
-Server options:
-  --port <port>             Server port (env: ORCHESTRATOR_PORT, default: 3100)
-  --host <host>             Server host (env: ORCHESTRATOR_HOST, default: 127.0.0.1)
-
 Commands:
-  status | register | heartbeat | list-instances | push-task | claim-task |
-  complete-task | list-tasks | send-message | poll-messages | wait-for-message |
-  dismiss-message | request-help | set-context | get-context | delete-context |
-  list-context-keys | watch-context | watch-tasks | unregister | config
+  server | status | register | heartbeat | list-instances | push-task |
+  claim-task | complete-task | list-tasks | send-message | poll-messages |
+  wait-for-message | dismiss-message | request-help | set-context |
+  get-context | delete-context | list-context-keys | watch-context |
+  watch-tasks | unregister | config
 ```
