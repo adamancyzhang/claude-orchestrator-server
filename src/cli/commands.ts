@@ -497,7 +497,7 @@ export async function cmdSetup(options: {
     };
 
     addHook("SessionStart", "claude-orchestrator register");
-    addHook("Stop", "claude-orchestrator unregister");
+    addHook("SessionEnd", "claude-orchestrator unregister");
 
     fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n");
   }
@@ -506,7 +506,7 @@ export async function cmdSetup(options: {
     status: "configured",
     file: mcpFile,
     entry,
-    ...(withHook ? { hooks: ["SessionStart: claude-orchestrator register", "Stop: claude-orchestrator unregister"] } : {}),
+    ...(withHook ? { hooks: ["SessionStart: claude-orchestrator register", "SessionEnd: claude-orchestrator unregister"] } : {}),
     ...(name ? { instance_config: `saved to ${isGlobal ? "~/.claude-orchestrator" : ".claude-orchestrator"}/config.json` } : {}),
   });
 }

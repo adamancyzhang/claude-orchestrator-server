@@ -79,13 +79,13 @@ Use the built-in setup command to auto-configure your project:
 claude-orchestrator setup --name Tom-Architect --role architect --with-hook
 ```
 
-This writes the MCP connection to `.claude/mcp.json` and adds lifecycle hooks: `SessionStart` (auto-register) and `Stop` (auto-unregister).
+This writes the MCP connection to `.claude/mcp.json` and adds lifecycle hooks: `SessionStart` (auto-register) and `SessionEnd` (auto-unregister).
 
 Options:
 - `--global` — write to `~/.claude/mcp.json` instead of local `.claude/mcp.json`
 - `--port`, `--host` — if your server runs on a different address
 - `--name`, `--role` — set instance identity headers
-- `--with-hook` — add SessionStart + Stop hooks for automatic lifecycle
+- `--with-hook` — add SessionStart + SessionEnd hooks for automatic lifecycle
 
 ### 5. Go
 

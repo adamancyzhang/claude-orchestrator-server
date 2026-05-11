@@ -13,7 +13,7 @@ The `claude-orchestrator setup` command:
 
 1. Writes/updates `.claude/mcp.json` with an `orchestrator` entry pointing to the MCP server
 2. Persists instance name/role to `.claude-orchestrator/config.json` (or `~/.claude-orchestrator/config.json` with `--global`) for auto-registration
-3. Optionally adds `SessionStart` + `Stop` hooks so the instance auto-registers on startup and auto-unregisters on exit
+3. Optionally adds `SessionStart` + `SessionEnd` hooks so the instance auto-registers on startup and auto-unregisters on exit
 
 This replaces manually editing JSON files — one command, fully configured.
 
@@ -22,7 +22,7 @@ This replaces manually editing JSON files — one command, fully configured.
 The `--with-hook` flag adds two lifecycle hooks:
 
 - **`SessionStart`**: runs `claude-orchestrator register` — registers the instance via the MCP server when Claude Code starts
-- **`Stop`**: runs `claude-orchestrator unregister` — removes the instance from ZK when Claude Code exits
+- **`SessionEnd`**: runs `claude-orchestrator unregister` — removes the instance from ZK when the session ends
 
 The `register` command:
 
@@ -60,7 +60,7 @@ Ask the user (or infer from context):
 | Instance name? | ask | Convention: `{Name}-{Role}` (e.g., `Jerry-Dev`) |
 | Instance role? | `general` | One of: `architect`, `developer`, `tester`, `general` |
 | Global or local? | local (project `.claude/`) | `--global` writes to `~/.claude/mcp.json` instead |
-| Auto-register hook? | yes | `--with-hook` adds `SessionStart` (register) + `Stop` (unregister) hooks |
+| Auto-register hook? | yes | `--with-hook` adds `SessionStart` (register) + `SessionEnd` (unregister) hooks |
 | Server host/port? | `127.0.0.1:3100` | Only ask if the user mentions a custom setup |
 
 ### 2. Build the command
@@ -95,7 +95,7 @@ Execute the command. It will:
 - Create `.claude/` directory if needed
 - Write `.claude/mcp.json` with the orchestrator entry
 - Save instance config to `.claude-orchestrator/config.json` (project-local) or `~/.claude-orchestrator/config.json` (with `--global`)
-- Add `SessionStart` + `Stop` hooks if `--with-hook` was used
+- Add `SessionStart` + `SessionEnd` hooks if `--with-hook` was used
 
 ### 4. Verify
 
@@ -129,7 +129,7 @@ Summarize what was configured:
 
 - "Configured orchestrator MCP server at `http://<host>:<port>/mcp`"
 - "Instance name: **`<name>`**, role: **`<role>`**"
-- If `--with-hook`: "SessionStart + Stop hooks added — instance will auto-register on startup and unregister on exit"
+- If `--with-hook`: "SessionStart + SessionEnd hooks added — instance will auto-register on startup and unregister on exit"
 - If `--global`: "Config written to `~/.claude/mcp.json` (global)"
 - "Instance config saved to `.claude-orchestrator/config.json`" (or `~/.claude-orchestrator/config.json` if `--global`)
 
