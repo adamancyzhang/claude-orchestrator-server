@@ -67,11 +67,6 @@ docker-compose up -d
 ### 3. 启动 MCP 服务端
 
 ```bash
-# 从源码运行
-git clone https://github.com/adamancyzhang/claude-orchestrator-server.git
-cd claude-orchestrator-server
-npm install
-npm run build
 claude-orchestrator server
 # → MCP server listening on http://127.0.0.1:3100
 ```
