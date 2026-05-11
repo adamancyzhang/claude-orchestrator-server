@@ -1,20 +1,5 @@
 #!/usr/bin/env node
-const { spawnSync } = require("child_process");
-const path = require("path");
-const fs = require("fs");
-
-const binary = path.join(__dirname, "orchestrator-binary");
-
-if (!fs.existsSync(binary)) {
-  console.error(`Error: orchestrator-binary not found at ${binary}`);
-  console.error(
-    "Run 'node scripts/install.js' to download it, or build with 'bash scripts/build-binary.sh'"
-  );
+import("../dist/index.js").catch((err) => {
+  console.error(err);
   process.exit(1);
-}
-
-const result = spawnSync(binary, process.argv.slice(2), {
-  stdio: "inherit",
 });
-
-process.exit(result.status ?? 1);
