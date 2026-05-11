@@ -3,73 +3,31 @@
 ## 组件交互图
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        ZooKeeper                                │
-│                                                                 │
-│  /leader [EPH]    /instances/* [EPH]   /tasks/*    /messages/* │
-│  /context/*                                                     │
-└──────┬─────────────────┬─────────────────┬─────────────────────┘
-       │                 │                 │
-       │           ┌─────┴─────┐           │
-       │           │  Member   │           │
-       │           │  Watcher  │           │
-       │           │           │           │
-       │           │ - ZK Watch│           │
-       │           │ - spawn   │           │
-       │           │   claude  │           │
-       │           │   -p ...  │           │
-       │           └───────────┘           │
-       │                                   │
-  ┌────┴──────────────────────────────┐    │
-  │            Leader Node            │    │
-  │                                   │    │
-  │  ┌─────────────────────────────┐  │    │
-  │  │           TUI               │  │    │
-  │  │  ┌─────────┐ ┌───────────┐  │  │    │
-  │  │  │ Team    │ │ Task      │  │  │    │
-  │  │  │ Panel   │ │ Panels    │  │  │    │
-  │  │  ├─────────┤ └───────────┘  │  │    │
-  │  │  │ Event   │                │  │    │
-  │  │  │ Log     │                │  │    │
-  │  │  ├─────────┤                │  │    │
-  │  │  │ Command │                │  │    │
-  │  │  │ Input   │                │  │    │
-  │  │  └─────────┘                │  │    │
-  │  └──────────────┬──────────────┘  │    │
-  │                 │                  │    │
-  │  ┌──────────────┴──────────────┐  │    │
-  │  │     Event Bus               │  │    │
-  │  │  (internal pub/sub)         │  │    │
-  │  └──────┬──────────┬───────────┘  │    │
-  │         │          │               │    │
-  │  ┌──────┴──┐ ┌─────┴──────┐       │    │
-  │  │ Member  │ │ Task       │       │    │
-  │  │ Monitor │ │ Orchestr.  │       │    │
-  │  └────┬────┘ └─────┬──────┘       │    │
-  │       │            │               │    │
-  │  ┌────┴────────────┴──────────┐   │    │
-  │  │     ZK Watch Manager       │   │    │
-  │  │  - watch registration      │   │    │
-  │  │  - one-shot renewal        │   │    │
-  │  │  - session handling        │   │    │
-  │  └─────────────┬──────────────┘   │    │
-  │                │                   │    │
-  │  ┌─────────────┴──────────────┐   │    │
-  │  │   ZK Client (persistent)   │   │    │
-  │  │   - connection lifecycle   │   │    │
-  │  │   - CRUD operations        │   │    │
-  │  │   - auto-reconnect         │   │    │
-  │  └────────────────────────────┘   │    │
-  └───────────────────────────────────┘    │
-                                           │
-                              ┌────────────┴────────────┐
-                              │   CLI (one-shot)        │
-                              │                         │
-                              │   push-task, send-msg,  │
-                              │   set-context, etc.     │
-                              │   (each creates temp    │
-                              │    ZK connection)       │
-                              └─────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          ZooKeeper                                   │
+│  /leader [EPH]    /instances/* [EPH]   /tasks/*    /messages/*      │
+└──────┬──────────────────┬──────────────────┬────────────────────────┘
+       │                  │                  │
+  ┌────┴────────┐   ┌─────┴─────┐   ┌───────┴──────────┐
+  │ Leader Node │   │ Worker A  │   │ CLI (ad-hoc)     │
+  │             │   │           │   │                  │
+  │ TUI (3 cmd) │   │ watcher   │   │ push-task        │
+  │ msg/status  │   │ $COMMAND  │   │ claim-task       │
+  │ /exit       │   │ -p | tee  │   │ send-message     │
+  │             │   │           │   │ complete-task    │
+  │ leader.md   │   │ worker.md │   │ set-context ...  │
+  │ template    │   │ template  │   │                  │
+  └─────┬───────┘   └─────┬─────┘   └──────────────────┘
+        │                 │
+        └────────┬────────┘
+                 │
+        ┌────────┴────────┐
+        │   $CACHE_DIR    │
+        │  (共享文件系统)   │
+        │  sessions/{id}/ │
+        │  ├── task-xx.log│
+        │  └── task-xx.md │
+        └─────────────────┘
 ```
 
 ## Leader 内部架构
@@ -81,62 +39,51 @@ Leader 内部使用轻量级 EventEmitter 实现事件驱动：
 ```typescript
 // src/leader/event-bus.ts
 type LeaderEvent =
-  | { type: "member_joined"; instance: Instance }
-  | { type: "member_left"; instanceId: string; name: string }
-  | { type: "member_status_changed"; instanceId: string; status: string }
+  | { type: "worker_joined"; instance: Instance }
+  | { type: "worker_left"; instanceId: string; name: string }
+  | { type: "worker_status_changed"; instanceId: string; status: string }
   | { type: "task_created"; task: Task }
   | { type: "task_claimed"; taskId: string; instanceId: string }
   | { type: "task_completed"; taskId: string; instanceId: string }
   | { type: "task_blocked"; taskId: string; reason: string }
   | { type: "task_failed"; taskId: string; reason: string }
-  | { type: "task_recovered"; taskId: string }  // 孤儿任务回收
-  | { type: "message_sent"; from: string; to: string; type: MessageType }
-  | { type: "context_changed"; key: string };
+  | { type: "task_recovered"; taskId: string }
+  | { type: "message_sent"; from: string; to: string; type: MessageType };
 ```
 
-TUI 订阅 Event Bus 以更新显示，Orchestrator 订阅以触发自动化逻辑。
+TUI 订阅 Event Bus 以更新显示。
 
-### Member Monitor
+### Worker Monitor
 
 ```typescript
 // src/leader/monitor.ts
-class MemberMonitor {
+class WorkerMonitor {
   async start(): Promise<void> {
-    // 1. 初始加载所有活跃成员
     const children = await this.zk.getChildrenWithWatch(
       paths.INSTANCES,
       (newChildren) => this.onChildrenChanged(newChildren)
     );
-
-    // 2. 为每个成员设置 DataWatch 监听状态变化
     for (const id of children) {
-      this.watchMemberData(id);
+      this.watchWorkerData(id);
     }
-
-    // 3. 通知 TUI
-    this.emit("member_list_updated", children);
   }
 
   private async onChildrenChanged(children: string[]): Promise<void> {
-    // 检测新加入和离开的成员
     const prev = this.knownInstances;
     const curr = new Set(children);
-
     for (const id of curr) {
       if (!prev.has(id)) {
         const inst = await this.zk.getInstance(id);
-        this.eventBus.emit({ type: "member_joined", instance: inst });
-        this.watchMemberData(id);
+        this.eventBus.emit({ type: "worker_joined", instance: inst });
+        this.watchWorkerData(id);
       }
     }
-
     for (const id of prev) {
       if (!curr.has(id)) {
         const name = this.instanceNames.get(id) ?? id.slice(0, 8);
-        this.eventBus.emit({ type: "member_left", instanceId: id, name });
+        this.eventBus.emit({ type: "worker_left", instanceId: id, name });
       }
     }
-
     this.knownInstances = curr;
   }
 }
@@ -148,7 +95,6 @@ class MemberMonitor {
 // src/leader/orchestrator.ts
 class TaskOrchestrator {
   async start(): Promise<void> {
-    // 1. 监听 pending 任务变化
     this.zk.getChildrenWithWatch(paths.TASKS_PENDING, (children) => {
       for (const id of diff(children, this.knownPending)) {
         const task = await this.zk.getPendingTask(id);
@@ -156,59 +102,135 @@ class TaskOrchestrator {
       }
     });
 
-    // 2. 监听 claimed 任务变化 (含孤儿检测)
     this.zk.getChildrenWithWatch(paths.TASKS_CLAIMED, (children) => {
       for (const id of diff(this.knownClaimed, children)) {
-        // 节点被删除 → 可能是任务完成或实例断连
         const [insId, taskId] = parseClaimedNodeName(id);
         const instExists = await this.zk.exists(paths.instancePath(insId));
         if (!instExists) {
-          // 实例已离线 → 孤儿任务，重新入队
           await this.recoverOrphanedTask(insId, taskId);
         }
       }
     });
   }
 
-  private async recoverOrphanedTask(
-    instanceId: string,
-    taskId: string
-  ): Promise<void> {
-    // 1. 读取 claimed 节点中的任务数据
+  private async recoverOrphanedTask(instanceId: string, taskId: string): Promise<void> {
     const taskData = await this.zk.getClaimedTask(instanceId, taskId);
-
-    // 2. 重新写入 /tasks/pending，保留原始 priority 和 assigned_to
     taskData.status = "pending";
     taskData.retry_count = (taskData.retry_count ?? 0) + 1;
     await this.zk.createPendingTask(taskData);
-
-    // 3. 通知 TUI
     this.eventBus.emit({ type: "task_recovered", taskId });
+  }
+}
+```
+
+### Leader 消息发送 (leader.md 模板)
+
+Leader TUI 中 `msg` 命令的执行流程：
+
+```typescript
+// src/leader/index.ts
+async function handleMsgCommand(targetWorker: string, content: string): Promise<void> {
+  // 1. 生成消息唯一 key
+  const uniqueKey = `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // 2. 生成任务文档的相对路径 (写入 CACHE_DIR)
+  const taskDocPath = `./tasks/${uniqueKey}.md`;
+  const fullTaskDocPath = path.join(cacheDir, leaderInstanceId, taskDocPath);
+  const resultPath = `${cacheDirRelative}/${leaderInstanceId}/${uniqueKey}.log`;
+
+  // 3. 写入任务文档 (供 Worker 读取)
+  await fs.promises.mkdir(path.dirname(fullTaskDocPath), { recursive: true });
+  await fs.promises.writeFile(fullTaskDocPath, content);
+
+  // 4. 读取 leader.md 模板
+  const template = await loadTemplate("leader.md");
+
+  // 5. 填充模板变量
+  const message = template
+    .replace("{{leader_name}}", leaderName)
+    .replace("{{created_at}}", new Date().toISOString())
+    .replace("{{content}}", content)
+    .replace("{{task_doc_path}}", taskDocPath)
+    .replace("{{result_path}}", resultPath);
+
+  // 6. 通过 $COMMAND -p 处理消息 (可选，用于增强消息质量)
+  const cmd = `${config.command} -p "${escapeShell(message)}" | tee ${fullResultPath}`;
+  await execCommand(cmd);
+
+  // 7. 发送消息到目标 Worker 的 ZK 消息目录
+  await messageRouter.send(leaderInstanceId, leaderName, message, targetWorker);
+}
+```
+
+### TUI 架构 (简化版)
+
+Leader TUI 仅提供 3 个命令：`msg`, `status`, `exit`。使用 Node.js 内置 `readline` + ANSI 转义序列。
+
+```typescript
+// src/leader/tui.ts
+class LeaderTui {
+  // 重绘屏幕
+  render(state: LeaderState): void {
+    process.stdout.write("\x1b[2J\x1b[0;0H");
+    this.renderTeamPanel(state.workers);
+    this.renderEventLog(state.events.slice(-20));
+    this.renderCommandInput();
+  }
+
+  // 命令解析
+  parseCommand(input: string): TuiCommand {
+    if (input === "status") return { type: "status" };
+    if (input === "exit" || input === "quit") return { type: "exit" };
+    const msgMatch = input.match(/^msg\s+(\S+)\s+(.+)/);
+    if (msgMatch) return { type: "msg", worker: msgMatch[1], content: msgMatch[2] };
+    return { type: "unknown", raw: input };
+  }
+}
+```
+
+### TUI 事件循环
+
+```typescript
+async function tuiLoop(leader: Leader, tui: LeaderTui): Promise<void> {
+  leader.eventBus.on("*", (event) => {
+    leader.state.apply(event);
+    tui.render(leader.state);
+  });
+
+  tui.render(leader.state);
+
+  while (true) {
+    const cmd = await tui.readCommand();
+    if (cmd === "exit" || cmd === "quit") break;
+    if (cmd === "status") {
+      tui.render(leader.state);
+      continue;
+    }
+    const msgMatch = cmd.match(/^msg\s+(\S+)\s+(.+)/);
+    if (msgMatch) {
+      await leader.sendMessage(msgMatch[1], msgMatch[2]);
+      tui.render(leader.state);
+      continue;
+    }
+    console.log("Unknown command. Available: msg, status, exit");
   }
 }
 ```
 
 ### ZK Watch 生命周期
 
-ZK Watch 是一次性的，每次触发后必须重建。Leader 使用统一的 Watch 管理策略：
+ZK Watch 是一次性的，每次触发后必须重建：
 
 ```typescript
-// 递归 Watch 模式
 async function persistentWatch<T>(
   zk: ZkClient,
   setupWatch: (callback: (data: T) => void) => Promise<T>,
   handler: (data: T) => Promise<void>
 ): Promise<void> {
   const callback = async (data: T) => {
-    try {
-      await handler(data);
-    } finally {
-      // 重建 Watch (递归)
-      await setupWatch(callback);
-    }
+    try { await handler(data); }
+    finally { await setupWatch(callback); }
   };
-
-  // 初始设置
   const initialData = await setupWatch(callback);
   await handler(initialData);
 }
@@ -218,147 +240,156 @@ async function persistentWatch<T>(
 
 ```
 startLeader(config)
-  │
   ├─ 1. zk.connect()
   │     └─ _ensurePaths() 创建 ZK 节点树
-  │
   ├─ 2. zk.create("/leader", EPHEMERAL)
   │     └─ 失败 → "Another leader is already running" → 退出
-  │
-  ├─ 3. 初始化 EventBus
-  │
-  ├─ 4. 启动 Monitor
-  │     ├─ watch /instances (ChildWatch)
-  │     └─ 对每个已有实例设置 DataWatch
-  │
-  ├─ 5. 启动 TaskOrchestrator
-  │     ├─ watch /tasks/pending (ChildWatch)
-  │     ├─ watch /tasks/claimed (ChildWatch)
-  │     └─ 扫描已存在的孤儿任务
-  │
-  ├─ 6. 启动 MessageMonitor (可选)
-  │     └─ watch 所有 /messages/* 目录 (仅计数，不读取内容)
-  │
-  ├─ 7. 初始化 TUI
-  │     ├─ 渲染初始界面
-  │     ├─ 订阅 EventBus
-  │     └─ 启动 stdin 输入处理
-  │
-  └─ 8. 进入事件循环 (等待 SIGINT)
-        └─ SIGINT → zk.remove("/leader") → zk.disconnect() → process.exit(0)
+  ├─ 3. 注册自身 Instance (role=leader)，获得 instance_id
+  ├─ 4. 初始化 CACHE_DIR/{instance_id}/
+  ├─ 5. 加载 leader.md 模板
+  ├─ 6. 初始化 EventBus
+  ├─ 7. 启动 WorkerMonitor (watch /instances)
+  ├─ 8. 启动 TaskOrchestrator (watch /tasks)
+  ├─ 9. 初始化 TUI (team panel + event log + cmd input)
+  └─ 10. 进入事件循环 (等待 TUI 输入 / SIGINT)
 ```
 
-## Member Watcher 架构
+## Worker Watcher 架构
 
 ```typescript
-// src/member/watcher.ts
-class MemberWatcher {
+// src/worker/watcher.ts
+class WorkerWatcher {
   private zk: ZkClient;
   private instance: Instance;
   private workDir: string;
+  private command: string;      // 来自 config.command
+  private cacheDir: string;     // 来自 config.cache_dir
+  private leaderInstanceId: string;
   private inFlight: Set<string> = new Set();
   private stopped = false;
 
   async start(instance: Instance, workDir: string): Promise<void> {
     this.instance = instance;
     this.workDir = workDir;
+    this.command = config.command;
+    this.cacheDir = config.cache_dir;
+    this.leaderInstanceId = await this.resolveLeaderInstanceId();
 
-    // 确保消息目录存在
     await this.zk.mkdirp(paths.messageDirPath(instance.id));
-
-    // 启动消息监听循环
     this.watchLoop();
   }
 
   private async watchLoop(): Promise<void> {
     if (this.stopped) return;
-
     const children = await this.zk.watchMessageDir(
       this.instance.id,
       (newChildren) => {
-        for (const cid of newChildren) {
-          this.processMessage(cid);
-        }
-        this.watchLoop(); // 递归重建 Watch
+        for (const cid of newChildren) this.processMessage(cid);
+        this.watchLoop();
       }
     );
-
-    // 处理初始消息 (可能是在离线期间收到的)
-    for (const cid of children) {
-      await this.processMessage(cid);
-    }
+    for (const cid of children) await this.processMessage(cid);
   }
 
   private async processMessage(msgId: string): Promise<void> {
     if (this.inFlight.has(msgId)) return;
-
     const data = await this.zk.getMessage(this.instance.id, msgId);
     if (!data) return;
-
     const msg = MessageSchema.parse({ ...data, id: msgId });
     if (msg.read) return;
 
     this.inFlight.add(msgId);
-
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
-    const timestamp = new Date().toLocaleTimeString();
 
-    // 打印消息
-    console.log(`[${timestamp}] 📨 Message from ${fromLabel} (${msg.type}):`);
-    console.log(`  ${msg.content}\n`);
+    // 生成唯一 key
+    const uniqueKey = `${msg.type}-${msgId}-${Date.now().toString(36)}`;
 
-    // 调用 claude -p 处理
-    const prompt = `[${msg.type} from ${fromLabel}] ${msg.content}`;
-    console.log(`[${timestamp}] 🔄 Processing with claude -p...`);
+    // 构建消息 (包含模板信息)
+    const fullMessage = msg.content;
 
-    const { code, stdout, stderr } = await spawnClaude(
-      this.instance.id,
-      prompt,
-      this.workDir
-    );
+    console.log(`[${new Date().toLocaleTimeString()}] 📨 Message from ${fromLabel} (${msg.type})`);
+
+    // 执行: $COMMAND -p "$MESSAGE" | tee $CACHE_DIR/{id}/{key}.log
+    const cmd = `${this.command} -p ${escapeShell(fullMessage)}`;
+    const logPath = path.join(this.cacheDir, this.leaderInstanceId, `${uniqueKey}.log`);
+
+    console.log(`🔄 Executing: ${cmd}`);
+    const { code, stdout, stderr } = await this.execWithTee(cmd, logPath);
 
     if (code === 0) {
-      console.log(`[${timestamp}] ✅ Response:`);
-      console.log(`  ${stdout.slice(0, 2000)}\n`);
+      console.log(`✅ Done. Log: ${logPath}`);
     } else {
-      console.error(`[${timestamp}] ❌ claude exited ${code}\n`);
-      if (stderr) console.error(`  stderr: ${stderr.slice(0, 500)}\n`);
+      console.error(`❌ Exited ${code}. Log: ${logPath}`);
     }
 
     // 标记已读
     await this.zk.updateMessage(this.instance.id, msgId, {
-      ...msg as unknown as Record<string, unknown>,
-      read: true,
+      ...msg as unknown as Record<string, unknown>, read: true,
     });
-
     this.inFlight.delete(msgId);
   }
 
-  async stop(): Promise<void> {
-    this.stopped = true;
-  }
-}
+  // 执行命令并同时写入终端和文件
+  private async execWithTee(cmd: string, logPath: string): Promise<ExecResult> {
+    await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
+    const logStream = fs.createWriteStream(logPath);
 
-function spawnClaude(
-  sessionId: string,
-  prompt: string,
-  cwd: string
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("claude", ["--session-id", sessionId, "-p", prompt], {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env },
+    return new Promise((resolve) => {
+      const child = spawn("sh", ["-c", cmd], {
+        cwd: this.workDir,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env },
+      });
+      let stdout = "", stderr = "";
+      child.stdout?.on("data", (d: Buffer) => {
+        const s = d.toString();
+        stdout += s;
+        process.stdout.write(s);  // 终端输出
+        logStream.write(s);       // 文件写入
+      });
+      child.stderr?.on("data", (d: Buffer) => {
+        const s = d.toString();
+        stderr += s;
+        process.stderr.write(s);
+        logStream.write(s);
+      });
+      child.on("exit", (code) => {
+        logStream.end();
+        resolve({ code: code ?? -1, stdout, stderr });
+      });
+      child.on("error", (err) => {
+        logStream.end();
+        resolve({ code: -1, stdout, stderr: err.message });
+      });
     });
+  }
 
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
-    child.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
+  async stop(): Promise<void> { this.stopped = true; }
+}
+```
 
-    child.on("exit", (code) => resolve({ code: code ?? -1, stdout, stderr }));
-    child.on("error", (err) => resolve({ code: -1, stdout, stderr: err.message }));
-  });
+### Worker 消息发送 (worker.md 模板)
+
+Worker 发送消息时使用 `worker.md` 模板：
+
+```typescript
+async function sendWorkerMessage(targetName: string, content: string): Promise<void> {
+  const template = await loadTemplate("worker.md");
+  const uniqueKey = `reply-${Date.now().toString(36)}`;
+  const resultPath = path.join(cacheDir, leaderInstanceId, `${uniqueKey}.log`);
+
+  const message = template
+    .replace("{{name}}", workerName)
+    .replace("{{role}}", workerRole)
+    .replace("{{time}}", new Date().toISOString())
+    .replace("{{content}}", content)
+    .replace("{{result_path}}", resultPath);
+
+  // 可选: 通过 Claude 增强回复质量
+  // const cmd = `${config.command} -p "Format this worker report: ${escapeShell(message)}"`;
+  // const enhanced = await execAndCapture(cmd);
+
+  await messageRouter.send(workerInstanceId, workerName, message, undefined, false, targetName);
 }
 ```
 
@@ -386,12 +417,10 @@ function spawnClaude(
    │ completed │ │blocked │ │ failed  │
    └──────────┘ └───┬────┘ └──┬──────┘
                     │         │
-                    │    task-retry (重新入队 pending)
-                    │         │
                     └────┬────┘
-                         │
+                         │ task-retry → pending (retry_count++)
                     ┌────▼────┐
-                    │ pending  │ (retry_count++)
+                    │ pending  │
                     └─────────┘
 ```
 
@@ -401,184 +430,97 @@ function spawnClaude(
 |----|----|---------|------|
 | (none) | `pending` | `push_task` | — |
 | `pending` | `claimed` | `claim_task` | EPHEMERAL create 成功 |
-| `claimed` | `in_progress` | `heartbeat(current_task=...)` | 实例声明正在处理该任务 |
+| `claimed` | `in_progress` | `heartbeat(current_task=...)` | Worker 声明正在处理 |
 | `in_progress` | `completed` | `complete_task` | claimed 节点归属校验通过 |
-| `in_progress` | `blocked` | `task-block` | 实例声明任务被阻塞 |
-| `in_progress` | `failed` | `task-fail` | 实例声明任务失败 |
+| `in_progress` | `blocked` | `task-block` | Worker 声明阻塞 |
+| `in_progress` | `failed` | `task-fail` | Worker 声明失败 |
 | `blocked` | `in_progress` | `heartbeat` 自动恢复 | 阻塞解除 |
 | `blocked` | `pending` | `task-retry` | 重新入队 |
 | `failed` | `pending` | `task-retry` | 重新入队，retry_count++ |
-| `claimed` | `pending` | 实例断开 (ZK session timeout) | Leader 回收孤儿任务 |
-| `in_progress` | `pending` | 实例断开 (ZK session timeout) | Leader 回收孤儿任务 |
-| `blocked` | `pending` | 实例断开 (ZK session timeout) | Leader 回收孤儿任务 |
+| `claimed` | `pending` | Worker 断开 (ZK session timeout) | Leader 回收孤儿任务 |
+| `in_progress` | `pending` | Worker 断开 | Leader 回收孤儿任务 |
 
 ### 孤儿任务回收
 
-当 Leader 检测到 `/tasks/claimed/{insId}-{taskId}` 节点被删除，但 `/instances/{insId}` 已不存在时：
-
 ```
-recoverOrphanedTask(instanceId, taskId):
-  1. 从 deleted claimed 节点中提取任务数据
-  2. 保留原始: title, description, priority, assigned_to, created_by
-  3. 设置 status = "pending"
-  4. retry_count = (original.retry_count ?? 0) + 1
-  5. 若 retry_count > MAX_RETRIES (默认 3):
-     → 创建 /tasks/completed/{taskId} 标记为 failed (永不重试)
-     → 通知 Leader TUI
-  6. 否则:
+recoverOrphanedTask(workerId, taskId):
+  1. 从 claimed 节点提取 task_data
+  2. 保留: title, description, priority, assigned_to, created_by
+  3. status = "pending", retry_count += 1
+  4. 若 retry_count > MAX_RETRIES (默认 3):
+     → 创建 /tasks/completed/{taskId} 标记为 failed
+  5. 否则:
      → 创建 /tasks/pending/{taskId} (新 sequential 编号)
-     → 通知 Leader TUI
 ```
 
 ## CLI 命令执行流程
 
-### 无 Leader 依赖的命令
-
-大部分 CLI 命令都可以独立运行，不需要 Leader 在线：
+所有 CLI 命令（除 `leader` 和 `register --work-dir`）都是短期进程：
 
 ```
 claude-orchestrator push-task --title "..." --assignee Jerry
-  → withZk(hosts, async ({ taskQueue }) => {
-       return taskQueue.push(title, description, priority, createdBy, assignee);
-     })
+  → withZk(hosts, async ({ taskQueue }) => taskQueue.push(...))
   → 创建 ZK 节点 /tasks/pending/task-{seq}
   → 输出 JSON → disconnect → exit
 ```
 
-所有 CLI 命令（除 `leader` 和 `register --work-dir`）都是短期进程：
-1. 连接 ZK (`ZkClient.connect()`)
-2. 执行操作
-3. 输出 JSON 结果
-4. 断开 ZK
-5. 退出
-
-### register 的两种模式
+### setup 命令
 
 ```
-Mode 1: register --work-dir <dir> (长期运行)
-  → ZkClient.connect()  (保持连接)
-  → registry.register(name, role)
-  → saveInstanceId(id)
-  → memberWatcher.start(instance, workDir)  (阻塞，有 ZK Watch)
-  → SIGINT → registry.unregister() → zk.disconnect() → exit
-
-Mode 2: register (单次)
-  → withZk(hosts, async ({ registry }) => {
-       return registry.register(name, role);
-     })
-  → saveInstanceId(id)
-  → output(instance)
+claude-orchestrator setup --leader --name Tom
+  → 创建 .claude-orchestrator/agents/leader.md
+  → 创建 .claude-orchestrator/agents/worker.md
+  → 写入 .claude-orchestrator/config.json: {"name":"Tom","role":"leader"}
+  → 写入 ~/.claude-orchestrator/config.json: {"command":"...","cache_dir":"..."}
   → exit
-  (不需要 workDir，仅注册身份)
-```
 
-### Leader 命令
-
-```
-claude-orchestrator leader
-  → ZkClient.connect()  (保持连接)
-  → create /leader EPHEMERAL
-  → 启动所有 Monitor (长期 Watch)
-  → 初始化 TUI
-  → 事件循环 (阻塞)
-  → SIGINT → 清理 /leader → zk.disconnect() → exit
+claude-orchestrator setup --name Jerry --role developer
+  → 创建 .claude-orchestrator/agents/leader.md
+  → 创建 .claude-orchestrator/agents/worker.md
+  → 写入 .claude-orchestrator/config.json: {"name":"Jerry","role":"developer"}
+  → exit
 ```
 
 ## 错误处理与恢复
 
 ### ZK 连接断开
 
-| 场景 | Leader 行为 | Member 行为 |
+| 场景 | Leader 行为 | Worker 行为 |
 |------|-----------|------------|
-| ZK 临时断开 (网络抖动) | `ZkClient` 自动重连，恢复后重建 Watch | 同 Leader |
-| ZK Session 超时 | `/leader` 节点丢失 → 进程退出，需手动重启 | `/instances/{id}` 丢失 → watcher 检测后重新注册 |
-| ZK 集群完全不可用 | 所有操作阻塞等待重连 | `claude -p` 调用失败但不崩溃 |
+| ZK 临时断开 | `ZkClient` 自动重连，恢复后重建 Watch | 同 Leader |
+| ZK Session 超时 | `/leader` 节点丢失 → 进程退出 | `/instances/{id}` 丢失 → watcher 重新注册 |
+| ZK 集群不可用 | 阻塞等待重连 | `$COMMAND -p` 调用失败但不崩溃 |
 
 ### Leader 崩溃
 
 ```
-Leader 进程退出
-  → /leader 临时节点自动删除
-  → 所有 Member 不受影响 (各自直连 ZK)
-  → 任务状态机正常运转
-  → 唯一损失: 孤儿任务回收暂停 (直到 Leader 重启)
-
-Leader 重启
-  → 扫描 /instances 和 /tasks 重建状态
-  → 回收孤儿任务
-  → 继续正常监控
+Leader 退出 → /leader EPHEMERAL 删除 → Worker 不受影响
+新 Leader 启动 → 扫描 /instances, /tasks → 回收孤儿任务 → 正常监控
 ```
 
-### Member 崩溃
+### Worker 崩溃
 
 ```
-Member 进程退出
-  → /instances/{id} ZK Session 超时后自动删除
-  → /tasks/claimed/{id}-* 自动删除
-  → Leader Watch 触发 → 回收孤儿任务
-  → 其他 Member 不受影响
+Worker 退出 → /instances/{id} 超时删除 → /tasks/claimed/{id}-* 自动删除
+Leader Watch 触发 → 回收孤儿任务 → 其他 Worker 不受影响
 ```
 
-## TUI 实现策略
+## CACHE_DIR 共享目录设计
 
-使用 Node.js 内置 `readline` + ANSI 转义序列，无需额外依赖：
+### 目录结构
 
-```typescript
-// TUI 渲染核心
-class LeaderTui {
-  private screenHeight: number;
-  private screenWidth: number;
-
-  // 重绘整个屏幕
-  render(state: LeaderState): void {
-    // 清屏
-    process.stdout.write("\x1b[2J\x1b[0;0H");
-
-    // 渲染团队面板
-    this.renderTeamPanel(state.instances);
-
-    // 渲染任务面板 (左侧 pending, 右侧 claimed)
-    this.renderTaskPanels(state.tasks);
-
-    // 渲染事件日志 (最近 20 条)
-    this.renderEventLog(state.events.slice(-20));
-
-    // 渲染命令输入行
-    this.renderCommandInput();
-  }
-
-  // 从 stdin 读取命令
-  async readCommand(): Promise<string> {
-    const rl = readline.createInterface({ input: process.stdin });
-    return new Promise((resolve) => {
-      rl.question("> ", (cmd) => {
-        rl.close();
-        resolve(cmd);
-      });
-    });
-  }
-}
+```
+~/.claude-orchestrator/sessions/        ← config.cache_dir 默认值
+├── {leader_instance_id}/               ← Leader 实例 ID
+│   ├── tasks/                          ← 任务文档 (leader.md 生成的 .md)
+│   │   └── task-0000000001.md          ← Worker 读取的任务详细说明
+│   ├── msg-abc123-20260511T103000.log  ← 消息处理日志
+│   ├── task-0000000001-xxx_result.log  ← Worker 执行结果日志
+│   └── reply-def456-20260511T110000.log
 ```
 
-### TUI 事件循环
+### 路径约定
 
-```typescript
-async function tuiLoop(leader: Leader, tui: LeaderTui): Promise<void> {
-  // 订阅 EventBus
-  leader.eventBus.on("*", (event) => {
-    leader.state.apply(event);  // 更新状态
-    tui.render(leader.state);   // 重绘界面
-  });
-
-  // 初始渲染
-  tui.render(leader.state);
-
-  // 命令处理循环
-  while (true) {
-    const cmd = await tui.readCommand();
-    if (cmd === "quit" || cmd === "exit") break;
-    await leader.handleCommand(cmd);
-    tui.render(leader.state);
-  }
-}
-```
+- Leader 写入任务文档到 `sessions/{id}/tasks/{task_id}.md`，消息中使用相对路径 `./tasks/{task_id}.md`
+- Worker 执行日志写入 `sessions/{id}/{uniqueKey}.log`
+- Worker 回复消息中的 `result_path` 使用相对路径引用日志文件

@@ -2,7 +2,7 @@
 
 ## 概述
 
-v0.3.0 是一次破坏性变更：完全移除 MCP Server，改为 Leader + CLI-native 架构。
+v0.3.0 是一次破坏性变更：完全移除 MCP Server，改为 Leader-Worker CLI-native 架构，引入 Agent 模板系统和共享 CACHE_DIR。
 
 ## 破坏性变更清单
 
@@ -10,8 +10,8 @@ v0.3.0 是一次破坏性变更：完全移除 MCP Server，改为 Leader + CLI-
 
 | v0.2.0 | v0.3.0 | 操作 |
 |--------|--------|------|
-| `claude-orchestrator server` | `claude-orchestrator leader` | 替换命令 |
-| `claude-orchestrator setup` | **删除** | 不再需要 MCP 配置 |
+| `claude-orchestrator server` | `claude-orchestrator leader` | 替换命令，启动 Leader TUI（仅 msg/status/exit 三个命令） |
+| `claude-orchestrator setup` | `claude-orchestrator setup [--leader]` | 增强，`--leader` 初始化 Leader 环境，写入 Agent 模板 |
 | 其他 CLI 命令 | 不变 | 继续使用 |
 
 ### 2. 依赖变化
@@ -57,84 +57,77 @@ npm install -g @adamancyzhang/claude-orchestrator@0.3.0
 pkill -f "claude-orchestrator server" || true
 
 # 移除 .claude/mcp.json 中旧的 orchestrator 配置
-# 编辑 ~/.claude/mcp.json 或项目 .claude/mcp.json
-# 删除 "orchestrator" 条目
-
-# 清理旧的 MCP 配置 (可选)
-rm -f .claude/mcp.json   # 如果整个文件只有 orchestrator 配置
+# 删除 "orchestrator" 条目或删除整个文件
 ```
 
-### 步骤 3: 启动 Leader
+### 步骤 3: 初始化 Leader 环境
 
 ```bash
-# 在新终端中启动 Leader
-claude-orchestrator leader
+# 在 Leader 的项目目录中
+claude-orchestrator setup --leader --name Tom
+```
 
-# 如果 ZK 在其他地址:
+生成文件：
+- `.claude-orchestrator/agents/leader.md` — Leader 任务指令模板
+- `.claude-orchestrator/agents/worker.md` — Worker 消息模板
+- `.claude-orchestrator/config.json` — `{"name":"Tom","role":"leader"}`
+- `~/.claude-orchestrator/config.json` — 全局配置（command, cache_dir）
+
+### 步骤 4: 启动 Leader
+
+```bash
+claude-orchestrator leader
+# 或指定 ZK 地址:
 claude-orchestrator leader -z 10.0.0.1:2181
 ```
 
-你将看到 Leader TUI 界面。
+Leader TUI 启动，提供 `msg`, `status`, `exit` 三个命令。
 
-### 步骤 4: 注册 Member
+### 步骤 5: 初始化 Worker 环境并注册
 
-每个 Claude Code 实例：
-
-```bash
-# 替代原来的 setup + MCP 连接流程
-claude-orchestrator register \
-  --name Jerry \
-  --role developer \
-  --work-dir /path/to/project
-```
-
-实例将注册到 ZK，并开始监听消息。Leader TUI 将显示新成员上线。
-
-### 步骤 5: 移除旧的 MCP 注册方式
-
-v0.2.0 在 Claude Code 中通过 MCP 工具 `register_instance` 注册。v0.3.0 中 Claude Code 实例不再需要调用 MCP 工具，而是：
-
-1. **自动注册**: `register --work-dir` 一次性完成注册 + 消息监听
-2. **CLI 命令**: Claude Code 调用 `claude-orchestrator claim-task` / `complete-task` 等命令
-
-如果你在 Claude Code 中配置了自动调用 `register_instance` 的 hook 或 prompt，需要更新：
+每个 Worker：
 
 ```bash
-# v0.2.0 方式 (已废弃)
-# Claude Code: 调用 MCP tool register_instance
+# 在工作目录中初始化
+claude-orchestrator setup --name Jerry --role developer
 
-# v0.3.0 方式
-# Terminal: claude-orchestrator register --name X --role Y --work-dir Z
-# Claude Code: 直接调用 CLI 命令 (claim-task, complete-task, etc.)
+# 注册并启动消息监听
+claude-orchestrator register --name Jerry --role developer --work-dir /path/to/project
 ```
 
-### 步骤 6: 更新 Claude Code 中的命令
+Leader TUI 将显示 Worker 上线。
 
-如果你的 Claude Code 实例需要通过 CLI 与团队交互，直接调用命令即可：
+### 步骤 6: 配置命令和缓存目录
+
+默认配置自动写入 `~/.claude-orchestrator/config.json`：
+
+```json
+{
+  "command": "claude --dangerously-skip-permissions -v",
+  "cache_dir": "~/.claude-orchestrator/sessions"
+}
+```
+
+若有自定义需求，可手动编辑或通过 setup 参数指定：
 
 ```bash
-# 认领任务
-claude-orchestrator claim-task
-
-# 完成任务
-claude-orchestrator complete-task --task-id task-0000000001 --result "..."
-
-# 求助
-claude-orchestrator request-help --question "..."
-
-# 发送消息
-claude-orchestrator send-message --to-name Jerry --content "..."
+claude-orchestrator setup --leader --name Tom \
+  --command "claude --dangerously-skip-permissions -v --model opus" \
+  --cache-dir /shared/team-sessions
 ```
+
+**重要**: Leader 和所有 Worker 必须配置相同的 `cache_dir` 路径，以共享日志和结果文件。
 
 ### 步骤 7: 验证
 
-1. Leader TUI 显示所有在线成员 ✓
-2. 从 Leader TUI `task push` 创建任务 ✓
-3. Member `claim-task` 认领并 `complete-task` 完成 ✓
-4. Member `request-help` 广播求助，其他 Member 的 watcher 自动处理 ✓
-5. `send-message` 点对点通信正常 ✓
-6. 关闭 Member 进程，Leader TUI 显示离线 ✓
-7. 重启 Leader，自动扫描并恢复状态 ✓
+1. Leader TUI 显示所有在线 Worker ✓
+2. Leader TUI 中 `msg Jerry "任务描述"` 发送消息，Worker watcher 接收并处理 ✓
+3. Worker `claim-task` 认领并 `complete-task` 完成 ✓
+4. Worker `request-help` 广播求助，其他 Worker 的 watcher 自动处理 ✓
+5. Worker 使用 `worker.md` 模板发送回复，告知 Leader 结果路径 ✓
+6. 关闭 Worker 进程，Leader TUI 显示离线 ✓
+7. 重启 Leader，自动扫描 /instances 和 /tasks 恢复状态 ✓
+8. CACHE_DIR 中的日志文件可供 Leader 和 Worker 互相读取 ✓
 
 ## 兼容性说明
 
@@ -187,14 +180,22 @@ claude-orchestrator server
 
 只有第一个 Leader 能成功创建 `/leader` EPHEMERAL 节点。后续 Leader 启动时 `create` 失败，输出 `Another leader is already running` 并退出。
 
-### Q: Member watcher 的 `claude -p` 调用会阻塞吗？
+### Q: Worker watcher 的 `$COMMAND -p` 调用会阻塞吗？
 
-每个 Member watcher 串行处理消息（一次处理一条），因为多个 `claude -p` 并发可能导致 session 冲突。如果一条消息处理时间很长，后续消息会排队等待。
+每个 Worker watcher 串行处理消息，因为多个并发调用可能导致 session 冲突。
 
-### Q: 消息会丢失吗？
+### Q: 消息和日志会丢失吗？
 
-不会。消息存储在 ZK PERSISTENT_SEQUENTIAL 节点中。即使 Member 离线，消息也会在 `register --work-dir` 重连后被处理。
+不会。消息存储在 ZK PERSISTENT_SEQUENTIAL 节点中。日志通过 `tee` 同时写入终端和 CACHE_DIR 文件。即使 Worker 离线，消息也会在重连后被处理。
 
-### Q: 任务会丢失吗？
+### Q: 没有 Leader 能工作吗？
 
-不会。已认领但实例断连的任务会被 Leader 自动回收到 pending 队列。没有 Leader 时，任务的 EPHEMERAL claimed 节点也会因 ZK session 超时自动删除，但需要 Leader 重启后来回收。
+可以。大部分 CLI 命令直接操作 ZK。Leader 提供 TUI 可视化和孤儿任务自动回收。没有 Leader 时，Worker 之间的通信和任务认领仍然正常。
+
+### Q: CACHE_DIR 必须是共享文件系统吗？
+
+是的。Leader 写入的任务文档和 Worker 的执行日志都存储在 CACHE_DIR 中，Leader 和 Worker 需要读取彼此的文件。在同一台机器或 NFS 上配置相同路径即可。
+
+### Q: 模板文件可以自定义吗？
+
+可以。`setup` 写入的 `.claude-orchestrator/agents/leader.md` 和 `worker.md` 可以在部署前编辑，适应团队的具体需求。后续 `setup` 不会覆盖已存在的模板。

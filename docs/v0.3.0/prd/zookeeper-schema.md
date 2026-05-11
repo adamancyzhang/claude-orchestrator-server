@@ -5,7 +5,9 @@
 ```
 /claude-orchestrator                         [PERSISTENT]  根节点
 │
-├── /leader                                  [EPHEMERAL]   Leader 存在声明
+├── /leader                                  [EPHEMERAL]   Leader 存在声明 (identity: leader)
+│   data: {"instance_id":"...", "name":"Tom", "role":"leader",
+│          "started_at":"...", "cache_dir":"...", "version":"0.3.0"}
 │
 ├── /instances                               [PERSISTENT]  实例容器
 │   └── /{instance_id}                       [EPHEMERAL]   实例节点
@@ -65,14 +67,15 @@
 }
 ```
 
-- **role 枚举**: `architect`, `developer`, `tester`, `general`, `leader`
-  - `leader` 仅在 Leader 进程同时注册为实例时使用（可选）
+- **role 枚举**: `leader`, `architect`, `developer`, `tester`, `general`
+  - `leader` = Leader 节点
+  - 其他 = Worker 节点
 - **status 枚举**: `idle`, `busy`
   - v0.3.0 移除了 `blocked` 状态 — 阻塞状态由 Task.status=blocked 表示
-- **work_dir**: v0.3.0 新增字段，记录 Member 工作目录
+- **work_dir**: v0.3.0 新增字段，记录 Worker 工作目录
 - **Watch 策略**:
-  - Leader: `ChildWatch` on `/instances` — 检测成员加入/离开
-  - Leader: `DataWatch` on each `/instances/{id}` — 检测成员状态变化（如 current_task_id 更新）
+  - Leader: `ChildWatch` on `/instances` — 检测 Worker 加入/离开
+  - Leader: `DataWatch` on each `/instances/{id}` — 检测 Worker 状态变化
 
 ### /tasks/pending/task-{seq}
 
@@ -167,9 +170,12 @@
   "type": "direct",
   "from_instance": "instance-tom-uuid",
   "from_name": "Tom",
+  "from_role": "leader",
   "to_instance": "instance-jerry-uuid",
   "to_name": "Jerry",
-  "content": "数据库迁移策略有歧义，请确认",
+  "content": "Please implement the POST /api/items endpoint...",
+  "task_doc_path": "./tasks/task-0000000001.md",
+  "result_path": "sessions/a1b2c3.../msg-abc123-xxx.log",
   "created_at": "2026-05-11T10:30:00Z",
   "read": false,
   "reply_to": null
@@ -177,9 +183,12 @@
 ```
 
 - **type**: `direct` (点对点), `broadcast` (广播), `help` (求助)
+- **from_role**: v0.3.0 新增 — 发送者角色 (`leader` / `developer` / `tester` 等)
+- **task_doc_path**: v0.3.0 新增 — Leader 消息中附带的相对路径任务文档
+- **result_path**: v0.3.0 新增 — 消息关联的 CACHE_DIR 日志/结果路径
 - **reply_to**: v0.3.0 新增 — 引用回复的消息 ID，支持消息线程
-- **Watch**: Member watcher `ChildWatch` on `/messages/{instance_id}` — 新消息触发 `claude -p` 处理
-- **清理策略**: 标记已读后 24h 自动清理（Leader 后台任务）；或实例显式调用 `dismiss_message`
+- **Watch**: Worker watcher `ChildWatch` on `/messages/{instance_id}` — 新消息触发 `$COMMAND -p | tee $CACHE_DIR/{key}.log`
+- **清理策略**: 标记已读后 24h 自动清理（Leader 后台任务）
 
 ### /context/{key}
 
@@ -208,7 +217,7 @@
 | `/instances/{id}` | Leader | DataWatch | 数据变更 | 更新 TUI 中该成员的状态/当前任务 |
 | `/tasks/pending` | Leader | ChildWatch | 子节点增加 | 更新 TUI 任务面板；触发新任务通知 |
 | `/tasks/claimed` | Leader | ChildWatch | 子节点增删 | 子节点增加→任务被认领通知；子节点删除→孤儿任务回收 |
-| `/messages/{id}` | Member | ChildWatch | 子节点增加 | 读取新消息，spawn `claude -p` 处理，标记已读 |
+| `/messages/{id}` | Worker | ChildWatch | 子节点增加 | 读取新消息，`$COMMAND -p "$MSG" \| tee $CACHE_DIR/{key}.log`，标记已读 |
 | `/messages/*` | Leader (可选) | ChildWatch | 子节点增加 | 更新 TUI 事件日志（仅计数/通知，不读内容） |
 | `/context/{key}` | 任意节点 | DataWatch | 数据变更 | `watch-context` CLI 命令输出变更 |
 
