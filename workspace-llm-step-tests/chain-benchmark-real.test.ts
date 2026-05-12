@@ -11,12 +11,11 @@ import { ChainRouter } from "../src/leader/chain-router.js";
 import { ClaudeRunner } from "../src/executor/runner.js";
 import { TemplateEngine } from "../src/executor/template.js";
 import { SelfEvaluator, CHAIN_LINKS } from "../src/worker/evaluator.js";
-import { HookEngine } from "../src/hooks/engine.js";
 import { createMessage, ChainDefSchema } from "../src/models/schemas.js";
 import type { Message } from "../src/models/schemas.js";
 
 const ZK_HOSTS = process.env.ZK_HOSTS || "127.0.0.1:2181";
-const CLAUDE_CMD = process.env.CLAUDE_CMD || "claude --dangerously-skip-permissions --permission-mode dontAsk";
+const CLAUDE_CMD = process.env.CLAUDE_CMD || "claude";
 const CACHE_DIR = process.env.BENCH_CACHE_DIR || "/tmp/benchmark-real-cache";
 const TEMPLATES_DIR = path.resolve("src/templates");
 const TEST_TIMEOUT = Number(process.env.BENCH_TIMEOUT_SEC || 600) * 1000;
@@ -120,12 +119,14 @@ async function executeWorkerTask(
 
   // For decompose: read the ChainDef from the result file
   const content = await fs.promises.readFile(taskResultPath, "utf-8");
-  // Strip markdown fences that claude may have wrapped the JSON in
-  const cleaned = content.trim()
-    .replace(/```json\s*/gi, "")
-    .replace(/```\s*/g, "")
-    .trim();
-  return cleaned;
+  // Extract JSON object — claude may wrap it in fences or add surrounding text
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(
+      `Claude decompose output contains no JSON object.\nRaw output (first 500 chars):\n${content.slice(0, 500)}`,
+    );
+  }
+  return jsonMatch[0].trim();
 }
 
 async function sendCompletionToLeader(
@@ -278,25 +279,8 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
       );
       timings.planner_decompose = Date.now() - t0;
 
-      // Validate and possibly fix the ChainDef
-      let chainDef: Record<string, unknown>;
-      try {
-        chainDef = ChainDefSchema.parse(JSON.parse(chainDefRaw));
-      } catch {
-        // If claude produced invalid JSON, create a minimal ChainDef
-        chainDef = {
-          chain_id: id,
-          chain_title: requirement.slice(0, 60),
-          tasks: {
-            plan: { title: "Plan", description: requirement, criteria: "Blueprint ready", priority: 1 },
-            build: { title: "Build", description: "Implement the function", criteria: "Code compiles and tests pass", priority: 1 },
-            verify: { title: "Verify", description: "Verify the build output", criteria: "All checks pass", priority: 1 },
-            review: { title: "Review", description: "Review code quality", criteria: "No issues", priority: 1 },
-            accept: { title: "Accept", description: "Final acceptance", criteria: "Ready to ship", priority: 1 },
-          },
-        };
-      }
-
+      // Validate ChainDef — must be valid; no silent fallback
+      const chainDef = ChainDefSchema.parse(JSON.parse(chainDefRaw));
       // Override chain_id to match our test run
       (chainDef as Record<string, unknown>).chain_id = id;
       console.log(`  Planner produced ChainDef: ${chainDef.chain_title}`);
@@ -388,15 +372,8 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
         // Worker completes the task in ZK
         await taskQueue.complete(worker.instanceId, claimed!.id, `${link} done by ${worker.name}`);
 
-        // Override the decision to ensure chain progression
-        let finalDecision: Record<string, unknown>;
-        try {
-          finalDecision = JSON.parse(evalDecision);
-        } catch {
-          finalDecision = isLast
-            ? { decision: "close_chain", reason: "Final link completed" }
-            : { decision: "activate_next", reason: `${link} done`, nextLink: chainLinks[i + 1].link };
-        }
+        // EvalDecision must be valid JSON — no silent fallback
+        const finalDecision = JSON.parse(evalDecision);
 
         console.log(`  [${worker.name}] Decision: ${finalDecision.decision}${finalDecision.nextLink ? " → " + finalDecision.nextLink : ""}`);
 
