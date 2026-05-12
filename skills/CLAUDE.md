@@ -38,7 +38,7 @@ Leader (协调层)
 Multi-agent orchestration CLI backed by ZooKeeper。所有角色都使用它来完成基础设施操作：注册实例、认领任务、发送消息、读写共享上下文。
 
 - **入口**: `claude-orchestrator <command>`
-- **关键命令**: `register`, `claim-task`, `complete-task`, `push-task`, `send-message`, `set-context`, `get-context`
+- **关键命令**: `register`, `claim-task`, `complete-task`, `push-task`, `send-message`
 - **适用角色**: 所有角色
 
 ### task-planning

@@ -1,5 +1,7 @@
 # Claude Orchestrator v0.3.0 — Leader-based CLI-native 协同编排
 
+> **注意：这是 v0.3 设计文档，与当前实现存在差异。** 实际实现中：不存在 `leader-decompose.md` / `leader-decide.md` 模板（已替换为 Worker 端的 `worker-decompose.md` + `worker-evaluate.md`），Leader 是纯机械路由不调用 `claude -p`，不包含 `/context` 存储，TaskStatus 不包含 `in_progress` 状态。以根目录 CLAUDE.md 和 README.md 为准。
+
 ## 1. 概述
 
 v0.3.0 采用 **Leader-Worker CLI-native** 架构，通过 ZooKeeper 直连实现分布式任务编排。

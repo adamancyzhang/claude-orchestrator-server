@@ -27,7 +27,7 @@ v0.3.1 delivers a **Leader-Worker CLI-native architecture**: no MCP server, no H
 ```
 ┌─────────────────────────────────────────────────┐
 │                  ZooKeeper                       │
-│  /leader  /instances  /tasks  /messages  /context│
+│  /leader  /instances  /tasks  /messages│
 └──────┬──────────────┬──────────────┬────────────┘
        │              │              │
   ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
@@ -78,7 +78,7 @@ claude-orchestrator leader --name Tom
 # → TUI launches: team panel, task board, event log, footer
 ```
 
-The Leader TUI is read-only — it shows who's online, what tasks are pending/in-progress, and a scrolling event log. All actions are triggered by CLI commands or Worker registrations.
+The Leader TUI shows who's online, what tasks are pending, and a scrolling event log. It also has a keyboard input line — typed text is sent as a message for processing. All other actions are triggered by CLI commands or Worker registrations.
 
 ### 5. Register a Worker
 
@@ -95,7 +95,7 @@ Now the Leader TUI shows Jerry online. You can push tasks, send messages, and ma
 
 ```bash
 claude-orchestrator push-task --title "Implement login endpoint" --priority 0
-claude-orchestrator send-message --to-name Jerry --content "Starting on the auth module?"
+claude-orchestrator send-message --content "Starting on the auth module?"
 claude-orchestrator poll-task
 ```
 
@@ -107,23 +107,22 @@ claude-orchestrator poll-task
 
 | Component | What it does | ZK magic |
 |-----------|-------------|----------|
-| **Leader** | Read-only TUI, mechanical message/task router, recovers orphaned tasks. No AI calls. | `/leader` EPHEMERAL — only one Leader at a time |
+| **Leader** | TUI with keyboard input, mechanical message/task router, recovers orphaned tasks. No AI calls. | `/leader` EPHEMERAL — only one Leader at a time |
 | **Worker** | Persistent ZK connection, auto-processes messages via `claude -p`, self-evaluates output | Ephemeral nodes → auto-cleanup on disconnect |
-| **Task Queue** | Push → Claim → In Progress → Complete (or Block/Fail/Retry) | Sequential nodes for FIFO, ephemeral claims for atomic locks |
-| **Message Router** | P2P messages, broadcast, help requests, templates | Persistent-sequential nodes, ZK watches for push |
-| **Context Store** | Shared key-value storage, watch for changes | Persistent nodes, cross-instance visibility |
+| **Task Queue** | Push → Claim → Complete (or Block/Fail/Retry) | Sequential nodes for FIFO, ephemeral claims for atomic locks |
+| **Message Router** | Point-to-point messaging via ZK watches | Persistent-sequential nodes, ZK watches for push |
 
 ### CLI-Native — No MCP Server
 
 v0.3.x removes the centralized MCP Server entirely. Leader and Workers each connect directly to ZooKeeper. The Leader is a pure router: it forwards requirements to Planner Workers, creates tasks from structured definitions, and mechanically executes EvalDecision JSON from Workers. AI intelligence (task decomposition, self-evaluation) runs exclusively on Workers via `claude -p`. This eliminates 3 layers of indirection (MCP protocol, SSE, HTTP) and makes every node self-contained.
 
-### CLI Commands (15)
+### CLI Commands
 
 | Command | What it does |
 |---------|-------------|
-| `leader` | Start Leader node with read-only TUI |
+| `leader` | Start Leader node with TUI (keyboard input for sending messages) |
 | `setup` | Initialize environment: templates, skills, config |
-| `register` | Join the swarm. With `--work-dir`: persistent message watcher |
+| `register` | Join the swarm. Reads name/role from `.claude-orchestrator/config.json`, registers and listens in cwd |
 | `unregister` | Explicitly unregister an instance |
 | `push-task` | Create a task (optionally assign to someone) |
 | `claim-task` | Grab the next task — atomic, no two instances can claim the same one |
@@ -132,7 +131,7 @@ v0.3.x removes the centralized MCP Server entirely. Leader and Workers each conn
 | `task-block` | Mark a claimed task as blocked (with reason) |
 | `task-fail` | Mark a claimed task as failed (with reason) |
 | `task-retry` | Re-queue a failed task for retry (retry_count + 1, max 3) |
-| `send-message` | DM another instance by name |
+| `send-message` | Send a message to the Leader instance |
 | `poll-message` | Check your inbox |
 | `delete-message` | Delete a message from your inbox |
 | `config` | Show current configuration |
@@ -180,7 +179,7 @@ claude-orchestrator task-block --task-id task-0000000000 --reason "Waiting for A
 
 **Tom sees the block in the TUI and sends the key:**
 ```bash
-claude-orchestrator send-message --to-name Jerry --content "API key is in 1Password: auth/third-party/google-oauth"
+claude-orchestrator send-message --content "API key is in 1Password: auth/third-party/google-oauth"
 ```
 
 **Jerry finishes:**
@@ -219,8 +218,6 @@ claude-orchestrator task-retry --task-id task-0000000001
 │   │   └── msg-0000000000    [PERSISTENT_SEQUENTIAL]
 │   └── f6e5d4c3.../
 │       └── msg-0000000000    [PERSISTENT_SEQUENTIAL]
-└── context/
-    └── jwt_strategy          [PERSISTENT]
 ```
 
 **Key insight:** Ephemeral nodes mean crashed instances auto-unregister. Ephemeral claim nodes mean abandoned tasks auto-release. The Leader monitors `/instances` and recovers orphaned tasks when a Worker disconnects (max 3 retries, then archived as failed).
@@ -230,7 +227,7 @@ claude-orchestrator task-retry --task-id task-0000000001
 ## Task State Machine (v0.3.0)
 
 ```
-pending → claimed → in_progress → completed
+pending → claimed → completed
                             → blocked → pending (retry)
                             → failed  → pending (retry, max 3)
 claimed → pending (Worker disconnect, Leader recovers orphan)
@@ -240,7 +237,6 @@ claimed → pending (Worker disconnect, Leader recovers orphan)
 |-------|---------|---------|
 | `pending` | Waiting for claim | `push_task` |
 | `claimed` | Claimed, not started | `claim_task` |
-| `in_progress` | Working | `heartbeat(current_task=...)` |
 | `completed` | Done | `complete_task` |
 | `blocked` | Blocked, waiting unblock | `task-block` |
 | `failed` | Failed, can retry | `task-fail` |
@@ -253,7 +249,7 @@ claimed → pending (Worker disconnect, Leader recovers orphan)
 
 - Node.js 18+
 - Docker (for ZooKeeper)
-- Claude Code CLI (for `register --work-dir` message processing)
+- Claude Code CLI (for Worker message processing)
 
 ### From Source
 
@@ -287,7 +283,7 @@ npm test
 
 ## Skills for Claude Code
 
-The repo includes Claude Code skills that enforce a standardized **responsibility chain**: Plan → Build → Verify → Review → Accept. Each link has a dedicated skill, grounded on the `task-traceability` foundation layer. The `setup` command installs all skills into `.claude/skills/`.
+The repo includes Claude Code skills that enforce a standardized **responsibility chain**: Plan → Build → Verify → Review → Accept. Each link has a dedicated skill, grounded on the `task-traceability` foundation layer. The `setup` command installs the 6 responsibility-chain skills into `.claude/skills/`.
 
 | Skill | Role | What it does |
 |-------|------|-------------|
@@ -297,8 +293,6 @@ The repo includes Claude Code skills that enforce a standardized **responsibilit
 | `task-review` | Reviewer | Review full chain (Plan→Build→Verify) for design consistency |
 | `task-acceptance` | Accepter | Validate final deliverable against business criteria, sign Go/No-Go |
 | `task-traceability` | Foundation | Trace → Execute → Map → Evidence → Record — all roles |
-| `claude-orchestrator` | Infrastructure | Full CLI reference — all 15 commands with examples |
-| `claude-code-developer` | Infrastructure | Hooks, settings, MCP, CLI reference for extending Claude Code |
 
 ---
 
@@ -336,7 +330,7 @@ Zero external database. All state lives in ZooKeeper.
 |--------|-------|---------|
 | ZK hosts | `-z, --zookeeper` flag or `ZK_HOSTS` env | `127.0.0.1:2181` |
 | Instance ID | `-i, --instance-id` flag or `.claude-orchestrator/config.json` (project) / `~/.claude-orchestrator/config.json` (global) | auto-saved after `register` |
-| Claude command | `--command` flag or `config.json` → `command` | `claude --dangerously-skip-permissions -v` |
+| Claude command | `--command` flag or `config.json` → `commands.claude-cli` | `claude --dangerously-skip-permissions --permission-mode dontAsk` |
 | Cache directory | `--cache-dir` flag or `config.json` → `cache_dir` | `~/.claude-orchestrator/sessions` |
 
 ---
@@ -352,7 +346,7 @@ Zero external database. All state lives in ZooKeeper.
 │   ├── leader/                # Leader node (v0.3.1)
 │   │   ├── index.ts           #   startup / shutdown orchestration
 │   │   ├── tui.ts             #   ANSI-based read-only TUI
-│   │   ├── event-bus.ts       #   typed EventEmitter (13 events)
+│   │   ├── event-bus.ts       #   typed EventEmitter (14 events)
 │   │   ├── state.ts           #   centralized LeaderState
 │   │   ├── monitor.ts         #   WorkerMonitor — join/leave detection
 │   │   ├── orchestrator.ts    #   TaskOrchestrator — lifecycle tracking
@@ -375,13 +369,11 @@ Zero external database. All state lives in ZooKeeper.
 │   │   └── worker-accept.md   #   Accepter template (task-traceability + task-acceptance)
 │   ├── zk/
 │   │   ├── client.ts          # ZooKeeper connection management
-│   │   ├── paths.ts           # ZK path constants
-│   │   └── watcher.ts         # ZK watch manager
+│   │   └── paths.ts           # ZK path constants
 │   ├── modules/
 │   │   ├── registry.ts        # Instance registry
 │   │   ├── task-queue.ts      # Task queue (6-state: push/claim/block/fail/retry)
 │   │   ├── message-router.ts  # Message routing + template rendering + long-poll
-│   │   └── context-store.ts   # Shared key-value store
 │   ├── models/
 │   │   └── schemas.ts         # Zod schemas and inferred types
 │   └── utils/
@@ -396,15 +388,13 @@ Zero external database. All state lives in ZooKeeper.
 │   ├── start-worker.sh         # Worker launcher
 │   ├── stop-all.sh             # Tear down
 │   └── publish.sh              # npm publish pipeline
-├── skills/                     # Claude Code skills (8 skills, responsibility chain)
+├── skills/                     # Claude Code skills (6 responsibility-chain + 2 infrastructure)
 │   ├── task-planning/           #   Planner skill
 │   ├── task-execution/          #   Builder skill
 │   ├── task-verification/       #   Verifier skill
 │   ├── task-review/             #   Reviewer skill
 │   ├── task-acceptance/         #   Accepter skill
-│   ├── task-traceability/       #   Foundation layer skill
-│   ├── claude-orchestrator/     #   CLI reference skill
-│   └── claude-code-developer/   #   Claude Code extension skill
+│   └── task-traceability/       #   Foundation layer skill
 ├── docs/
 │   ├── v0.1.0/                 # Archived Python v0.1.0 docs
 │   ├── v0.2.0/                 # Archived MCP-based v0.2.x docs

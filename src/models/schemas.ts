@@ -250,7 +250,7 @@ export const ChainTaskDefSchema = z.object({
   title: z.string(),
   description: z.string(),
   criteria: z.string(),
-  priority: z.number().int().min(0).max(3),
+  priority: z.number().int().min(0).max(2),
 });
 export type ChainTaskDef = z.infer<typeof ChainTaskDefSchema>;
 

@@ -48,11 +48,11 @@ v0.3.x removed the centralized MCP server. Leader and Workers each connect direc
 
 ### Leader Node (`src/leader/`)
 
-The Leader is a read-only TUI with an event-driven architecture:
+The Leader is a TUI with an event-driven architecture and keyboard input:
 
 ```
 ZK watches (instances, tasks, messages)
-  → LeaderEventBus (typed EventEmitter, 13 event types)
+  → LeaderEventBus (typed EventEmitter, 14 event types)
     → LeaderState (centralized state, .apply() reduces each event)
       → LeaderTui (ANSI escape-code rendering, re-renders on every event)
 ```
@@ -125,7 +125,7 @@ Each link is a Claude Code skill under `skills/` and a Worker template under `sr
 
 `src/config.ts` merges two config files:
 - **Global**: `~/.claude-orchestrator/config.json` (ZK hosts, cache_dir, commands)
-- **Project**: `.claude-orchestrator/config.json` (instance_id, name, role, command overrides)
+- **Project**: `.claude-orchestrator/config.json` (instance_id, name, role, commands overrides)
 
 Project overrides global for commands. ZK hosts can also come from CLI `-z` flag or `ZK_HOSTS` env var.
 
@@ -150,7 +150,7 @@ Wraps `node-zookeeper-client` with promisified methods. Key behaviors:
 └── messages/{instanceId}/msg-NNNNN [PERSISTENT_SEQUENTIAL]
 ```
 
-Context store (`/context`) paths are defined in `paths.ts` but not actively used by the Leader/Worker flow.
+Context store (`/context`) is not implemented — no paths exist in `paths.ts`.
 
 ## Key Files
 
@@ -159,9 +159,9 @@ Context store (`/context`) paths are defined in `paths.ts` but not actively used
 | `src/index.ts` | CLI entry point (commander, 15 commands) |
 | `src/config.ts` | Config loading, layering, instance ID persistence |
 | `src/leader/index.ts` | Leader startup orchestration — wires all subsystems |
-| `src/leader/event-bus.ts` | Typed EventEmitter with 13 `LeaderEventType` values |
+| `src/leader/event-bus.ts` | Typed EventEmitter with 14 `LeaderEventType` values |
 | `src/leader/state.ts` | `LeaderState.apply()` — reduces events into display state |
-| `src/leader/tui.ts` | ANSI escape-code TUI rendering (team, tasks, event log, input) |
+| `src/leader/tui.ts` | ANSI escape-code TUI rendering with keyboard input (team, tasks, event log, input) |
 | `src/leader/watcher.ts` | Leader message watch → ChainRouter mechanical routing |
 | `src/leader/chain-router.ts` | Pure mechanical router: forward requirements, parse task defs, execute EvalDecisions |
 | `src/leader/recovery.ts` | Orphan task recovery on Worker disconnect (max 3 retries) |
@@ -177,7 +177,7 @@ Context store (`/context`) paths are defined in `paths.ts` but not actively used
 | `src/models/schemas.ts` | Zod schemas for Instance, Task, Message + ChainDef, EvalDecision + factory functions |
 | `src/utils/exec.ts` | `execWithTee` (streaming) and `execAndCapture` (buffered) |
 | `src/utils/logger.ts` | Tagged logger with `--debug` mode for tracing prompts and execution |
-| `src/templates/` | Agent prompt templates (worker-{decompose,evaluate,plan,build,verify,review,accept}) |
+| `src/templates/` | Agent prompt templates (7 worker templates: decompose, evaluate, plan, build, verify, review, accept) |
 | `skills/` | Claude Code skills for responsibility chain + CLI reference |
 
 ## Testing
