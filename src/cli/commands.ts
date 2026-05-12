@@ -318,7 +318,8 @@ export async function cmdSetup(options: {
   if (fs.existsSync(skillsSrcDir)) {
     const skillNames = fs.readdirSync(skillsSrcDir, { withFileTypes: true })
       .filter(d => d.isDirectory())
-      .map(d => d.name);
+      .map(d => d.name)
+      .filter(n => n.startsWith("task-"));
 
     for (const skillName of skillNames) {
       const srcSkillPath = path.join(skillsSrcDir, skillName, "SKILL.md");
