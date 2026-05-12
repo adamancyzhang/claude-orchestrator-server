@@ -9,6 +9,10 @@ import { WorkerMonitor } from "./monitor.js";
 import { TaskOrchestrator } from "./orchestrator.js";
 import { TaskRecovery } from "./recovery.js";
 import { LeaderWatcher } from "./watcher.js";
+import { TaskGenerator } from "./task-generator.js";
+import { DecisionEngine } from "./decision-engine.js";
+import { TaskQueue } from "../modules/task-queue.js";
+import { MessageRouter } from "../modules/message-router.js";
 import { expandHomeDir, loadGlobalConfig, loadInstanceConfig, saveInstanceId } from "../config.js";
 import { LeaderTui } from "./tui.js";
 
@@ -67,8 +71,15 @@ export async function startLeader(config: {
 
   eventBus.onAll((event) => state.apply(event));
 
+  // Initialize TaskQueue and MessageRouter for decision engine
+  const taskQueue = new TaskQueue(zk);
+  const messageRouter = new MessageRouter(zk);
+
+  const taskGenerator = new TaskGenerator(zk, taskQueue, command, resolvedCache, instance.id);
+  const decisionEngine = new DecisionEngine(zk, taskQueue, messageRouter, command, resolvedCache, instance.id);
+
   // Start subsystems
-  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, command, resolvedCache);
+  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, command, resolvedCache, decisionEngine);
   await leaderWatcher.start();
 
   const monitor = new WorkerMonitor(zk, eventBus);

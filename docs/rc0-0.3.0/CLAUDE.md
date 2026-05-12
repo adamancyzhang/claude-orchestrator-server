@@ -19,25 +19,28 @@ v0.3.0 采用 **Leader-Worker CLI-native** 架构，通过 ZooKeeper 直连实�
 ## 实现完成度
 
 - **15/15 CLI 命令** 已实现
-- **Leader 模块** 8 个文件已实现，2 个待补充
+- **Leader 模块** 10 个文件已实现
 - **Worker 模块** 已实现
-- **9 个 Agent 模板** 已就位
-- **3/4 核心模块** 已实现（缺 context-store）
+- **7 个 Agent 模板** 已就位（2 leader + 5 worker per-link）
+- **3/3 核心模块** 已实现（registry / task-queue / message-router）
+- **TaskGenerator + DecisionEngine** Claude 驱动管线已集成
 
-## 待补充项（下个迭代重点）
+## 已移除的设计内容
 
-1. **`modules/context-store.ts`** — 共享键值存储（需 ZK / CLI / modules 三层连通）
-2. **`leader/task-generator.ts`** — Claude 驱动任务拆解管线（使用 leader-decompose.md）
-3. **`leader/decision-engine.ts`** — Claude 驱动调度决策管线（使用 leader-decide.md）
-4. **Context CLI 命令** — `set-context`, `get-context`, `delete-context`, `list-context-keys`
+- **context-store** — 共享键值存储不在架构设计中体现，已从所有设计文档移除
+- **leader.md / worker.md 通用模板** — 无回退模板概念，仅保留 per-link 模板
+
+## 待补充项（下个迭代）
+
+1. **Message `help` 类型** — Schema 添加 `help` 枚举值，实现 Worker 求助流程
+2. **TaskGenerator / DecisionEngine 端到端测试** — 验证完整的需求→任务链→Worker→决策闭环
 
 ## 实现与设计的差异
 
 1. 新增 `leader/orchestrator.ts`（从 monitor 拆分的 task watch 模块）
-2. 新增通用模板 `leader.md` 和 `worker.md`（per-link 模板的回退）
-3. 配置键 `command` → `commands.claude-cli`（结构性调整）
-4. Schema 中 `TaskStatus` 包含 `in_progress`，`MessageType` 未包含 `help`
-5. Task Schema 缺少 `depends_on` / `blocked_by` 字段
+2. 配置键 `command` → `commands.claude-cli`（结构性调整）
+3. Schema 中 `TaskStatus` 包含 `in_progress`，`MessageType` 未包含 `help`
+4. Task Schema 缺少 `depends_on` / `blocked_by` 字段
 
 ## 详细审查报告
 

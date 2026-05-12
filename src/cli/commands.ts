@@ -279,10 +279,8 @@ export async function cmdSetup(options: {
   const agentsDir = path.join(process.cwd(), ".claude-orchestrator", "agents");
 
   const templates: Record<string, string> = {
-    "leader.md": path.join(templateDir, "leader.md"),
     "leader-decompose.md": path.join(templateDir, "leader-decompose.md"),
     "leader-decide.md": path.join(templateDir, "leader-decide.md"),
-    "worker.md": path.join(templateDir, "worker.md"),
     "worker-plan.md": path.join(templateDir, "worker-plan.md"),
     "worker-build.md": path.join(templateDir, "worker-build.md"),
     "worker-verify.md": path.join(templateDir, "worker-verify.md"),

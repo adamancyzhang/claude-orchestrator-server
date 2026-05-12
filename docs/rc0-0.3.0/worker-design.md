@@ -189,11 +189,11 @@ Worker 按照对应模板的报告格式，通过 send_message 向 Leader 汇报
 │         ▼                                                   │
 │  5. 记录 (Record)                                            │
 │     持久化追溯记录，让下游环节可以接续:                          │
-│     - Plan: 蓝图 + 任务队列 + 共享上下文                      │
+│     - Plan: 蓝图 + 任务队列                                   │
 │     - Build: commit hash → 任务文档 → 文档 commit             │
-│     - Verify: 验证报告 → 共享上下文                           │
-│     - Review: 审查报告 → 共享上下文 → Pass/Revise 决策         │
-│     - Accept: 验收报告 → 共享上下文 → Go/No-Go 签署            │
+│     - Verify: 验证报告                                        │
+│     - Review: 审查报告 → Pass/Revise 决策                      │
+│     - Accept: 验收报告 → Go/No-Go 签署                         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -231,7 +231,7 @@ Plan 是责任链的起点，其交付物是蓝图。task-acceptance 流程确�
 │         │                                                   │
 │         ▼                                                   │
 │  5. 记录 (Record)                                            │
-│     蓝图文档 → 任务推入队列 → 共享上下文                      │
+│     蓝图文档 → 任务推入队列                                     │
 │     send_message 通知 Leader 蓝图就绪                        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -273,7 +273,7 @@ Accept 是责任链的终点。Accepter 不重新执行验证或审查，而是�
 │  5. 签署 (Record)                                            │
 │     产出验收报告，记录逐项核实结果和最终决策                    │
 │     零问题才能签 Go，不做"条件通过"                            │
-│     验收报告存入共享上下文                                    │
+│     验收报告记录完成                                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -386,7 +386,6 @@ If any answer is "no", fix the blueprint before proceeding.
 Persist the traceability record:
 - Write the blueprint document
 - Push tasks to the orchestrator queue
-- Store the blueprint in shared context (`set-context --key plan-<slug>`)
 - Notify Leader that blueprint is ready (`send_message`)
 
 Write your blueprint, traceability map, and self-check results to {{result_path}}.
@@ -567,7 +566,6 @@ For each finding, provide evidence:
 
 Persist the traceability record so Reviewer can pick up the chain:
 - Write the verification report with full traceability map and evidence
-- Store in shared context (`set-context --key verify-<slug>`)
 - Flag gaps and failures to Builder and Reviewer via `send_message`
 
 Write your verification map, evidence, and record to {{result_path}}.
@@ -660,7 +658,6 @@ For each judgment (especially CONCERN and REJECT), provide:
 
 Persist the traceability record and issue your decision:
 - Write the review report with full judgment map and evidence
-- Store in shared context (`set-context --key review-<slug>`)
 - Issue Pass/Revise decision
 - If Revise: notify responsible roles with specific issues
 - If Pass: notify Leader and Accepter, chain proceeds to Accept
@@ -763,7 +760,6 @@ Make the Go/No-Go decision and persist the traceability record:
 There is no "conditional pass". Zero issues for Go.
 
 Write your acceptance report with full traceability to {{result_path}}.
-Store in shared context (`set-context --key accept-<slug>`).
 
 ## Completion Report
 

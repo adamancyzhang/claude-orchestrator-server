@@ -38,15 +38,7 @@ export class WorkerWatcher {
           path.join(agentsDir, `worker-${link}.md`), "utf-8",
         );
       } catch {
-        // Fall back to generic template
-        try {
-          this.templates[link] = await fs.promises.readFile(
-            path.join(agentsDir, "worker.md"), "utf-8",
-          );
-        } catch {
-          // Minimal inline fallback
-          this.templates[link] = `You are a Worker.\n\n## Task\n\n{{content}}`;
-        }
+        this.templates[link] = `You are a Worker.\n\n## Task\n\n{{content}}`;
       }
     }
 

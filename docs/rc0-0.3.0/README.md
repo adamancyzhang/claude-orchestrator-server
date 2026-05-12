@@ -18,9 +18,9 @@ v0.3.0 采用 **Leader-Worker CLI-native** 架构，通过 ZooKeeper 直连实�
 ┌──────────────────────────────────────────────────────────────────────┐
 │                          ZooKeeper                                   │
 │                                                                      │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────┐ │
-│  │/leader   │  │/instances│  │/tasks    │  │/messages │  │/context│ │
-│  │[EPHEMERAL]│  │[EPHEMERAL]│  │[SEQ+EPH] │  │[SEQ]     │  │[PERS]  │ │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
+│  │/leader   │  │/instances│  │/tasks    │  │/messages │ │
+│  │[EPHEMERAL]│  │[EPHEMERAL]│  │[SEQ+EPH] │  │[SEQ]     │ │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └───────┘ │
 └──────┬───────────────┬──────────────┬──────────────┬─────────────────┘
        │               │              │              │
@@ -70,7 +70,6 @@ v0.3.0 采用 **Leader-Worker CLI-native** 架构，通过 ZooKeeper 直连实�
 | Instance Registry | 实例注册、心跳、存活检测 | 所有节点直连 ZK |
 | Task Queue | 任务入队、认领、完成、超时恢复 | Leader 监控 + Worker 认领 |
 | Message Router | 点对点消息、广播，模板渲染 | 所有节点 via ZK sequential + watcher `$COMMAND -p` |
-| Context Store | 全局键值存储 | 所有节点直连 ZK |
 | Recovery Handler | 孤儿任务回收、实例断线处理 | Leader 专属 |
 | Agent Templates | Worker/Leader 消息模板渲染 | `setup` 写入，运行时读取 |
 | Cache Manager | 共享日志/结果目录管理 | Leader 写入，Worker 读取 |
@@ -223,7 +222,6 @@ claude-orchestrator register
    - `complete-task` — 完成任务
    - `send-message` — 发消息给其他成员
    - `poll-message` — 检查消息
-   - `set-context` / `get-context` — 共享上下文
 
 ### 4.3 标准执行流程
 
@@ -524,11 +522,6 @@ Worker 进程崩溃 / 网络断开
 │                  "task_doc_path":"...", "result_path":"...",
 │                  "created_at":"...", "read":false,
 │                  "reply_to":null}
-│
-└── /context/
-    └── /{key}                           [PERSISTENT]
-        data: {"key":"...", "value":"...",
-               "updated_by":"...", "updated_at":"..."}
 ```
 
 ## 12. CLI 命令
@@ -624,6 +617,7 @@ claude-orchestrator-server/            ← npm 包根目录
 │   │   ├── tui.ts                     # TUI 只读渲染
 │   │   ├── watcher.ts                 # Leader 消息监听
 │   │   ├── monitor.ts                 # ZK Watch 管理
+│   │   ├── orchestrator.ts            # 任务 Watch 编排
 │   │   ├── recovery.ts                # 孤儿任务回收
 │   │   ├── task-generator.ts          # Claude 任务拆解
 │   │   ├── decision-engine.ts         # Claude 调度决策
@@ -646,11 +640,11 @@ claude-orchestrator-server/            ← npm 包根目录
 │   ├── modules/
 │   │   ├── registry.ts                # 实例注册表
 │   │   ├── task-queue.ts              # 任务队列
-│   │   ├── message-router.ts          # 消息路由 + 模板渲染
-│   │   └── context-store.ts           # 共享键值存储
+│   │   └── message-router.ts          # 消息路由 + 模板渲染
 │   ├── models/
 │   │   └── schemas.ts                 # Zod schemas + 类型
 │   └── utils/
+│       ├── exec.ts                     # Claude CLI 执行 + tee 日志
 │       └── output.ts                  # CLI 输出格式化
 ├── scripts/
 │   ├── start-zk.sh

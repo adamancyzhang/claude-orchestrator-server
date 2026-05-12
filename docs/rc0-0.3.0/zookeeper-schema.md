@@ -20,12 +20,9 @@
 │   └── /completed                           [PERSISTENT]  已完成任务容器
 │       └── /{task_id}                       [PERSISTENT]
 │
-├── /messages                                [PERSISTENT]  消息容器
-│   └── /{instance_id}                       [PERSISTENT]  实例消息目录
-│       └── /msg-{seq}                       [PERSISTENT_SEQUENTIAL]
-│
-└── /context                                 [PERSISTENT]  共享上下文容器
-    └── /{key}                               [PERSISTENT]  上下文条目
+└── /messages                                [PERSISTENT]  消息容器
+    └── /{instance_id}                       [PERSISTENT]  实例消息目录
+        └── /msg-{seq}                       [PERSISTENT_SEQUENTIAL]
 ```
 
 ## 节点详细定义
@@ -208,24 +205,6 @@
 - **Watch**: Worker watcher `ChildWatch` on `/messages/{instance_id}` — 新消息触发 `$COMMAND -p | tee $CACHE_DIR/{key}.log`
 - **清理策略**: 标记已读后 24h 自动清理（Leader 后台任务）
 
-### /context/{key}
-
-- **类型**: PERSISTENT
-- **创建者**: CLI `set-context`
-- **数据格式**:
-```json
-{
-  "key": "build_status",
-  "value": "{\"branch\":\"main\",\"commit\":\"abc123\",\"status\":\"green\"}",
-  "updated_by": "instance-ci-uuid",
-  "updated_by_name": "CI-Bot",
-  "updated_at": "2026-05-11T10:45:00Z"
-}
-```
-
-- **编码**: key 经过 URL-safe 编码，value 为 UTF-8 字符串（任意 JSON）
-- **Watch**: 可选 `DataWatch` on `/context/{key}` — 检测特定 key 的变化
-
 ## Watch 策略
 
 | 路径 | 观察者 | Watch 类型 | 触发条件 | 回调动作 |
@@ -237,7 +216,6 @@
 | `/tasks/claimed` | Leader | ChildWatch | 子节点增删 | 子节点增加→任务被认领；子节点删除→孤儿任务回收 |
 | `/messages/{leader_id}` | Leader | ChildWatch | 子节点增加 | Leader watcher 处理 Worker 发来的完成报告 |
 | `/messages/{worker_id}` | Worker | ChildWatch | 子节点增加 | Worker watcher 处理 Leader 发来的任务指令 |
-| `/context/{key}` | 任意节点 | DataWatch | 数据变更 | `watch-context` CLI 命令输出变更 |
 
 ## Watch 重建
 
@@ -267,7 +245,6 @@ async function persistentChildWatch(
 | `/tasks/claimed/{ins}-{task}` | `claim_task` 原子创建 | `complete_task` / 实例断连 | Ephemeral — 实例断连自动释放 |
 | `/tasks/completed/{task}` | `complete_task` / 孤儿重试超限归档 | 手动清理 / TTL 自动清理 | 保留任务历史 |
 | `/messages/{id}/msg-{seq}` | `send_message` | 已读后 TTL (24h) / `delete-message` | Watch 触发本地 `claude -p` |
-| `/context/{key}` | `set_context` | `delete_context` | 持久存储 |
 
 ## ACL (访问控制)
 

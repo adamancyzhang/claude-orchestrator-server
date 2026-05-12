@@ -5,6 +5,7 @@ import { MessageSchema } from "../models/schemas.js";
 import { LeaderEventBus } from "./event-bus.js";
 import { execWithTee } from "../utils/exec.js";
 import { expandHomeDir } from "../config.js";
+import type { DecisionEngine } from "./decision-engine.js";
 
 export class LeaderWatcher {
   private inFlight = new Set<string>();
@@ -16,6 +17,7 @@ export class LeaderWatcher {
     private leaderInstanceId: string,
     private command: string,
     private cacheDir: string,
+    private decisionEngine?: DecisionEngine,
   ) {}
 
   async start(): Promise<void> {
@@ -60,7 +62,16 @@ export class LeaderWatcher {
     const resolvedCacheDir = expandHomeDir(this.cacheDir);
     const logPath = path.join(resolvedCacheDir, this.leaderInstanceId, `${uniqueKey}.log`);
 
-    await execWithTee(this.command, msg.content, logPath);
+    // Use DecisionEngine for Worker completion reports (messages with link field)
+    if (this.decisionEngine && msg.link) {
+      await this.decisionEngine.evaluate(msg, {
+        teamStatus: {},
+        taskQueues: {},
+        chainStatus: {},
+      });
+    } else {
+      await execWithTee(this.command, msg.content, logPath);
+    }
 
     try {
       msg.read = true;
