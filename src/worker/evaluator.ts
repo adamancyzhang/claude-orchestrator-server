@@ -52,7 +52,7 @@ export class SelfEvaluator {
     }
 
     const evalResultPath = this.runner.evalResultPath(uniqueKey);
-    const evalLogPath = this.runner.logPath(`${uniqueKey}-eval`);
+    const evalLogPath = this.runner.evalLogPath(uniqueKey);
 
     const evalPrompt = this.templateEngine.render(evalTemplate, {
       name: this.instanceName,

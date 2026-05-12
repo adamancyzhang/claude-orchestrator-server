@@ -129,6 +129,9 @@ export class LeaderState {
       case "chain_closed":
         this.events.push({ timestamp: time, message: `Chain ${event.chainId} closed` });
         break;
+      case "debug_info":
+        this.events.push({ timestamp: time, message: `[DEBUG] ${event.message}` });
+        break;
     }
     // Keep event log to last 100 entries
     if (this.events.length > 100) this.events.shift();

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { loadConfig, loadInstanceConfig } from "./config.js";
+import { Logger } from "./utils/logger.js";
 import {
   cmdRegister,
   cmdPushTask,
@@ -35,10 +36,15 @@ program
     "-z, --zookeeper <hosts>",
     "ZooKeeper connection string (env: ZK_HOSTS)",
     "127.0.0.1:2181"
-  );
+  )
+  .option("-d, --debug", "Enable debug mode (trace prompts and execution details)");
 
 function getZkHosts(cmd: Command): string {
   return cmd.optsWithGlobals().zookeeper || "127.0.0.1:2181";
+}
+
+function getDebug(cmd: Command): boolean {
+  return !!cmd.optsWithGlobals().debug;
 }
 
 function getSubOpts<T>(cmd: Command): T {
@@ -55,12 +61,15 @@ program
   .option("--name <name>", "Leader display name")
   .action(async function (this: Command) {
     const { name } = getSubOpts<{ name?: string }>(this);
+    const debug = getDebug(this);
+    if (debug) Logger.enableDebug();
     const config = loadConfig({ zookeeper: getZkHosts(this) });
     const { startLeader } = await import("./leader/index.js");
     await startLeader({
       zkHosts: config.zk.url,
       name,
       instanceId: config.instanceId,
+      debug,
     });
   });
 
@@ -69,7 +78,8 @@ program
   .description("Register as Worker and listen for messages (Ctrl+C to stop)")
   .action(async function (this: Command) {
     try {
-      await cmdRegister(getZkHosts(this));
+      const debug = getDebug(this);
+      await cmdRegister(getZkHosts(this), debug);
     } catch (e) {
       output({ error: String(e) }, true);
     }

@@ -21,8 +21,14 @@ npm run build
 # Start Leader (TUI)
 node dist/index.js leader --name Tom
 
+# Start Leader with debug trace
+node dist/index.js leader --name Tom --debug
+
 # Start Worker
 node dist/index.js register
+
+# Start Worker with debug
+node dist/index.js register --debug
 
 # Run all tests
 npm test              # vitest run
@@ -170,6 +176,7 @@ Context store (`/context`) paths are defined in `paths.ts` but not actively used
 | `src/modules/message-router.ts` | Message send/poll/wait/dismiss + template rendering |
 | `src/models/schemas.ts` | Zod schemas for Instance, Task, Message + ChainDef, EvalDecision + factory functions |
 | `src/utils/exec.ts` | `execWithTee` (streaming) and `execAndCapture` (buffered) |
+| `src/utils/logger.ts` | Tagged logger with `--debug` mode for tracing prompts and execution |
 | `src/templates/` | Agent prompt templates (worker-{decompose,evaluate,plan,build,verify,review,accept}) |
 | `skills/` | Claude Code skills for responsibility chain + CLI reference |
 

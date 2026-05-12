@@ -37,7 +37,8 @@ async function withZk<T>(
   }
 }
 
-export async function cmdRegister(zkHosts: string): Promise<void> {
+export async function cmdRegister(zkHosts: string, debug = false): Promise<void> {
+  if (debug) Logger.enableDebug();
   // Read from project config only — no CLI args, no global fallback
   const projectConfig = loadInstanceConfig();
   const name = projectConfig.name;

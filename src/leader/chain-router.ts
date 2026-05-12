@@ -37,6 +37,9 @@ export class ChainRouter {
 
   async route(msg: Message): Promise<void> {
     const link = msg.link;
+    if (Logger.isDebug()) {
+      this.eventBus.emit({ type: "debug_info", message: `Routing msg ${msg.id}: link=${link ?? "none"}, from=${msg.from_name}` });
+    }
     if (!link) {
       return this.handleRequirement(msg);
     }
@@ -65,6 +68,9 @@ export class ChainRouter {
 
     await this.zk.createMessage(planner.id, fwd as unknown as Record<string, unknown>);
     this.logger.info(`Forwarded requirement to planner ${planner.name} (${planner.id.slice(0, 8)})`);
+    if (Logger.isDebug()) {
+      this.eventBus.emit({ type: "debug_info", message: `Requirement "${msg.content.slice(0, 80)}" → planner ${planner.name}` });
+    }
   }
 
   private async handleTaskDefinitions(msg: Message): Promise<void> {
@@ -119,13 +125,19 @@ export class ChainRouter {
     }
 
     this.eventBus.emit({ type: "chain_activated", chainId: chainDef.chain_id });
+    if (Logger.isDebug()) {
+      const linkCount = taskLinks.filter(t => t.def).length;
+      this.eventBus.emit({ type: "debug_info", message: `Chain ${chainDef.chain_id}: ${linkCount} tasks created` });
+    }
   }
 
   private async handleCompletionReport(msg: Message): Promise<void> {
     let decision: EvalDecision;
+    let parsed = true;
     try {
       decision = EvalDecisionSchema.parse(JSON.parse(msg.content));
     } catch {
+      parsed = false;
       const currentLink = msg.link!;
       const nextLink = NEXT_LINKS[currentLink];
       if (nextLink) {
@@ -135,6 +147,10 @@ export class ChainRouter {
       } else {
         decision = { decision: "activate_next", reason: "Auto-advance", nextLink: NEXT_LINKS[currentLink] ?? undefined };
       }
+    }
+
+    if (Logger.isDebug()) {
+      this.eventBus.emit({ type: "debug_info", message: `EvalDecision: ${decision.decision} (${decision.reason})${parsed ? "" : " [fallback]"}` });
     }
 
     switch (decision.decision) {

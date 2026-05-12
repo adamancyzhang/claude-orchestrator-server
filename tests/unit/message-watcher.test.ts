@@ -62,6 +62,7 @@ function makeMockRunner() {
   return {
     logPath: vi.fn().mockReturnValue("/tmp/test.log"),
     resultPath: vi.fn().mockReturnValue("/tmp/test-result.md"),
+    evalLogPath: vi.fn().mockReturnValue("/tmp/test-eval.log"),
     evalResultPath: vi.fn().mockReturnValue("/tmp/test-eval-result.md"),
     run: vi.fn().mockResolvedValue({ code: 0 }),
   } as any;

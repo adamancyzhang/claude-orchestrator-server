@@ -20,6 +20,7 @@ export async function startLeader(config: {
   zkHosts: string;
   name?: string;
   instanceId?: string;
+  debug?: boolean;
 }): Promise<void> {
   const logger = new Logger("Leader");
 
