@@ -79,7 +79,7 @@ export async function startLeader(config: {
   const decisionEngine = new DecisionEngine(zk, taskQueue, messageRouter, command, resolvedCache, instance.id);
 
   // Start subsystems
-  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, command, resolvedCache, decisionEngine);
+  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, command, resolvedCache, decisionEngine, taskGenerator);
   await leaderWatcher.start();
 
   const monitor = new WorkerMonitor(zk, eventBus);
@@ -96,6 +96,23 @@ export async function startLeader(config: {
   const tui = new LeaderTui();
   eventBus.onAll(() => tui.render(state));
   tui.render(state);
+
+  // Wire TUI input to send messages to leader's own queue for processing
+  tui.onInput(async (text) => {
+    try {
+      await zk.createMessage(instance.id, {
+        type: "direct",
+        from_instance: instance.id,
+        from_name: leaderName,
+        to_instance: instance.id,
+        content: text,
+        created_at: new Date().toISOString(),
+        read: false,
+      });
+    } catch (err) {
+      // Best effort — message will be lost if ZK is down
+    }
+  });
 
   // Block on SIGINT
   await new Promise<void>((resolve) => {

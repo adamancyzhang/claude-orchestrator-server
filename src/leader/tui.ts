@@ -42,7 +42,72 @@ function workerStatusColor(status: string): string {
 }
 
 export class LeaderTui {
+  private inputBuffer = "";
+  private inputCallback: ((text: string) => void) | null = null;
+  private rawMode = false;
+
+  constructor() {
+    this.setupInput();
+  }
+
+  onInput(cb: (text: string) => void): void {
+    this.inputCallback = cb;
+  }
+
+  private enableRawMode(): void {
+    if (this.rawMode) return;
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      this.rawMode = true;
+    }
+  }
+
+  private disableRawMode(): void {
+    if (!this.rawMode) return;
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+    this.rawMode = false;
+  }
+
+  private setupInput(): void {
+    process.stdin.on("data", (data: Buffer) => {
+      const key = data.toString();
+
+      if (key === "\x03") {
+        // Ctrl+C — let SIGINT handler deal with it
+        process.kill(process.pid, "SIGINT");
+        return;
+      }
+
+      if (key === "\r" || key === "\n") {
+        if (this.inputBuffer.trim() && this.inputCallback) {
+          this.inputCallback(this.inputBuffer.trim());
+        }
+        this.inputBuffer = "";
+        return;
+      }
+
+      if (key === "\x7f" || key === "\x08") {
+        this.inputBuffer = this.inputBuffer.slice(0, -1);
+        return;
+      }
+
+      if (key === "\x1b") {
+        this.inputBuffer = "";
+        return;
+      }
+
+      // Printable characters only
+      if (key >= " ") {
+        this.inputBuffer += key;
+      }
+    });
+  }
+
   render(state: LeaderState): void {
+    this.enableRawMode();
+
     const cols = process.stdout.columns || 120;
     const rows = process.stdout.rows || 30;
     const halfW = Math.floor((cols - 4) / 2);
@@ -117,9 +182,10 @@ export class LeaderTui {
       out += leftBox[i] + " " + rightBox[i] + "\n";
     }
 
-    // ── Event Log (bottom) ──
-    const remainingH = rows - teamBoxH - (taskH + 2) - 3;
-    const logH = Math.max(remainingH, 5);
+    // ── Event Log ──
+    const inputSectionH = 4; // input box height
+    const remainingH = rows - teamBoxH - (taskH + 2) - 3 - inputSectionH;
+    const logH = Math.max(remainingH, 3);
     const logLines: string[] = [];
     logLines.push(` ${BOLD}EVENT LOG${RESET}`);
     logLines.push(` ${DIM}${"─".repeat(cols - 4)}${RESET}`);
@@ -130,15 +196,22 @@ export class LeaderTui {
     while (logLines.length < logH - 1) logLines.push("");
     out += box(cols - 2, ...logLines);
 
+    // ── Input Line ──
+    const inputPrompt = `> ${this.inputBuffer}█`;
+    const inputHint = this.inputBuffer.length === 0 ? `${DIM}Type a message and press Enter to send${RESET}` : "";
+    const inputBox = box(cols - 2, inputPrompt, inputHint || " ");
+    out += inputBox;
+
     // ── Footer ──
     const idShort = state.leaderInstanceId.slice(0, 8);
-    const footer = `${DIM}Leader: ${state.leaderName} | Instance: ${idShort} | CACHE_DIR: ${state.cacheDir} | Press Ctrl+C to stop${RESET}`;
+    const footer = `${DIM}Leader: ${state.leaderName} | Instance: ${idShort} | CACHE_DIR: ${state.cacheDir} | Ctrl+C to stop${RESET}`;
     out += `\n${footer}`;
 
     process.stdout.write(out);
   }
 
   destroy(): void {
+    this.disableRawMode();
     process.stdout.write(SHOW_CURSOR + CLEAR);
   }
 }

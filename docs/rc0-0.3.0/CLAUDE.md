@@ -42,6 +42,9 @@ v0.3.0 采用 **Leader-Worker CLI-native** 架构，通过 ZooKeeper 直连实�
 3. ~~Schema 中 `TaskStatus` 包含 `in_progress`~~ 已移除（2026-05-12）
 4. ~~Task Schema 缺少 `depends_on` / `blocked_by`~~ 已添加（2026-05-12）
 5. ~~`MessageType` 未包含 `help`~~ 已添加（2026-05-12）
+6. **TUI 支持键盘输入**（2026-05-12） — TUI 从纯只读展示升级为支持键盘输入，用户可在输入框中输入文本，按 Enter 将消息以 ZK 消息形式发送到 Leader 自身队列，经 LeaderWatcher 分流至 TaskGenerator 拆解为任务链
+7. **LeaderWatcher 三分支消息分流**（2026-05-12） — 消息处理从单一的 Claude 执行改为三分支：DecisionEngine（Worker 完成报告，带 link）、TaskGenerator（通用消息/用户输入，拆解为任务链）、直接 Claude 执行（回退）。LeaderWatcher 构造函数新增 `taskGenerator` 参数
+8. **日志前缀规范化**（2026-05-12） — 使用 `[Exec]` 前缀标识 Shell 命令执行（`src/utils/exec.ts`），使用 `[Watcher]` 前缀标识消息接收与处理（`src/worker/watcher.ts`、`src/leader/watcher.ts`）
 
 ## 详细审查报告
 

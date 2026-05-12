@@ -103,13 +103,13 @@ export class WorkerWatcher {
       prompt = msg.content;
     }
 
-    console.log(`[${timestamp}] Message from ${fromLabel} (${msg.type}):`);
-    console.log(`  ${msg.content.slice(0, 200)}`);
+    console.log(`[Watcher] [${timestamp}] Message from ${fromLabel} (${msg.type}):`);
+    console.log(`[Watcher]   ${msg.content.slice(0, 200)}`);
     if (link !== "_generic") {
-      console.log(`  Link: ${link}`);
+      console.log(`[Watcher]   Link: ${link}`);
     }
 
-    console.log(`[${timestamp}] Processing...`);
+    console.log(`[Watcher] [${timestamp}] Processing...`);
     await execWithTee(this.command, prompt, logPath, this.workDir);
 
     // Send completion report to leader (only for linked task messages)
@@ -134,9 +134,9 @@ export class WorkerWatcher {
           result_path: resultPath,
           link,
         });
-        console.log(`[${timestamp}] Completion report sent to Leader.`);
+        console.log(`[Watcher] [${timestamp}] Completion report sent to Leader.`);
       } catch (err) {
-        console.error(`[${timestamp}] Failed to send completion report: ${err}`);
+        console.error(`[Watcher] [${timestamp}] Failed to send completion report: ${err}`);
       }
     }
 
@@ -148,7 +148,7 @@ export class WorkerWatcher {
     }
 
     this.inFlight.delete(msgId);
-    console.log(`[${timestamp}] Done. Log: ${logPath}`);
+    console.log(`[Watcher] [${timestamp}] Done. Log: ${logPath}`);
   }
 
   stop(): void {

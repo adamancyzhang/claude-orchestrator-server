@@ -6,6 +6,7 @@ import { LeaderEventBus } from "./event-bus.js";
 import { execWithTee } from "../utils/exec.js";
 import { expandHomeDir } from "../config.js";
 import type { DecisionEngine } from "./decision-engine.js";
+import type { TaskGenerator } from "./task-generator.js";
 
 export class LeaderWatcher {
   private inFlight = new Set<string>();
@@ -18,6 +19,7 @@ export class LeaderWatcher {
     private command: string,
     private cacheDir: string,
     private decisionEngine?: DecisionEngine,
+    private taskGenerator?: TaskGenerator,
   ) {}
 
   async start(): Promise<void> {
@@ -52,6 +54,8 @@ export class LeaderWatcher {
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
     const uniqueKey = `msg-${msgId}-${Date.now().toString(36)}`;
 
+    console.log(`[Watcher] Message from ${fromLabel} (${msg.type}): ${msg.content.slice(0, 100)}`);
+
     this.eventBus.emit({
       type: "message_received",
       from: fromLabel,
@@ -64,12 +68,17 @@ export class LeaderWatcher {
 
     // Use DecisionEngine for Worker completion reports (messages with link field)
     if (this.decisionEngine && msg.link) {
+      console.log(`[Watcher] Delegating to DecisionEngine (link: ${msg.link})`);
       await this.decisionEngine.evaluate(msg, {
         teamStatus: {},
         taskQueues: {},
         chainStatus: {},
       });
+    } else if (this.taskGenerator) {
+      console.log(`[Watcher] Routing to TaskGenerator for decomposition`);
+      await this.taskGenerator.decompose(msg.content, {});
     } else {
+      console.log(`[Watcher] No TaskGenerator available, executing directly`);
       await execWithTee(this.command, msg.content, logPath);
     }
 

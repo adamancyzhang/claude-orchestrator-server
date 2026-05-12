@@ -11,8 +11,8 @@
   ┌────┴────────┐   ┌─────┴─────┐   ┌───────┴──────────┐
   │ Leader Node │   │ Worker A  │   │ CLI (message     │
   │             │   │           │   │   entry point)   │
-  │ TUI (read-  │   │ watcher   │   │                  │
-  │  only)      │   │ $COMMAND  │   │ push-task        │
+  │ TUI (input  │   │ watcher   │   │                  │
+  │  + display) │   │ $COMMAND  │   │ push-task        │
   │             │   │ -p | tee  │   │ claim-task       │
   │ watcher     │   │           │   │ send-message     │
   │ $COMMAND    │   │ per-link  │   │   → Worker       │
@@ -135,6 +135,16 @@ class TaskOrchestrator {
 
 ```typescript
 class LeaderWatcher {
+  constructor(
+    private zk: ZkClient,
+    private eventBus: LeaderEventBus,
+    private leaderInstanceId: string,
+    private command: string,
+    private cacheDir: string,
+    private decisionEngine?: DecisionEngine,
+    private taskGenerator?: TaskGenerator,
+  ) {}
+
   async start(): Promise<void> {
     await this.zk.mkdirp(paths.messageDirPath(this.leaderInstanceId));
     this.watchLoop();
@@ -153,7 +163,7 @@ class LeaderWatcher {
   }
 
   private async processMessage(msgId: string): Promise<void> {
-    if (this.inFlight.has(msgId)) return;
+    if (this.inFlight.has(msgId) || this.stopped) return;
     const data = await this.zk.getMessage(this.leaderInstanceId, msgId);
     if (!data) return;
     const msg = MessageSchema.parse({ ...data, id: msgId });
@@ -161,45 +171,86 @@ class LeaderWatcher {
 
     this.inFlight.add(msgId);
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
-    const uniqueKey = `msg-${msgId}-${Date.now().toString(36)}`;
 
-    this.eventBus.emit({ type: "message_received", from: fromLabel, content: msg.content });
+    console.log(`[Watcher] Message from ${fromLabel} (${msg.type}): ${msg.content.slice(0, 100)}`);
+    this.eventBus.emit({ type: "message_received", from: fromLabel, content: msg.content, msgId });
 
     const logPath = path.join(this.cacheDir, this.leaderInstanceId, `${uniqueKey}.log`);
-    const cmd = `${this.command} -p ${escapeShell(msg.content)}`;
-    const { code } = await this.execWithTee(cmd, logPath);
 
-    if (code === 0) {
-      this.eventBus.emit({ type: "message_processed", msgId, logPath });
+    // 三分支分流
+    if (this.decisionEngine && msg.link) {
+      // Worker 完成报告 → DecisionEngine 评估
+      await this.decisionEngine.evaluate(msg, context);
+    } else if (this.taskGenerator) {
+      // 通用消息/用户输入 → TaskGenerator 拆解需求为任务链
+      await this.taskGenerator.decompose(msg.content, {});
+    } else {
+      // 回退 → 直接 Claude 执行
+      await execWithTee(this.command, msg.content, logPath);
     }
 
-    await this.zk.updateMessage(this.leaderInstanceId, msgId, {
-      ...msg as unknown as Record<string, unknown>, read: true,
-    });
+    msg.read = true;
+    await this.zk.updateMessage(this.leaderInstanceId, msgId, msg);
     this.inFlight.delete(msgId);
+    this.eventBus.emit({ type: "message_processed", msgId, logPath });
   }
 }
 ```
 
-### TUI 架构 (只读显示)
+### TUI 架构 (带键盘输入)
 
-Leader TUI 纯只读显示，无命令输入。使用 Node.js 内置 ANSI 转义序列。
+Leader TUI 支持键盘输入和实时显示。使用 Node.js 内置 ANSI 转义序列和 raw mode stdin 捕获。
 
 ```typescript
 class LeaderTui {
+  private inputBuffer = "";
+  private inputCallback: ((text: string) => void) | null = null;
+
+  constructor() {
+    // 设置 raw mode 键盘输入监听
+    process.stdin.on("data", (data: Buffer) => {
+      const key = data.toString();
+      if (key === "\x03") process.kill(process.pid, "SIGINT");  // Ctrl+C
+      if (key === "\r" || key === "\n") {                       // Enter → 发送
+        if (this.inputBuffer.trim() && this.inputCallback) {
+          this.inputCallback(this.inputBuffer.trim());
+        }
+        this.inputBuffer = "";
+      }
+      if (key === "\x7f" || key === "\x08")                     // Backspace
+        this.inputBuffer = this.inputBuffer.slice(0, -1);
+      if (key === "\x1b") this.inputBuffer = "";                 // Escape → 清空
+      if (key >= " ") this.inputBuffer += key;                  // 可打印字符
+    });
+  }
+
+  onInput(cb: (text: string) => void): void {
+    this.inputCallback = cb;
+  }
+
   render(state: LeaderState): void {
+    this.enableRawMode();
     process.stdout.write("\x1b[2J\x1b[0;0H"); // 清屏
     this.renderTeamPanel(state.workers);        // 团队面板
     this.renderTaskPanels(state.tasks);          // 任务队列
-    this.renderEventLog(state.events.slice(-20)); // 事件日志
+    this.renderEventLog(state.events);           // 事件日志
+    this.renderInputBox();                       // 输入框
     this.renderFooter(state.leader);             // 页脚
   }
 }
 ```
 
+输入框格式：
+```
+┌─ Input ────────────────────────────────────────────────┐
+│ > 用户输入的文本█                                        │
+│ Type a message and press Enter to send (空闲时提示)      │
+└────────────────────────────────────────────────────────┘
+```
+
 ### Leader 事件循环
 
-Leader 无交互输入，仅监听 ZK 事件和 SIGINT：
+Leader 监听 ZK 事件和 SIGINT，同时通过 TUI 接收用户键盘输入：
 
 ```typescript
 async function leaderLoop(leader: Leader, tui: LeaderTui): Promise<void> {
@@ -210,6 +261,17 @@ async function leaderLoop(leader: Leader, tui: LeaderTui): Promise<void> {
 
   tui.render(leader.state);
   await leader.startWatcher();
+
+  // 注册 TUI 输入回调 → 用户输入以 ZK 消息形式发送到自身队列
+  tui.onInput(async (text) => {
+    await zk.createMessage(leader.instanceId, {
+      type: "direct",
+      from_instance: leader.instanceId,
+      from_name: leader.name,
+      to_instance: leader.instanceId,
+      content: text,
+    });
+  });
 
   await new Promise<void>((resolve) => {
     process.once("SIGINT", resolve);
@@ -235,8 +297,9 @@ startLeader(config)
   ├─ 7. 启动 LeaderWatcher (watch /messages/{leader_id})
   ├─ 8. 启动 WorkerMonitor (watch /instances)
   ├─ 9. 启动 TaskOrchestrator (watch /tasks)
-  ├─ 10. 初始化 TUI (只读: team panel + task panel + event log + footer)
-  └─ 11. 阻塞等待 SIGINT (所有交互通过外部 CLI 完成)
+  ├─ 10. 初始化 TUI (team panel + task panel + event log + input box + footer)
+  ├─ 11. 注册 TUI 输入回调 → 用户输入以 ZK 消息形式发送到自身队列
+  └─ 12. 阻塞等待 SIGINT
 ```
 
 ## Worker Watcher 架构
@@ -325,8 +388,11 @@ class WorkerWatcher {
       .replace("{{work_dir}}", this.workDir)
       .replace("{{time}}", new Date().toISOString());
 
-    // 执行
-    console.log(`[${new Date().toLocaleTimeString()}] Executing as ${link}: ${msg.task_title}`);
+    // 执行 (execWithTee 内部会输出 [Exec] 前缀日志)
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[Watcher] [${timestamp}] Message from ${msg.from_name} (${msg.type}):`);
+    console.log(`[Watcher]   ${msg.content.slice(0, 200)}`);
+    console.log(`[Watcher] [${timestamp}] Processing...`);
     const { code } = await this.execWithTee(
       `${this.command} -p ${escapeShell(prompt)}`,
       logPath
@@ -342,8 +408,9 @@ class WorkerWatcher {
           `Task completed. Leader, please review and decide next step.`,
         ].join("\n"),
         this.leaderInstanceId);
-      console.log(`Done. Report sent to Leader.`);
+      console.log(`[Watcher] [${timestamp}] Completion report sent to Leader.`);
     }
+    console.log(`[Watcher] [${timestamp}] Done. Log: ${logPath}`);
 
     await this.zk.markMessageRead(this.instance.id, msgId);
     this.inFlight.delete(msgId);
@@ -351,7 +418,8 @@ class WorkerWatcher {
 
   private async execWithTee(cmd: string, logPath: string): Promise<ExecResult> {
     await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
-    const logStream = fs.createWriteStream(logPath);
+
+    console.log(`\n[Exec] ${command} -p '...' | tee -a '${logPath}'`);
 
     return new Promise((resolve) => {
       const child = spawn("sh", ["-c", cmd], {
@@ -364,22 +432,14 @@ class WorkerWatcher {
         const s = d.toString();
         stdout += s;
         process.stdout.write(s);
-        logStream.write(s);
       });
       child.stderr?.on("data", (d: Buffer) => {
         const s = d.toString();
         stderr += s;
         process.stderr.write(s);
-        logStream.write(s);
       });
-      child.on("exit", (code) => {
-        logStream.end();
-        resolve({ code: code ?? -1, stdout, stderr });
-      });
-      child.on("error", (err) => {
-        logStream.end();
-        resolve({ code: -1, stdout, stderr: err.message });
-      });
+      child.on("exit", (code) => resolve({ code: code ?? -1, stdout, stderr }));
+      child.on("error", (err) => resolve({ code: -1, stdout, stderr: err.message }));
     });
   }
 

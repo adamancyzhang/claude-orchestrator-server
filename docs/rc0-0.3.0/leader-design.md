@@ -26,9 +26,10 @@ Leader 是责任链的协调者，不直接执行任务。其核心工作是：*
     Planner             Builder             Verifier         Reviewer/Accepter
 ```
 
-Leader 通过 Claude（`$COMMAND -p`）来处理两件事：
-1. **任务生成**：将自然语言需求拆解为结构化的环节任务
-2. **消息处理**：理解 Worker 的完成报告，决定下一步调度
+Leader 通过 Claude（`$COMMAND -p`）来处理三类消息：
+1. **任务生成**：通过 TaskGenerator 将自然语言需求拆解为结构化的环节任务
+2. **调度决策**：通过 DecisionEngine 理解 Worker 的完成报告，决定下一步调度
+3. **回退执行**：当 TaskGenerator 不可用时，直接执行 Claude CLI 处理消息
 
 ## 2. Leader 工作流程
 
@@ -48,8 +49,9 @@ claude-orchestrator leader
 ├─ 6. 启动 Leader Watcher（监听 /messages/{leader_id}）
 ├─ 7. 启动 Worker Monitor（监听 /instances 变化）
 ├─ 8. 启动 Task Monitor（监听 /tasks 变化）
-├─ 9. 初始化 TUI 只读面板
-└─ 10. 进入事件循环
+├─ 9. 初始化 TUI 面板（含键盘输入支持）
+├─ 10. 注册 TUI 输入回调 → 用户输入文本以 ZK 消息形式发送到自身消息队列
+└─ 11. 进入事件循环
 ```
 
 ### 2.2 事件循环
@@ -69,16 +71,18 @@ Leader 启动后进入阻塞式事件循环，所有行为由 ZK 事件驱动：
     └─────┬─────┘  └─────┬─────┘  └─────┬─────┘
           │              │              │
           ▼              ▼              ▼
-    ┌───────────┐  ┌───────────┐  ┌───────────┐
-    │更新团队视图│  │更新任务视图│  │Claude 处理│
-    │重绘 TUI   │  │重绘 TUI   │  │→ 调度决策 │
-    └───────────┘  └───────────┘  └─────┬─────┘
-                                        │
-                                        ▼
-                                  ┌───────────┐
-                                  │ 发送指令   │
-                                  │ 重绘 TUI  │
-                                  └───────────┘
+    ┌───────────┐  ┌───────────┐  ┌─────────────────────┐
+    │更新团队视图│  │更新任务视图│  │ 消息分流处理:        │
+    │重绘 TUI   │  │重绘 TUI   │  │ - 有 link → Decision │
+    └───────────┘  └───────────┘  │ - 无 link → TaskGen  │
+                                  │ - 回退 → 直接 Claude │
+                                  └──────────┬──────────┘
+                                             │
+                                             ▼
+                                       ┌───────────┐
+                                       │ 更新 ZK   │
+                                       │ 重绘 TUI  │
+                                       └───────────┘
 ```
 
 ### 2.3 三个 Monitor
@@ -87,7 +91,7 @@ Leader 启动后进入阻塞式事件循环，所有行为由 ZK 事件驱动：
 |---------|---------|---------|---------|
 | **Worker Monitor** | `/instances` | Worker 上线/下线/状态变更 | 更新团队视图，若 Worker 断线则回收其 claimed 任务 |
 | **Task Monitor** | `/tasks/pending`, `/tasks/claimed` | 任务新增/认领/完成/阻塞 | 更新任务队列视图，检测孤儿任务 |
-| **Leader Watcher** | `/messages/{leader_id}` | Worker 发送完成报告/求助 | Claude 处理消息内容，做出调度决策 |
+| **Leader Watcher** | `/messages/{leader_id}` | Worker 发送完成报告/求助 / TUI 用户输入 | 三分支分流: DecisionEngine（带 link） / TaskGenerator 拆解需求 / 直接 Claude 执行 |
 
 ## 3. 任务生成：Claude 驱动的需求拆解
 
@@ -216,48 +220,56 @@ Leader TUI 按环节分组，每个任务标注推荐分配人：
 
 ## 5. Leader 调度决策流程
 
-### 5.1 收到 Worker 完成报告
+### 5.1 消息分流处理
 
-Leader Watcher 收到 Worker 消息后，通过 Claude 处理并决策：
+Leader Watcher 收到消息后，根据消息类型进行三分支分流：
 
 ```
-Worker 消息到达 /messages/{leader_id}/msg-{seq}
+消息到达 /messages/{leader_id}/msg-{seq}
     │
     ▼
 ┌─────────────────────────────────────────────┐
-│ 1. 读取消息内容 + Worker 的 result_path      │
+│ 1. 读取消息内容，解析 MessageSchema          │
+│    输出 [Watcher] 日志记录消息来源和内容      │
 └────────────────────┬────────────────────────┘
                      │
                      ▼
-┌─────────────────────────────────────────────┐
-│ 2. 构建决策 Prompt:                          │
-│    - leader-decide.md 模板                   │
-│    - 当前团队状态 + 任务队列 + chain 状态     │
-│    - Worker 完成报告 + result_path 内容       │
-│    - "评估该环节是否完成，决定下一步"          │
-└────────────────────┬────────────────────────┘
+              ┌──────┴──────┐
+              │  消息带 link? │
+              └──────┬──────┘
                      │
-                     ▼
+         ┌───────────┴───────────┐
+         │ 是 (Worker 完成报告)    │ 否 (通用消息/用户输入)
+         ▼                       ▼
+┌────────────────────┐  ┌────────────────────────────┐
+│ DecisionEngine     │  │ TaskGenerator.decompose()  │
+│ .evaluate()        │  │                            │
+│                    │  │ 使用 leader-decompose.md    │
+│ 使用 leader-decide │  │ 模板将自然语言需求拆解为    │
+│ .md 模板评估环节   │  │ 结构化任务链，写入 ZK       │
+│ 是否通过，决定     │  │ 任务队列。Worker 在正确的   │
+│ 下一步调度动作     │  │ 工作目录中拾取并执行。      │
+│                    │  │                            │
+│ 输出: pass/feedback│  │ 若 TaskGenerator 不可用，   │
+│ /reject 决策       │  │ 回退到直接 Claude 执行。    │
+└────────┬───────────┘  └────────────────────────────┘
+         │
+         ▼
 ┌─────────────────────────────────────────────┐
-│ 3. $COMMAND -p "$PROMPT"                    │
-│    | tee $CACHE_DIR/decision-{ts}.log       │
-│                                             │
-│    Claude 分析并输出决策:                     │
-│    - 通过: 激活下一环节任务                   │
-│    - 驳回: 反馈给原 Worker 修改               │
-│    - 阻塞: 记录原因，分配其他任务              │
-└────────────────────┬────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────┐
-│ 4. 执行决策:                                 │
+│ 执行决策:                                     │
 │    - 通过 → push_task 下一环节 / 更新依赖     │
 │    - 驳回 → send_message 反馈给原 Worker      │
 │    - 阻塞 → 记录阻塞原因，调度其他任务         │
 └─────────────────────────────────────────────┘
 ```
 
-### 5.2 任务分配决策
+**分流原因**：Leader 自身的工作目录可能与实际项目目录不同，直接执行 `claude-cli -p` 无法正确访问项目文件。通过 TaskGenerator 将需求拆解为任务链后，由 Worker 在其正确的工作目录中执行。
+
+### 5.2 Worker 完成报告处理 (DecisionEngine 路径)
+
+消息带有 `link` 字段时，表示 Worker 的环节完成报告：
+
+### 5.3 任务分配决策
 
 ```
 assign(worker, task):
@@ -466,7 +478,7 @@ Output ONLY the JSON. No explanation before or after.
 
 ### 7.1 布局
 
-Leader TUI 分为四个区域，纯只读展示，不接收键盘输入：
+Leader TUI 分为五个区域，支持键盘输入向 Leader 发送消息：
 
 ```
 ┌─ Team Panel ─────────────────────────────────────────────────────────┐
@@ -493,16 +505,32 @@ Leader TUI 分为四个区域，纯只读展示，不接收键盘输入：
 │ [10:01:00] 📋 Chain chain-001 created: 用户认证模块 (5 tasks)         │
 │ [10:01:05] 📨 Alice ← Plan task task-001 assigned                    │
 │ [10:05:30] 📨 Alice → Leader: task-001 completed, result: ...        │
-│ [10:05:35] 🔄 Claude processing: evaluating completion...            │
 │ [10:05:40] ✅ task-001 passed. Activating Build tasks.               │
 │ [10:05:45] 📨 Jerry ← Build task task-002 assigned                   │
 └──────────────────────────────────────────────────────────────────────┘
 
-Leader: Tom | Instance: a1b2c3... | CACHE_DIR: .../sessions/a1b2c3.../
-Press Ctrl+C to stop.
+┌─ Input ──────────────────────────────────────────────────────────────┐
+│ > 实现用户登录功能█                                                    │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
+
+Leader: Tom | Instance: a1b2c3... | CACHE_DIR: .../sessions/a1b2c3.../ | Ctrl+C to stop
 ```
 
-### 7.2 更新策略
+### 7.2 键盘输入
+
+TUI 支持键盘输入，用户可在输入框中直接输入文本，按 Enter 发送给 Leader：
+
+| 按键 | 功能 |
+|------|------|
+| 可打印字符 | 追加到输入缓冲区 |
+| Enter | 发送消息到 Leader（创建 ZK 消息到自身消息队列，经 LeaderWatcher 分流至 TaskGenerator 拆解为任务链） |
+| Backspace | 删除最后一个字符 |
+| Escape | 清空输入缓冲区 |
+
+输入框空闲时显示提示文字 "Type a message and press Enter to send"。
+
+### 7.3 更新策略
 
 TUI 由 EventBus 事件驱动，在以下时机重绘：
 
@@ -510,8 +538,17 @@ TUI 由 EventBus 事件驱动，在以下时机重绘：
 |------|---------|
 | `worker_joined` / `worker_left` / `worker_status_changed` | Team Panel |
 | `task_created` / `task_claimed` / `task_completed` | Task Panels |
-| `message_received` / `message_processed` / `chain_activated` | Event Log |
-| 任何事件 | Footer（时间更新） |
+| `message_received` / `message_processed` | Event Log |
+| 任何事件 / 键盘输入 | Footer + Input Panel |
+
+### 7.4 日志前缀
+
+系统使用统一日志前缀标识不同来源的输出：
+
+| 前缀 | 含义 | 示例 |
+|------|------|------|
+| `[Exec]` | Shell 命令执行 | `[Exec] claude -p '实现登录功能...' \| tee -a '/path/to/log'` |
+| `[Watcher]` | 消息接收与处理 | `[Watcher] [17:08:57] Message from Alice (direct): task-001 completed` |
 
 ## 8. 孤儿任务回收
 

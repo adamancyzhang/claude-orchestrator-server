@@ -13,6 +13,9 @@ export async function execWithTee(
   const escapedMsg = message.replace(/'/g, "'\\''");
   const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
 
+  const msgPreview = message.length > 100 ? message.slice(0, 100) + "..." : message;
+  console.log(`\n[Exec] ${command} -p '${msgPreview}' | tee -a '${logPath}'`);
+
   return new Promise((resolve) => {
     const child = spawn("sh", ["-c", shellCmd], {
       cwd,
