@@ -65,11 +65,22 @@ function makeMockEventBus() {
   };
 }
 
+function makeMockRunner() {
+  return {
+    taskDocPath: vi.fn().mockImplementation((id: string) => `/tmp/cache/tasks/${id}.md`),
+    ensureDir: vi.fn(),
+  } as unknown as {
+    taskDocPath: ReturnType<typeof vi.fn>;
+    ensureDir: ReturnType<typeof vi.fn>;
+  };
+}
+
 describe("ChainRouter", () => {
   let zk: ReturnType<typeof makeMockZk>;
   let taskQueue: ReturnType<typeof makeMockTaskQueue>;
   let messageRouter: ReturnType<typeof makeMockMessageRouter>;
   let eventBus: ReturnType<typeof makeMockEventBus>;
+  let runner: ReturnType<typeof makeMockRunner>;
   let router: ChainRouter;
 
   beforeEach(() => {
@@ -77,9 +88,10 @@ describe("ChainRouter", () => {
     taskQueue = makeMockTaskQueue();
     messageRouter = makeMockMessageRouter();
     eventBus = makeMockEventBus();
+    runner = makeMockRunner();
     router = new ChainRouter(
       zk as any, taskQueue as any, messageRouter as any, eventBus as any,
-      "leader1", "Leader", "/tmp/cache",
+      "leader1", "Leader", runner as any,
     );
   });
 

@@ -21,8 +21,14 @@ export class ClaudeRunner {
     return new Date().toISOString().slice(0, 10);
   }
 
-  private ensureDir(dir: string): void {
+  ensureDir(dir: string): void {
     fs.mkdirSync(dir, { recursive: true });
+  }
+
+  taskDocPath(taskId: string): string {
+    const dir = path.join(this.resolvedCache, "tasks", this.dateDir());
+    this.ensureDir(dir);
+    return path.join(dir, `${taskId}.md`);
   }
 
   logPath(uniqueKey: string): string {

@@ -1,6 +1,4 @@
 import * as os from "node:os";
-import * as path from "node:path";
-import * as fs from "node:fs";
 import { ZkClient, isNodeExists } from "../zk/client.js";
 import { InstanceRegistry } from "../modules/registry.js";
 import { LeaderEventBus } from "./event-bus.js";
@@ -12,7 +10,8 @@ import { LeaderWatcher } from "./watcher.js";
 import { ChainRouter } from "./chain-router.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
-import { expandHomeDir, loadInstanceConfig, saveInstanceId } from "../config.js";
+import { ClaudeRunner } from "../executor/runner.js";
+import { loadInstanceConfig, saveInstanceId } from "../config.js";
 import { Logger } from "../utils/logger.js";
 import { LeaderTui } from "./tui.js";
 
@@ -55,17 +54,20 @@ export async function startLeader(config: {
   const instance = await registry.register(leaderName, "leader", leaderId);
   saveInstanceId(instance.id);
 
-  // Initialize CACHE_DIR
-  const resolvedCache = expandHomeDir("~/.claude-orchestrator/sessions");
-  const myCacheDir = path.join(resolvedCache, instance.id);
-  await fs.promises.mkdir(myCacheDir, { recursive: true });
+  // Initialize cache runner for path management (leader doesn't call claude-cli)
+  const cacheRunner = new ClaudeRunner(
+    "", // command unused by leader
+    "~/.claude-orchestrator/sessions",
+    instance.id,
+    process.cwd(),
+  );
 
   // Initialize EventBus + State
   const eventBus = new LeaderEventBus();
   const state = new LeaderState();
   state.leaderName = leaderName;
   state.leaderInstanceId = instance.id;
-  state.cacheDir = resolvedCache;
+  state.cacheDir = "~/.claude-orchestrator/sessions";
 
   eventBus.onAll((event) => state.apply(event));
 
@@ -73,7 +75,7 @@ export async function startLeader(config: {
   const taskQueue = new TaskQueue(zk);
   const messageRouter = new MessageRouter(zk);
 
-  const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, resolvedCache);
+  const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, cacheRunner);
 
   // Start subsystems
   const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, chainRouter);

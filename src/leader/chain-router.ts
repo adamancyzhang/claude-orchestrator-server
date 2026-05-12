@@ -1,10 +1,10 @@
-import * as path from "node:path";
 import * as fs from "node:fs";
 import { ZkClient } from "../zk/client.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { LeaderEventBus } from "./event-bus.js";
 import { Logger } from "../utils/logger.js";
+import type { ClaudeRunner } from "../executor/runner.js";
 import {
   MessageSchema,
   createMessage,
@@ -32,7 +32,7 @@ export class ChainRouter {
     private eventBus: LeaderEventBus,
     private leaderInstanceId: string,
     private leaderName: string,
-    private cacheDir: string,
+    private runner: ClaudeRunner,
   ) {}
 
   async route(msg: Message): Promise<void> {
@@ -104,9 +104,7 @@ export class ChainRouter {
         chainDef.chain_id,
       );
 
-      const tasksDir = path.join(this.cacheDir, "tasks");
-      await fs.promises.mkdir(tasksDir, { recursive: true });
-      const docPath = path.join(tasksDir, `${task.id}.md`);
+      const docPath = this.runner.taskDocPath(task.id);
       await fs.promises.writeFile(
         docPath,
         `# ${def.title}\n\n` +
