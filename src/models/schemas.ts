@@ -11,7 +11,7 @@ export type InstanceRole = z.infer<typeof InstanceRole>;
 export const TaskLink = z.enum(["plan", "build", "verify", "review", "accept"]);
 export type TaskLink = z.infer<typeof TaskLink>;
 
-export const TaskStatus = z.enum(["pending", "claimed", "in_progress", "completed", "blocked", "failed"]);
+export const TaskStatus = z.enum(["pending", "claimed", "completed", "blocked", "failed"]);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
 export const TaskPriority = z.number().int().min(0).max(2);
@@ -23,7 +23,7 @@ export const TaskPriorityName: Record<number, string> = {
   2: "LOW",
 };
 
-export const MessageType = z.enum(["direct", "broadcast"]);
+export const MessageType = z.enum(["direct", "broadcast", "help"]);
 export type MessageType = z.infer<typeof MessageType>;
 
 // ── Data Models ──
@@ -65,6 +65,8 @@ export const TaskSchema = z.object({
   assigned_to_name: z.string().nullable().default(null),
   completed_by_name: z.string().nullable().default(null),
   duration_seconds: z.number().nullable().default(null),
+  depends_on: z.array(z.string()).default([]),
+  blocked_by: z.array(z.string()).default([]),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -118,6 +120,8 @@ export function createTask(overrides: {
   assigned_to_name?: string | null;
   link?: string | null;
   chain_id?: string | null;
+  depends_on?: string[];
+  blocked_by?: string[];
 }): Task {
   return TaskSchema.parse({
     id: "",
@@ -141,6 +145,8 @@ export function createTask(overrides: {
     assigned_to_name: overrides.assigned_to_name ?? null,
     completed_by_name: null,
     duration_seconds: null,
+    depends_on: overrides.depends_on ?? [],
+    blocked_by: overrides.blocked_by ?? [],
   });
 }
 
@@ -155,6 +161,10 @@ export function createMessage(overrides: {
   task_doc_path?: string | null;
   result_path?: string | null;
   reply_to?: string | null;
+  task_title?: string | null;
+  task_description?: string | null;
+  task_criteria?: string | null;
+  link?: string | null;
 }): Message {
   return MessageSchema.parse({
     id: "",
@@ -167,6 +177,10 @@ export function createMessage(overrides: {
     content: overrides.content,
     created_at: utcNow(),
     read: false,
+    link: overrides.link ?? null,
+    task_title: overrides.task_title ?? null,
+    task_description: overrides.task_description ?? null,
+    task_criteria: overrides.task_criteria ?? null,
     task_doc_path: overrides.task_doc_path ?? null,
     result_path: overrides.result_path ?? null,
     reply_to: overrides.reply_to ?? null,
@@ -189,6 +203,8 @@ export const PushTaskInput = z.object({
   assignee: z.string().optional(),
   link: z.string().optional(),
   chain_id: z.string().optional(),
+  depends_on: z.array(z.string()).default([]),
+  blocked_by: z.array(z.string()).default([]),
 });
 
 export const ClaimTaskInput = z.object({
@@ -211,6 +227,7 @@ export const SendMessageInput = z.object({
   to_instance: z.string().optional(),
   to_name: z.string().optional(),
   broadcast: z.boolean().default(false),
+  help: z.boolean().default(false),
 });
 
 export const PollMessagesInput = z.object({

@@ -20,7 +20,8 @@ export class MessageRouter {
     content: string,
     toInstance?: string,
     broadcast: boolean = false,
-    toName?: string
+    toName?: string,
+    help: boolean = false,
   ): Promise<Message[]> {
     const messages: Message[] = [];
 
@@ -39,10 +40,10 @@ export class MessageRouter {
       }
     }
 
-    let msgType: MessageType = broadcast ? "broadcast" : "direct";
+    let msgType: MessageType = help ? "help" : (broadcast ? "broadcast" : "direct");
 
     let targets: string[];
-    if (broadcast) {
+    if (broadcast || help) {
       const instances = await this.zk.listInstances();
       targets = instances
         .map((i) => i.id as string)

@@ -22,6 +22,8 @@ export class TaskQueue {
     assignedToName?: string | null,
     link?: string | null,
     chainId?: string | null,
+    dependsOn?: string[],
+    blockedBy?: string[],
   ): Promise<Task> {
     const task = createTask({
       title,
@@ -33,6 +35,8 @@ export class TaskQueue {
       assigned_to_name: assignedToName ?? null,
       link,
       chain_id: chainId,
+      depends_on: dependsOn ?? [],
+      blocked_by: blockedBy ?? [],
     });
     const taskId = await this.zk.createPendingTask(
       task as unknown as Record<string, unknown>

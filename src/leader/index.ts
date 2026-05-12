@@ -90,6 +90,7 @@ export async function startLeader(config: {
 
   const recovery = new TaskRecovery(zk, eventBus);
   recovery.start();
+  await recovery.scanOrphans();
 
   // Initialize TUI
   const tui = new LeaderTui();

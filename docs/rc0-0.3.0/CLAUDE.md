@@ -32,15 +32,16 @@ v0.3.0 采用 **Leader-Worker CLI-native** 架构，通过 ZooKeeper 直连实�
 
 ## 待补充项（下个迭代）
 
-1. **Message `help` 类型** — Schema 添加 `help` 枚举值，实现 Worker 求助流程
-2. **TaskGenerator / DecisionEngine 端到端测试** — 验证完整的需求→任务链→Worker→决策闭环
+1. **TaskGenerator / DecisionEngine 端到端测试** — 验证完整的需求→任务链→Worker→决策闭环
+2. **Leader 启动孤儿扫描** — 已集成到 `leader/recovery.ts` 的 `scanOrphans()`，待 E2E 测试覆盖
 
 ## 实现与设计的差异
 
 1. 新增 `leader/orchestrator.ts`（从 monitor 拆分的 task watch 模块）
 2. 配置键 `command` → `commands.claude-cli`（结构性调整）
-3. Schema 中 `TaskStatus` 包含 `in_progress`，`MessageType` 未包含 `help`
-4. Task Schema 缺少 `depends_on` / `blocked_by` 字段
+3. ~~Schema 中 `TaskStatus` 包含 `in_progress`~~ 已移除（2026-05-12）
+4. ~~Task Schema 缺少 `depends_on` / `blocked_by`~~ 已添加（2026-05-12）
+5. ~~`MessageType` 未包含 `help`~~ 已添加（2026-05-12）
 
 ## 详细审查报告
 

@@ -108,10 +108,12 @@ export async function cmdPushTask(
   assignee?: string,
   link?: string,
   chainId?: string,
+  dependsOn?: string[],
+  blockedBy?: string[],
 ): Promise<void> {
   await withZk(zkHosts, async ({ taskQueue }) => {
     const instanceId = cliInstanceId ?? "";
-    const task = await taskQueue.push(title, description, priority, instanceId, assignee, undefined, undefined, link ?? null, chainId ?? null);
+    const task = await taskQueue.push(title, description, priority, instanceId, assignee, undefined, undefined, link ?? null, chainId ?? null, dependsOn ?? [], blockedBy ?? []);
     output(task);
   });
 }
@@ -160,7 +162,8 @@ export async function cmdSendMessage(
   content: string,
   toInstance?: string,
   broadcast: boolean = false,
-  toName?: string
+  toName?: string,
+  help: boolean = false,
 ): Promise<void> {
   await withZk(zkHosts, async ({ registry, messageRouter }) => {
     const instanceId = cliInstanceId || loadInstanceId() || "";
@@ -177,7 +180,8 @@ export async function cmdSendMessage(
       content,
       toInstance,
       broadcast,
-      toName
+      toName,
+      help,
     );
     const targets = messages.map((m) => m.to_instance);
     output({ sent_to: targets, message_count: targets.length });

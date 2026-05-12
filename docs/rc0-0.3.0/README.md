@@ -116,13 +116,15 @@ Leader TUI 使用终端 ANSI 控制字符实现，**仅用于可视化，不接�
 **A. 团队面板 (Team Panel)** — 顶部，实时显示所有在线成员：
 
 ```
-┌─ Team: 3 members ───────────────────────────────────────────────────┐
-│ Identity  Name    Role        Status    Current Task                 │
-│ Leader    Tom     leader      idle      -                            │
-│ Worker    Jerry   builder     busy      task-0000000003              │
-│ Worker    Lucy    verifier    idle      -                            │
+┌─ TEAM ──────────────────────────────────────────────────────────────┐
+│ Name          Preset      Current Role    Status   Current Task      │
+│ Tom           leader      (idle)          idle     -                 │
+│ Jerry         builder     ◀← builder      busy     task-0000000003  │
+│ Lucy          verifier    (idle)          idle     -                 │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+Preset 为注册时的预设角色，Current Role 由认领任务的 link 决定。`◀←` 表示当前角色跨到了非预设环节。
 
 **B. 任务面板 (Task Panel)** — 中部左侧：
 
@@ -136,12 +138,11 @@ Leader TUI 使用终端 ANSI 控制字符实现，**仅用于可视化，不接�
 **C. 事件日志 (Event Log)** — 中部，滚动显示实时事件：
 
 ```
-[10:30:01] ✓ Jerry joined (builder)
-[10:30:15] 📋 Task task-0000000003 created
-[10:30:20] 🔒 Jerry claimed task-0000000003
-[10:35:00] 📨 Jerry → Leader: 任务 task-0000000003 已完成
-[10:35:05] 🔄 Leader processing: $COMMAND -p "..." | tee $CACHE_DIR/xxx.log
-[10:35:30] ✅ Leader done. Log: sessions/xxx/xxx.log
+10:30:01  Jerry joined (builder)
+10:30:15  Task task-0000000003 created
+10:30:20  Task task-0000000003 claimed by instance-01
+10:35:00  Message from Jerry: [Link: build] 已完成...
+10:35:05  Message msg-042 processed
 ```
 
 **D. 页脚** — 底部提示：
@@ -159,14 +160,13 @@ Leader 通过 Claude（`$COMMAND -p`）来处理两件事：
 1. **任务生成**：将自然语言需求拆解为结构化的环节任务（使用 `leader-decompose.md` 模板）
 2. **消息处理**：理解 Worker 的完成报告，决定下一步调度（使用 `leader-decide.md` 模板）
 
-### 3.5 Leader 消息发送
+### 3.5 消息发送
 
-所有消息发送通过 CLI `send-message` 命令统一入口：
+Worker watcher 完成报告直接通过 ZK 写入消息节点，Leader watcher 直接读取并处理。`send-message` CLI 命令用于 ad-hoc 人工消息发送和 Leader → Worker 调度消息：
 
 ```bash
-# Worker 通过 CLI 向 Leader 报告完成
-claude-orchestrator send-message --to-name Tom --content \
-  "任务 task-0000000001 已完成，结果路径: sessions/xxx/task-0000000001_result.log。请指示下一步。"
+# Worker 完成报告自动通过 zk.createMessage() 发送给 Leader
+# （由 WorkerWatcher 在 execWithTee 完成后自动执行，无需 CLI）
 
 # Leader 响应 Worker
 claude-orchestrator send-message --to-name Jerry --content \
@@ -192,7 +192,7 @@ claude-orchestrator register
 2. 创建 /instances/{uuid} EPHEMERAL 节点 (role=planner/builder/verifier/reviewer/accepter)
 3. 保存 instance_id 到 <cwd>/.claude-orchestrator/config.json
 4. 创建 /messages/{uuid} 目录
-5. 确保 CACHE_DIR (~/.claude-orchestrator/sessions/{leader_instance_id}/) 可访问
+5. 解析 CACHE_DIR (~/.claude-orchestrator/sessions/{leader_instance_id}/) 路径
 6. 加载五个 link 模板:
    .claude-orchestrator/agents/worker-plan.md
    .claude-orchestrator/agents/worker-build.md
@@ -283,14 +283,22 @@ claude-orchestrator register
 
 ```json
 {
-  "command": "claude --dangerously-skip-permissions -v",
-  "cache_dir": "~/.claude-orchestrator/sessions"
+  "commands": {
+    "claude-cli": "claude --dangerously-skip-permissions --permission-mode dontAsk",
+    "leader-sync": null
+  },
+  "cache_dir": "~/.claude-orchestrator/sessions",
+  "zookeeper": {
+    "url": "127.0.0.1:2181",
+    "root_path": "/claude-orchestrator",
+    "auth": null
+  }
 }
 ```
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `command` | `claude --dangerously-skip-permissions -v` | Claude CLI 基础命令 |
+| `commands.claude-cli` | `claude --dangerously-skip-permissions --permission-mode dontAsk` | Claude CLI 基础命令 |
 | `cache_dir` | `~/.claude-orchestrator/sessions` | 共享日志/结果目录根路径 |
 
 ### 6.2 执行模式
@@ -306,15 +314,14 @@ $COMMAND -p "$MESSAGE" | tee $CACHE_DIR/${uniqueKey}.log
 ### 6.3 uniqueKey 生成规则
 
 ```
-uniqueKey = {prefix}-{identifier}-{timestamp}
+uniqueKey = task-{msgId}-{base36_timestamp}
 
-prefix:
-  - task-{task_id}  → Leader 下发任务 / Worker 执行任务
-  - msg-{msg_id}    → Worker 处理普通消息
-  - reply-{msg_id}  → Worker 发送回复
+示例:
+  - task-msg-042-lp8k2x → Worker 处理任务消息
+  - msg-msg-043-m3n7ya → Leader 处理消息
 
-identifier: task_id 或 msg_id
-timestamp: ISO 字符串简化版 (如 20260511T103000)
+msgId: ZK 消息节点名 (如 msg-0000000042)
+base36_timestamp: Date.now().toString(36) (毫秒时间戳的 base36 编码)
 ```
 
 ## 7. CACHE_DIR 共享目录
@@ -482,7 +489,8 @@ Worker 进程崩溃 / 网络断开
 /claude-orchestrator
 │
 ├── /leader                              [EPHEMERAL]  Leader 存在声明
-│   data: {"instance_id":"...", "name":"...", "started_at":"..."}
+│   data: {"instance_id":"...", "name":"...", "role":"leader",
+│          "started_at":"...", "host":"...", "pid":..., "version":"0.3.0"}
 │
 ├── /instances/
 │   └── /{instance_id}                   [EPHEMERAL]  成员实例
@@ -501,9 +509,10 @@ Worker 进程崩溃 / 网络断开
 │   │              "depends_on":[], "task_doc_path":"..."}
 │   ├── /claimed/
 │   │   └── /{instance_id}-{task_id}     [EPHEMERAL]
-│   │       data: {"task_id":"...", "instance_id":"...",
-│   │              "claimed_at":"...", "status":"claimed",
-│   │              "task_data":{...}}
+│   │       data: {"id":"...", "title":"...", "description":"...",
+│   │              "priority":..., "status":"claimed",
+│   │              "claimed_by":"...", "claimed_at":"...",
+│   │              "link":"...", "chain_id":"...", ...}
 │   └── /completed/
 │       └── /{task_id}                   [PERSISTENT]
 │           data: {"id":"...", "title":"...",
@@ -518,7 +527,9 @@ Worker 进程崩溃 / 网络断开
 │                  "from_instance":"...", "from_name":"...",
 │                  "from_role":"...", "to_instance":"...",
 │                  "to_name":"...", "content":"...",
-│                  "link":"build", "task_id":"...",
+│                  "link":"build",
+│                  "task_title":"...", "task_description":"...",
+│                  "task_criteria":"...",
 │                  "task_doc_path":"...", "result_path":"...",
 │                  "created_at":"...", "read":false,
 │                  "reply_to":null}
@@ -577,16 +588,19 @@ interface Task {
   blocked_by: string[];
   task_doc_path: string | null;
   created_by: string;
+  created_by_name: string;
   assigned_to: string | null;
+  assigned_to_name: string | null;
   created_at: string;
   claimed_at: string | null;
   claimed_by: string | null;
   completed_at: string | null;
-  completed_by: string | null;
+  completed_by_name: string | null;
   result: string | null;
   retry_count: number;
   blocked_reason: string | null;
   fail_reason: string | null;
+  duration_seconds: number | null;
 }
 ```
 

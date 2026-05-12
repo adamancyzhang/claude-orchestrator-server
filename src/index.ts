@@ -141,20 +141,22 @@ program
   .option("--to <id>", "Recipient instance ID")
   .option("--to-name <name>", "Recipient instance name (e.g. @Tom, @All)")
   .option("--broadcast", "Send to all instances", false)
+  .option("--request-help", "Send as a help request", false)
   .option("--instance-id <id>", "Sender instance ID (default from project config)")
   .action(async function (this: Command) {
     try {
-      const { content, to, toName, broadcast, instanceId } = getSubOpts<{
+      const { content, to, toName, broadcast, requestHelp, instanceId } = getSubOpts<{
         content: string;
         to?: string;
         toName?: string;
         broadcast: boolean;
+        requestHelp: boolean;
         instanceId?: string;
       }>(this);
-      if (!to && !toName && !broadcast) {
-        throw new Error("Must specify --to, --to-name, or --broadcast");
+      if (!to && !toName && !broadcast && !requestHelp) {
+        throw new Error("Must specify --to, --to-name, --broadcast, or --request-help");
       }
-      await cmdSendMessage(getZkHosts(this), instanceId, content, to, broadcast, toName);
+      await cmdSendMessage(getZkHosts(this), instanceId, content, to, broadcast, toName, requestHelp);
     } catch (e) {
       output({ error: String(e) }, true);
     }
@@ -198,19 +200,25 @@ program
   .option("--assignee <id>", "Target instance ID")
   .option("--link <link>", "Responsibility chain link: plan, build, verify, review, accept")
   .option("--chain-id <id>", "Chain identifier for grouping related tasks")
+  .option("--depends-on <ids>", "Comma-separated task IDs this task depends on")
+  .option("--blocked-by <ids>", "Comma-separated task IDs blocking this task")
   .option("--instance-id <id>", "Creator instance ID (default from project config)")
   .action(async function (this: Command) {
     try {
-      const { title, description, priority, assignee, link, chainId, instanceId } = getSubOpts<{
+      const { title, description, priority, assignee, link, chainId, dependsOn, blockedBy, instanceId } = getSubOpts<{
         title: string;
         description: string;
         priority: string;
         assignee?: string;
         link?: string;
         chainId?: string;
+        dependsOn?: string;
+        blockedBy?: string;
         instanceId?: string;
       }>(this);
-      await cmdPushTask(getZkHosts(this), instanceId, title, description, parseInt(priority), assignee, link, chainId);
+      const dependsOnArr = dependsOn ? dependsOn.split(",").map(s => s.trim()).filter(Boolean) : undefined;
+      const blockedByArr = blockedBy ? blockedBy.split(",").map(s => s.trim()).filter(Boolean) : undefined;
+      await cmdPushTask(getZkHosts(this), instanceId, title, description, parseInt(priority), assignee, link, chainId, dependsOnArr, blockedByArr);
     } catch (e) {
       output({ error: String(e) }, true);
     }
