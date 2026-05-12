@@ -1,4 +1,4 @@
-export const ROOT = "/claude-orchestrator";
+export const ROOT = process.env.ZK_ROOT_PATH || "/claude-orchestrator";
 
 export const LEADER = `${ROOT}/leader`;
 export const INSTANCES = `${ROOT}/instances`;
