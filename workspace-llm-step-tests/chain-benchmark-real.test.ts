@@ -15,7 +15,7 @@ import { createMessage, ChainDefSchema } from "../src/models/schemas.js";
 import type { Message } from "../src/models/schemas.js";
 
 const ZK_HOSTS = process.env.ZK_HOSTS || "127.0.0.1:2181";
-const CLAUDE_CMD = process.env.CLAUDE_CMD || "claude";
+const CLAUDE_CMD = process.env.CLAUDE_CMD || "claude --dangerously-skip-permissions --permission-mode dontAsk";
 const CACHE_DIR = process.env.BENCH_CACHE_DIR || "/tmp/benchmark-real-cache";
 const TEMPLATES_DIR = path.resolve("src/templates");
 const TEST_TIMEOUT = Number(process.env.BENCH_TIMEOUT_SEC || 600) * 1000;
