@@ -25,9 +25,7 @@ export async function startLeader(config: {
   const instanceConfig = loadInstanceConfig();
   const globalConfig = loadGlobalConfig();
   const leaderName = config.name || instanceConfig.name || "Leader";
-  const globalCmd = globalConfig.command;
-  const resolvedGlobalCmd = typeof globalCmd === "string" ? globalCmd : globalCmd?.["claude-cli"];
-  const command = config.command || resolvedGlobalCmd || "claude --dangerously-skip-permissions --permission-mode dontAsk";
+  const command = config.command || globalConfig.command?.["claude-cli"] || "claude --dangerously-skip-permissions --permission-mode dontAsk";
   const cacheDir = config.cacheDir || globalConfig.cache_dir || "~/.claude-orchestrator/sessions";
 
   // Create /leader EPHEMERAL node

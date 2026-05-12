@@ -20,7 +20,7 @@ export interface InstanceConfig {
   instance_id?: string;
   name?: string;
   role?: string;
-  command?: CommandConfig | string;
+  command?: CommandConfig;
   cache_dir?: string;
   zookeeper?: ZkConfig;
 }
@@ -55,16 +55,6 @@ function defaultCliCommand(): string {
   return "claude --dangerously-skip-permissions --permission-mode dontAsk";
 }
 
-function resolveCommandConfig(raw: InstanceConfig["command"]): { cliCommand: string; leaderSync: string | null } {
-  if (typeof raw === "string") {
-    return { cliCommand: raw, leaderSync: null };
-  }
-  return {
-    cliCommand: raw?.["claude-cli"] || defaultCliCommand(),
-    leaderSync: raw?.["leader-sync"] ?? null,
-  };
-}
-
 export function loadConfig(cliOpts: {
   zookeeper?: string;
 }): ResolvedConfig {
@@ -84,9 +74,10 @@ export function loadConfig(cliOpts: {
 
   const cacheDir = global.cache_dir || defaultCacheDir();
 
-  // Command: project overrides global; supports both old flat string and new nested object
+  // Command: project overrides global
   const mergedCommand = project.command || global.command;
-  const { cliCommand, leaderSync } = resolveCommandConfig(mergedCommand);
+  const cliCommand = mergedCommand?.["claude-cli"] || defaultCliCommand();
+  const leaderSync = mergedCommand?.["leader-sync"] ?? null;
 
   const instanceId = project.instance_id;
   const name = project.name;
