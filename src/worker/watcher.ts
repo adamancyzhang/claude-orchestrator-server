@@ -163,6 +163,7 @@ export class WorkerWatcher {
         read: false,
         result_path: resultPath,
         link: reportLink,
+        chain_id: msg.chain_id as string ?? null,
       });
       this.logger.info("Completion report sent.");
     } catch (err) {

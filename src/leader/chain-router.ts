@@ -22,6 +22,14 @@ const NEXT_LINKS: Record<string, string | null> = {
   accept: null,
 };
 
+const LINK_TO_ROLE: Record<string, string> = {
+  plan: "planner",
+  build: "builder",
+  verify: "verifier",
+  review: "reviewer",
+  accept: "accepter",
+};
+
 export class ChainRouter {
   private logger = new Logger("ChainRouter");
 
@@ -90,6 +98,8 @@ export class ChainRouter {
       { link: "accept", def: chainDef.tasks.accept },
     ];
 
+    const createdTasks = new Map<string, { taskId: string; docPath: string; def: typeof taskLinks[number]["def"] }>();
+
     for (const { link, def } of taskLinks) {
       if (!def) continue;
       const task = await this.taskQueue.push(
@@ -115,6 +125,8 @@ export class ChainRouter {
         `## Completion Criteria\n\n${def.criteria}\n`,
       );
 
+      createdTasks.set(link, { taskId: task.id, docPath, def });
+
       this.eventBus.emit({
         type: "task_created",
         task: { ...task },
@@ -126,6 +138,19 @@ export class ChainRouter {
     if (Logger.isDebug()) {
       const linkCount = taskLinks.filter(t => t.def).length;
       this.eventBus.emit({ type: "debug_info", message: `Chain ${chainDef.chain_id}: ${linkCount} tasks created` });
+    }
+
+    // Send message to the first worker in the chain to start processing
+    const firstLink = taskLinks.find(t => t.def)?.link;
+    if (firstLink && createdTasks.has(firstLink)) {
+      const role = LINK_TO_ROLE[firstLink];
+      const worker = await this.findWorkerByRole(role);
+      if (worker) {
+        const { docPath, def } = createdTasks.get(firstLink)!;
+        await this.sendTaskToWorker(worker, firstLink, def!, docPath, chainDef.chain_id);
+      } else {
+        this.logger.error(`No ${role} worker available. Chain ${chainDef.chain_id} waiting for worker.`);
+      }
     }
   }
 
@@ -156,6 +181,8 @@ export class ChainRouter {
         const nextLink = decision.nextLink ?? NEXT_LINKS[msg.link!];
         if (!nextLink) break;
 
+        const chainId = (msg as unknown as Record<string, unknown>).chain_id as string ?? null;
+
         const task = await this.taskQueue.push(
           `[${msg.reply_to ?? "chain"}] ${nextLink}`,
           "",
@@ -165,7 +192,7 @@ export class ChainRouter {
           this.leaderName,
           undefined,
           nextLink,
-          (msg as unknown as Record<string, unknown>).chain_id as string ?? null,
+          chainId,
         );
 
         this.eventBus.emit({
@@ -173,6 +200,23 @@ export class ChainRouter {
           task: { ...task },
           taskId: task.id,
         });
+
+        // Find worker and send message for the next link
+        const role = LINK_TO_ROLE[nextLink];
+        if (role) {
+          const worker = await this.findWorkerByRole(role);
+          if (worker) {
+            // Try to find pending task with full details from handleTaskDefinitions
+            const pending = await this.findPendingTaskByChainLink(chainId, nextLink);
+            const docPath = this.runner.taskDocPath(task.id);
+            const def = pending
+              ? { title: pending.title as string, description: (pending.description as string) || "", criteria: "", priority: (pending.priority as number) ?? 1 }
+              : { title: task.title, description: task.description, criteria: "", priority: 1 };
+            await this.sendTaskToWorker(worker, nextLink, def, docPath, chainId ?? "");
+          } else {
+            this.logger.info(`No ${role} worker available for ${nextLink}, task queued`);
+          }
+        }
         break;
       }
       case "feedback": {
@@ -196,6 +240,17 @@ export class ChainRouter {
     }
   }
 
+  private async findPendingTaskByChainLink(chainId: string | null, link: string): Promise<Record<string, unknown> | null> {
+    if (!chainId) return null;
+    const pending = await this.taskQueue.listTasks("pending");
+    for (const t of pending) {
+      if ((t as Record<string, unknown>).chain_id === chainId && (t as Record<string, unknown>).link === link) {
+        return t as unknown as Record<string, unknown>;
+      }
+    }
+    return null;
+  }
+
   private async findWorkerByRole(role: string): Promise<{ id: string; name: string } | null> {
     const instances = await this.zk.listInstances();
     for (const inst of instances) {
@@ -204,5 +259,29 @@ export class ChainRouter {
       }
     }
     return null;
+  }
+
+  private async sendTaskToWorker(
+    worker: { id: string; name: string },
+    link: string,
+    def: { title: string; description: string; criteria: string; priority: number },
+    docPath: string,
+    chainId: string,
+  ): Promise<void> {
+    await this.zk.createMessage(worker.id, {
+      type: "direct",
+      from_instance: this.leaderInstanceId,
+      from_name: this.leaderName,
+      from_role: "leader",
+      to_instance: worker.id,
+      content: def.description,
+      link,
+      task_title: def.title,
+      task_description: def.description,
+      task_criteria: def.criteria,
+      task_doc_path: docPath,
+      chain_id: chainId,
+    } as unknown as Record<string, unknown>);
+    this.logger.info(`Sent ${link} task to ${worker.name} (${worker.id.slice(0, 8)})`);
   }
 }
