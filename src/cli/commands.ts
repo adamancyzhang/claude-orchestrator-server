@@ -1,17 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import { ZkClient } from "../zk/client.js";
-import * as paths from "../zk/paths.js";
 import { InstanceRegistry } from "../modules/registry.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
-import { ContextStore } from "../modules/context-store.js";
-import { resolveInstanceId, saveInstanceId, saveInstanceConfig, loadInstanceConfig, loadInstanceId, loadGlobalConfig, expandHomeDir, GLOBAL_CONFIG_DIR, GLOBAL_CONFIG_FILE } from "../config.js";
+import { loadConfig, loadInstanceConfig, saveInstanceConfig, saveInstanceId, loadInstanceId, loadGlobalConfig, resolveInstanceId, expandHomeDir } from "../config.js";
 import { output } from "../utils/output.js";
-import { TaskPriorityName } from "../models/schemas.js";
 import { WorkerWatcher } from "../worker/watcher.js";
+
+const VALID_ROLES = ["architect", "developer", "tester", "general", "leader"] as const;
 
 async function withZk<T>(
   hosts: string,
@@ -20,7 +18,6 @@ async function withZk<T>(
     registry: InstanceRegistry;
     taskQueue: TaskQueue;
     messageRouter: MessageRouter;
-    contextStore: ContextStore;
   }) => Promise<T>
 ): Promise<T> {
   const zk = new ZkClient(hosts);
@@ -28,115 +25,78 @@ async function withZk<T>(
   const registry = new InstanceRegistry(zk);
   const taskQueue = new TaskQueue(zk);
   const messageRouter = new MessageRouter(zk);
-  const contextStore = new ContextStore(zk);
   try {
-    return await fn({ zk, registry, taskQueue, messageRouter, contextStore });
+    return await fn({ zk, registry, taskQueue, messageRouter });
   } finally {
     await zk.disconnect();
   }
 }
 
-export async function cmdStatus(zkHosts: string): Promise<void> {
-  await withZk(zkHosts, async ({ zk, registry }) => {
-    const connected = zk.connected;
-    const instances = await registry.listAll();
+export async function cmdRegister(zkHosts: string): Promise<void> {
+  // Read from project config only — no CLI args, no global fallback
+  const projectConfig = loadInstanceConfig();
+  const name = projectConfig.name;
+  const role = projectConfig.role;
+
+  if (!name) {
+    output({ error: "name is required in .claude-orchestrator/config.json" }, true);
+    return;
+  }
+  if (!role || !(VALID_ROLES as readonly string[]).includes(role)) {
     output({
-      status: connected ? "healthy" : "degraded",
-      zookeeper: connected ? "connected" : "disconnected",
-      instances_online: instances.length,
-    });
-  });
-}
-
-export async function cmdRegister(
-  zkHosts: string,
-  instanceId: string | undefined,
-  name?: string,
-  role?: string,
-  workDir?: string
-): Promise<void> {
-  const config = loadInstanceConfig();
-  const resolvedName = name || config.name;
-  if (!resolvedName) {
-    output({ error: "No instance name provided. Use --name or run 'claude-orchestrator setup --name <name>' first." }, true);
-    return;
-  }
-  const resolvedRole = role || config.role || "general";
-  const resolvedId = instanceId || loadInstanceId() || undefined;
-
-  // ── Mode 1: with work_dir → persistent local watcher ──
-  if (workDir) {
-    const zk = new ZkClient(zkHosts);
-    await zk.connect();
-    const registry = new InstanceRegistry(zk);
-
-    const instance = await registry.register(resolvedName, resolvedRole, resolvedId);
-    saveInstanceId(instance.id);
-    saveInstanceConfig({ name: resolvedName, role: resolvedRole });
-    output(instance);
-
-    // Resolve leader instance ID for CACHE_DIR path
-    const leaderData = await zk.getLeader();
-    const leaderInstanceId = (leaderData?.instance_id as string) ?? instance.id;
-
-    // Get config defaults
-    const globalConfig = loadGlobalConfig();
-    const command = globalConfig.command || "claude --dangerously-skip-permissions -v";
-    const cacheDir = globalConfig.cache_dir || "~/.claude-orchestrator/sessions";
-
-    const watcher = new WorkerWatcher(zk, instance.id, workDir, command, cacheDir, leaderInstanceId);
-
-    const onSigint = () => {
-      watcher.stop();
-    };
-    process.on("SIGINT", onSigint);
-
-    await watcher.start();
-
-    // Block until stopped
-    await new Promise<void>((resolve) => {
-      const check = setInterval(() => {
-        if (watcher.stopped) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 200);
-    });
-
-    await registry.unregister(instance.id);
-    await zk.disconnect();
-    process.removeListener("SIGINT", onSigint);
-    console.log("Unregistered. Goodbye.");
+      error: `invalid role '${role || "(missing)"}', must be one of: ${VALID_ROLES.join(", ")}`,
+    }, true);
     return;
   }
 
-  // ── Mode 2: no work_dir → one-shot register ──
+  const resolvedConfig = loadConfig({});
+  const instanceId = projectConfig.instance_id || undefined;
 
-  await withZk(zkHosts, async ({ registry }) => {
-    const instance = await registry.register(resolvedName, resolvedRole, resolvedId);
-    saveInstanceId(instance.id);
-    saveInstanceConfig({ name: resolvedName, role: resolvedRole });
-    output(instance);
-  });
-}
+  const zk = new ZkClient(zkHosts);
+  await zk.connect();
+  const registry = new InstanceRegistry(zk);
 
-export async function cmdHeartbeat(
-  zkHosts: string,
-  cliInstanceId: string | undefined,
-  currentTask?: string
-): Promise<void> {
-  await withZk(zkHosts, async ({ registry }) => {
-    const instanceId = resolveInstanceId(cliInstanceId);
-    await registry.heartbeat(instanceId, currentTask);
-    output({ status: "ok", instance_id: instanceId });
-  });
-}
+  const instance = await registry.register(name, role, instanceId);
+  saveInstanceId(instance.id);
+  if (!projectConfig.instance_id) {
+    saveInstanceConfig({ name, role, instance_id: instance.id });
+  }
+  output(instance);
 
-export async function cmdListInstances(zkHosts: string): Promise<void> {
-  await withZk(zkHosts, async ({ registry }) => {
-    const instances = await registry.listAll();
-    output(instances);
+  // Resolve leader instance ID for CACHE_DIR path
+  const leaderData = await zk.getLeader();
+  const leaderInstanceId = (leaderData?.instance_id as string) ?? instance.id;
+
+  const watcher = new WorkerWatcher(
+    zk,
+    instance.id,
+    process.cwd(),
+    resolvedConfig.command,
+    resolvedConfig.cacheDir,
+    leaderInstanceId,
+  );
+
+  const onSigint = () => {
+    watcher.stop();
+  };
+  process.on("SIGINT", onSigint);
+
+  await watcher.start();
+
+  // Block until stopped
+  await new Promise<void>((resolve) => {
+    const check = setInterval(() => {
+      if (watcher.stopped) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 200);
   });
+
+  await registry.unregister(instance.id);
+  await zk.disconnect();
+  process.removeListener("SIGINT", onSigint);
+  console.log("Unregistered. Goodbye.");
 }
 
 export async function cmdPushTask(
@@ -182,7 +142,7 @@ export async function cmdCompleteTask(
   });
 }
 
-export async function cmdListTasks(
+export async function cmdPollTask(
   zkHosts: string,
   statusFilter?: string
 ): Promise<void> {
@@ -222,7 +182,7 @@ export async function cmdSendMessage(
   });
 }
 
-export async function cmdPollMessages(
+export async function cmdPollMessage(
   zkHosts: string,
   cliInstanceId: string | undefined
 ): Promise<void> {
@@ -233,19 +193,7 @@ export async function cmdPollMessages(
   });
 }
 
-export async function cmdWaitForMessage(
-  zkHosts: string,
-  cliInstanceId: string | undefined,
-  timeout: number
-): Promise<void> {
-  await withZk(zkHosts, async ({ messageRouter }) => {
-    const instanceId = resolveInstanceId(cliInstanceId);
-    const messages = await messageRouter.waitForMessage(instanceId, timeout);
-    output(messages.length > 0 ? messages : { status: "timeout", message: "No messages received." });
-  });
-}
-
-export async function cmdDismissMessage(
+export async function cmdDeleteMessage(
   zkHosts: string,
   cliInstanceId: string | undefined,
   messageId: string
@@ -253,105 +201,7 @@ export async function cmdDismissMessage(
   await withZk(zkHosts, async ({ messageRouter }) => {
     const instanceId = resolveInstanceId(cliInstanceId);
     await messageRouter.dismissMessage(instanceId, messageId);
-    output({ status: "dismissed", message_id: messageId });
-  });
-}
-
-export async function cmdRequestHelp(
-  zkHosts: string,
-  cliInstanceId: string | undefined,
-  question: string,
-  ctx?: string
-): Promise<void> {
-  await withZk(zkHosts, async ({ registry, messageRouter }) => {
-    const instanceId = cliInstanceId || loadInstanceId() || "";
-    let fromName: string;
-    if (instanceId) {
-      const inst = await registry.get(instanceId);
-      fromName = inst?.name ?? instanceId.slice(0, 8);
-    } else {
-      fromName = "CLI";
-    }
-    const messages = await messageRouter.requestHelp(instanceId, fromName, question, ctx);
-    const targets = messages.map((m) => m.to_instance);
-    output({ sent_to: targets, message_count: targets.length });
-  });
-}
-
-export async function cmdSetContext(
-  zkHosts: string,
-  cliInstanceId: string | undefined,
-  key: string,
-  value: string
-): Promise<void> {
-  await withZk(zkHosts, async ({ contextStore }) => {
-    const instanceId = cliInstanceId ?? "";
-    const entry = await contextStore.set(key, value, instanceId);
-    output(entry);
-  });
-}
-
-export async function cmdGetContext(
-  zkHosts: string,
-  key: string
-): Promise<void> {
-  await withZk(zkHosts, async ({ contextStore }) => {
-    const value = await contextStore.get(key);
-    if (value === null) {
-      output({ key, value: null, status: "not_found" });
-    } else {
-      output({ key, value });
-    }
-  });
-}
-
-export async function cmdDeleteContext(
-  zkHosts: string,
-  key: string
-): Promise<void> {
-  await withZk(zkHosts, async ({ contextStore }) => {
-    await contextStore.delete(key);
-    output({ key, status: "deleted" });
-  });
-}
-
-export async function cmdListContextKeys(zkHosts: string): Promise<void> {
-  await withZk(zkHosts, async ({ contextStore }) => {
-    const keys = await contextStore.listKeys();
-    output({ keys, count: keys.length });
-  });
-}
-
-export async function cmdWatchContext(
-  zkHosts: string,
-  key: string
-): Promise<void> {
-  await withZk(zkHosts, async ({ zk }) => {
-    const value = await zk.watchContextKey(key, (newData) => {
-      output({ key, value: newData?.value ?? null, event: "changed" });
-      process.exit(0);
-    });
-    if (value === null) {
-      output({ key, value: null, message: `Watching key '${key}' for changes... (Ctrl+C to stop)` });
-    } else {
-      output({ key, value: value.value, message: `Watching key '${key}' for changes... (Ctrl+C to stop)` });
-    }
-    // Keep process alive waiting for watch callback
-    await new Promise(() => {});
-  });
-}
-
-export async function cmdWatchTasks(zkHosts: string): Promise<void> {
-  await withZk(zkHosts, async ({ zk }) => {
-    const children = await zk.watchPendingTasks((newChildren) => {
-      output({ event: "tasks_changed", pending_count: newChildren.length, tasks: newChildren });
-      process.exit(0);
-    });
-    output({
-      pending_count: children.length,
-      message: "Watching for new tasks... (Ctrl+C to stop)",
-    });
-    await new Promise(() => {});
+    output({ status: "deleted", message_id: messageId });
   });
 }
 
@@ -386,12 +236,18 @@ export async function cmdSetup(options: {
   const defaultCommand = "claude --dangerously-skip-permissions -v";
   const defaultCacheDir = "~/.claude-orchestrator/sessions";
 
-  // ── Write global config with command and cache_dir ──
+  // ── Write global config ──
   const existingGlobal = loadGlobalConfig();
+  const globalZk = existingGlobal.zookeeper || { url: "127.0.0.1:2181", root_path: "/claude-orchestrator", auth: null };
   saveInstanceConfig(
     {
       command: command || existingGlobal.command || defaultCommand,
       cache_dir: cacheDir || existingGlobal.cache_dir || defaultCacheDir,
+      zookeeper: {
+        url: globalZk.url || "127.0.0.1:2181",
+        root_path: globalZk.root_path || "/claude-orchestrator",
+        auth: globalZk.auth ?? null,
+      },
     },
     true
   );

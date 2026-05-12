@@ -5,12 +5,10 @@ import * as os from "node:os";
 export const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
 export const GLOBAL_CONFIG_FILE = path.join(GLOBAL_CONFIG_DIR, "config.json");
 
-function projectConfigDir(): string {
-  return path.join(process.cwd(), ".claude-orchestrator");
-}
-
-function projectConfigFile(): string {
-  return path.join(projectConfigDir(), "config.json");
+export interface ZkConfig {
+  url: string;
+  root_path: string;
+  auth: string | null;
 }
 
 export interface InstanceConfig {
@@ -19,39 +17,62 @@ export interface InstanceConfig {
   role?: string;
   command?: string;
   cache_dir?: string;
-  port?: string;
-  host?: string;
+  zookeeper?: ZkConfig;
 }
 
-export interface Config {
-  zkHosts: string;
-  port: number;
-  host: string;
+export interface ResolvedConfig {
+  zk: ZkConfig;
+  cacheDir: string;
+  command: string;
   instanceId?: string;
+  name?: string;
+  role?: string;
+}
+
+function projectConfigDir(): string {
+  return path.join(process.cwd(), ".claude-orchestrator");
+}
+
+function projectConfigFile(): string {
+  return path.join(projectConfigDir(), "config.json");
+}
+
+function defaultZkConfig(): ZkConfig {
+  return { url: "127.0.0.1:2181", root_path: "/claude-orchestrator", auth: null };
+}
+
+function defaultCacheDir(): string {
+  return "~/.claude-orchestrator/sessions";
+}
+
+function defaultCommand(): string {
+  return "claude --dangerously-skip-permissions -v";
 }
 
 export function loadConfig(cliOpts: {
   zookeeper?: string;
-  port?: string;
-  host?: string;
-  instanceId?: string;
-}): Config {
-  const zkHosts =
-    cliOpts.zookeeper ||
-    process.env.ZK_HOSTS ||
-    "127.0.0.1:2181";
+}): ResolvedConfig {
+  const global = loadGlobalConfig();
+  const project = loadProjectConfig();
 
-  const port = parseInt(
-    cliOpts.port || process.env.ORCHESTRATOR_PORT || "3100",
-    10
-  );
+  // ZK config from global, with CLI/env override for url
+  const zk: ZkConfig = {
+    ...defaultZkConfig(),
+    ...global.zookeeper,
+  };
+  if (cliOpts.zookeeper) {
+    zk.url = cliOpts.zookeeper;
+  } else if (process.env.ZK_HOSTS) {
+    zk.url = process.env.ZK_HOSTS;
+  }
 
-  const host =
-    cliOpts.host || process.env.ORCHESTRATOR_HOST || "127.0.0.1";
+  const cacheDir = global.cache_dir || defaultCacheDir();
+  const command = project.command || global.command || defaultCommand();
+  const instanceId = project.instance_id;
+  const name = project.name;
+  const role = project.role;
 
-  const instanceId = cliOpts.instanceId || loadInstanceId() || undefined;
-
-  return { zkHosts, port, host, instanceId };
+  return { zk, cacheDir, command, instanceId, name, role };
 }
 
 function readConfigFile(filePath: string): InstanceConfig {
@@ -78,29 +99,26 @@ export function saveInstanceConfig(config: InstanceConfig, global = false): void
 }
 
 export function loadInstanceConfig(): InstanceConfig {
-  const project = readConfigFile(projectConfigFile());
-  const global = readConfigFile(GLOBAL_CONFIG_FILE);
+  const project = loadProjectConfig();
+  const global = loadGlobalConfig();
   return { ...global, ...project };
-}
-
-export function saveInstanceId(instanceId: string, global = false): void {
-  saveInstanceConfig({ instance_id: instanceId }, global);
-}
-
-export function loadInstanceId(): string | null {
-  const config = loadInstanceConfig();
-  return config.instance_id || null;
 }
 
 export function loadGlobalConfig(): InstanceConfig {
   return readConfigFile(GLOBAL_CONFIG_FILE);
 }
 
-export function expandHomeDir(p: string): string {
-  if (p.startsWith("~")) {
-    return path.join(os.homedir(), p.slice(1));
-  }
-  return p;
+function loadProjectConfig(): InstanceConfig {
+  return readConfigFile(projectConfigFile());
+}
+
+export function saveInstanceId(instanceId: string): void {
+  saveInstanceConfig({ instance_id: instanceId }, false);
+}
+
+export function loadInstanceId(): string | null {
+  const config = loadInstanceConfig();
+  return config.instance_id || null;
 }
 
 export function resolveInstanceId(cliInstanceId?: string): string {
@@ -112,4 +130,11 @@ export function resolveInstanceId(cliInstanceId?: string): string {
     );
   }
   return resolved;
+}
+
+export function expandHomeDir(p: string): string {
+  if (p.startsWith("~")) {
+    return path.join(os.homedir(), p.slice(1));
+  }
+  return p;
 }

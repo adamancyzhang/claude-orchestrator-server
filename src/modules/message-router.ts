@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { ZkClient } from "../zk/client.js";
 import {
   MessageSchema,
@@ -126,55 +125,6 @@ export class MessageRouter {
     await this.zk.deleteMessage(instanceId, messageId);
   }
 
-  async sendWithTemplate(
-    fromInstance: string,
-    fromName: string,
-    fromRole: string,
-    content: string,
-    templateName: "leader.md" | "worker.md",
-    variables: Record<string, string>,
-    templateDir: string,
-    toInstance?: string,
-    broadcast: boolean = false,
-    toName?: string,
-  ): Promise<Message[]> {
-    const templatePath = path.join(templateDir, "agents", templateName);
-    const rendered = await renderTemplate(templatePath, {
-      ...variables,
-      content,
-    });
-    return this.send(fromInstance, fromName, rendered, toInstance, broadcast, toName);
-  }
-
-  async requestHelp(
-    fromInstance: string,
-    fromName: string,
-    question: string,
-    ctx?: string
-  ): Promise<Message[]> {
-    let content = question;
-    if (ctx) {
-      content = `${question}\n\nContext:\n${ctx}`;
-    }
-    // Set message type to "help" by modifying after creation
-    const messages = await this.send(
-      fromInstance,
-      fromName,
-      content,
-      undefined,
-      true
-    );
-    // Update type to "help" for each message
-    for (const msg of messages) {
-      msg.type = "help";
-      await this.zk.updateMessage(
-        msg.to_instance!,
-        msg.id,
-        msg as unknown as Record<string, unknown>
-      );
-    }
-    return messages;
-  }
 }
 
 export async function renderTemplate(

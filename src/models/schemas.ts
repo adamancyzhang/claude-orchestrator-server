@@ -20,7 +20,7 @@ export const TaskPriorityName: Record<number, string> = {
   2: "LOW",
 };
 
-export const MessageType = z.enum(["direct", "broadcast", "help"]);
+export const MessageType = z.enum(["direct", "broadcast"]);
 export type MessageType = z.infer<typeof MessageType>;
 
 // ── Data Models ──
@@ -79,14 +79,6 @@ export const MessageSchema = z.object({
   reply_to: z.string().nullable().default(null),
 });
 export type Message = z.infer<typeof MessageSchema>;
-
-export const ContextEntrySchema = z.object({
-  key: z.string(),
-  value: z.string(),
-  updated_by: z.string().default(""),
-  updated_at: z.string(),
-});
-export type ContextEntry = z.infer<typeof ContextEntrySchema>;
 
 // ── Factory helpers (mirrors Python Field(default_factory=...)) ──
 
@@ -168,31 +160,12 @@ export function createMessage(overrides: {
   });
 }
 
-export function createContextEntry(overrides: {
-  key: string;
-  value: string;
-  updated_by?: string;
-}): ContextEntry {
-  return ContextEntrySchema.parse({
-    key: overrides.key,
-    value: overrides.value,
-    updated_by: overrides.updated_by ?? "",
-    updated_at: utcNow(),
-  });
-}
-
 // ── Tool input schemas ──
 
 export const RegisterInstanceInput = z.object({
   name: z.string().min(1),
-  role: InstanceRole.default("general"),
+  role: InstanceRole,
   instance_id: z.string().optional(),
-  work_dir: z.string().optional(),
-});
-
-export const HeartbeatInput = z.object({
-  instance_id: z.string(),
-  current_task: z.string().optional(),
 });
 
 export const PushTaskInput = z.object({
@@ -229,11 +202,6 @@ export const PollMessagesInput = z.object({
   instance_id: z.string(),
 });
 
-export const WaitForMessageInput = z.object({
-  instance_id: z.string(),
-  timeout_seconds: z.number().int().min(1).default(30),
-});
-
 export const MarkReadInput = z.object({
   instance_id: z.string(),
   message_id: z.string(),
@@ -242,24 +210,4 @@ export const MarkReadInput = z.object({
 export const DismissMessageInput = z.object({
   instance_id: z.string(),
   message_id: z.string(),
-});
-
-export const RequestHelpInput = z.object({
-  instance_id: z.string(),
-  question: z.string().min(1),
-  context: z.string().optional(),
-});
-
-export const SetContextInput = z.object({
-  key: z.string().min(1),
-  value: z.string(),
-  instance_id: z.string().default(""),
-});
-
-export const GetContextInput = z.object({
-  key: z.string(),
-});
-
-export const DeleteContextInput = z.object({
-  key: z.string(),
 });

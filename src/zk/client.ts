@@ -1,6 +1,6 @@
 import zookeeper from "node-zookeeper-client";
 import * as paths from "./paths.js";
-import type { Instance, Task, Message, ContextEntry } from "../models/schemas.js";
+import type { Instance, Task, Message } from "../models/schemas.js";
 
 const { CreateMode, Exception, State } = zookeeper;
 
@@ -463,31 +463,6 @@ export class ZkClient {
     await this.remove(paths.messagePath(instanceId, msgId));
   }
 
-  // ── Context operations ──
-
-  async setContext(key: string, data: Record<string, unknown>): Promise<void> {
-    const p = paths.contextPath(key);
-    const exists = await this.exists(p);
-    if (exists) {
-      await this.setData(p, encodeJson(data));
-    } else {
-      await this.create(p, encodeJson(data), CreateMode.PERSISTENT);
-    }
-  }
-
-  async getContext(key: string): Promise<Record<string, unknown> | null> {
-    const raw = await this.getData(paths.contextPath(key));
-    return raw ? decodeJson(raw) : null;
-  }
-
-  async deleteContext(key: string): Promise<void> {
-    await this.remove(paths.contextPath(key));
-  }
-
-  async listContextKeys(): Promise<string[]> {
-    return this.getChildren(paths.CONTEXT);
-  }
-
   // ── Watch operations ──
 
   watchInstances(onChange: (children: string[]) => void): Promise<string[]> {
@@ -503,16 +478,6 @@ export class ZkClient {
     onChange: (children: string[]) => void
   ): Promise<string[]> {
     return this.getChildrenWithWatch(paths.messageDirPath(instanceId), onChange);
-  }
-
-  async watchContextKey(
-    key: string,
-    onChange: (data: Record<string, unknown> | null) => void
-  ): Promise<Record<string, unknown> | null> {
-    const raw = await this.getDataWithWatch(paths.contextPath(key), (buf) => {
-      onChange(buf ? decodeJson(buf) : null);
-    });
-    return raw ? decodeJson(raw) : null;
   }
 
   watchPendingTasks(
