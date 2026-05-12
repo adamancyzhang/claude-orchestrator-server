@@ -11,7 +11,9 @@ export type LeaderEventType =
   | "task_failed"
   | "task_recovered"
   | "message_received"
-  | "message_processed";
+  | "message_processed"
+  | "chain_activated"
+  | "chain_closed";
 
 export interface LeaderEvent {
   type: LeaderEventType;
@@ -21,7 +23,7 @@ export interface LeaderEvent {
 const ALL_EVENT_TYPES: LeaderEventType[] = [
   "worker_joined", "worker_left", "worker_status_changed",
   "task_created", "task_claimed", "task_completed", "task_blocked", "task_failed", "task_recovered",
-  "message_received", "message_processed",
+  "message_received", "message_processed", "chain_activated", "chain_closed",
 ];
 
 export class LeaderEventBus {

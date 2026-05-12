@@ -1,48 +1,23 @@
-// Real claude -p invocation: Leader Decide
+// Real claude -p invocation: Worker Self-Evaluate
 // Run via: bash workspace-llm-tests/run-all.sh
 
-import { renderTemplate, runClaude, validateLeaderDecision, projectPath, runScenario, assert } from "../lib/llm-helpers.js";
+import { renderTemplate, runClaude, validateEvalDecision, projectPath, runScenario, assert } from "../lib/llm-helpers.js";
 
-await runScenario("07 — Leader: Decide (claude -p)", async () => {
-  const templatePath = projectPath(".claude-orchestrator", "agents", "leader-decide.md");
-
-  const teamStatus = `
-Active Workers:
-- Alice (planner) — idle
-- Bob (builder) — busy (task: Build countLines)
-- Eve (verifier) — idle
-- Frank (reviewer) — idle
-- Grace (accepter) — idle
-`.trim();
-
-  const taskQueues = `
-PENDING: 0 tasks
-IN PROGRESS: 1 task (Build countLines, claimed by Bob)
-COMPLETED: 1 task (Plan countLines, completed by Alice)
-`.trim();
-
-  const chainStatus = `
-Chain: countLines-v1
-Plan: COMPLETED
-Build: IN PROGRESS (Bob)
-Verify: WAITING
-Review: WAITING
-Accept: WAITING
-`.trim();
-
-  const workerReport = `
-Link: build
-Status: completed
-Summary: Implemented countLines CLI with all plan requirements. Used commander for CLI, sync fs APIs for traversal and counting. Binary detection added.
-Result Path: /tmp/countlines-build-result.md
-Task completed. Leader, please review and decide next step.
-`.trim();
+await runScenario("07 — Worker: Self-Evaluate (claude -p)", async () => {
+  const templatePath = projectPath(".claude-orchestrator", "agents", "worker-evaluate.md");
 
   const vars = {
-    team_status: teamStatus,
-    task_queues: taskQueues,
-    chain_status: chainStatus,
-    content: workerReport,
+    name: "Bob",
+    preset_role: "builder",
+    link: "build",
+    task_title: "Build countLines CLI",
+    task_description: "Implement a CLI tool that counts lines of code in a directory, excluding binaries",
+    task_criteria: "CLI accepts --dir and --exclude flags; handles empty dirs; skips binary files; outputs file:lines format",
+    task_result_path: "/tmp/countlines-build-result.md",
+    result_path: "/tmp/countlines-eval-result.md",
+    work_dir: process.cwd(),
+    time: new Date().toISOString(),
+    content: "Build task completed",
   };
 
   const prompt = await renderTemplate(templatePath, vars);
@@ -59,13 +34,13 @@ Task completed. Leader, please review and decide next step.
   console.log(`  --- End preview ---`);
 
   assert(code === 0, `Claude should exit 0, got ${code}`);
-  const result = validateLeaderDecision(stdout);
+  const result = validateEvalDecision(stdout);
   for (const e of result.errors) console.error(`  VALIDATION ERROR: ${e}`);
   for (const w of result.warnings) console.log(`  VALIDATION WARNING: ${w}`);
   if (result.parsed) {
     console.log(`  Parsed decision: ${result.parsed.decision}`);
-    console.log(`  Next action: ${JSON.stringify(result.parsed.next_action)}`);
+    console.log(`  Reason: ${result.parsed.reason}`);
   }
-  assert(result.valid, `Leader decide validation failed: ${result.errors.join("; ")}`);
+  assert(result.valid, `Eval decision validation failed: ${result.errors.join("; ")}`);
   assert(result.parsed !== null, "Should extract valid JSON from output");
 });

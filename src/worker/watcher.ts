@@ -7,7 +7,8 @@ import { execWithTee } from "../utils/exec.js";
 import { expandHomeDir } from "../config.js";
 import { HookEngine } from "../hooks/engine.js";
 
-const LINK_TEMPLATES = ["plan", "build", "verify", "review", "accept"];
+const LINK_TEMPLATES = ["plan", "build", "verify", "review", "accept", "decompose"];
+const CHAIN_LINKS = ["plan", "build", "verify", "review", "accept"];
 
 export class WorkerWatcher {
   private inFlight = new Set<string>();
@@ -136,12 +137,28 @@ export class WorkerWatcher {
     // Send completion report to leader (only for linked task messages)
     if (link !== "_generic") {
       try {
-        const report = [
-          `Link: ${link}`,
-          `Status: completed`,
-          `Result Path: ${resultPath}`,
-          `Task completed. Leader, please review and decide next step.`,
-        ].join("\n");
+        let reportContent: string;
+        let reportLink = link;
+
+        if (link === "decompose") {
+          // Read result file for ChainDef JSON
+          try {
+            reportContent = await fs.promises.readFile(resultPath, "utf-8");
+            reportLink = "task_defs";
+          } catch {
+            reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}`;
+          }
+        } else if (CHAIN_LINKS.includes(link)) {
+          // Self-evaluate using worker-evaluate.md template
+          reportContent = await this.selfEvaluate(link, msg, resultPath, uniqueKey);
+        } else {
+          reportContent = [
+            `Link: ${link}`,
+            `Status: completed`,
+            `Result Path: ${resultPath}`,
+            `Task completed.`,
+          ].join("\n");
+        }
 
         await this.zk.createMessage(this.leaderInstanceId, {
           type: "direct",
@@ -149,11 +166,11 @@ export class WorkerWatcher {
           from_name: this.instanceName,
           from_role: this.instanceRole,
           to_instance: this.leaderInstanceId,
-          content: report,
+          content: reportContent,
           created_at: new Date().toISOString(),
           read: false,
           result_path: resultPath,
-          link,
+          link: reportLink,
         });
         console.log(`[Watcher] [${timestamp}] Completion report sent to Leader.`);
       } catch (err) {
@@ -170,6 +187,72 @@ export class WorkerWatcher {
 
     this.inFlight.delete(msgId);
     console.log(`[Watcher] [${timestamp}] Done. Log: ${logPath}`);
+  }
+
+  private async selfEvaluate(
+    link: string,
+    msg: Record<string, unknown>,
+    resultPath: string,
+    uniqueKey: string,
+  ): Promise<string> {
+    // Load evaluate template
+    let evalTemplate: string;
+    const agentsDir = path.join(this.workDir, ".claude-orchestrator", "agents");
+    try {
+      evalTemplate = await fs.promises.readFile(
+        path.join(agentsDir, "worker-evaluate.md"), "utf-8",
+      );
+    } catch {
+      evalTemplate = `You are {{name}}, a Worker with role {{preset_role}}. Evaluate your own output for the {{link}} task and decide the next step.\n\n## Task\n\n- **Title**: {{task_title}}\n- **Description**: {{task_description}}\n- **Criteria**: {{task_criteria}}\n\n## Your Result\n\nRead the result from {{task_result_path}}.\n\n## Output Format\n\nWrite the evaluation result to {{result_path}}. Output exactly one JSON decision:\n\n\`\`\`json\n{"decision": "activate_next" | "feedback" | "close_chain", "reason": "...", "nextLink": "build|verify|review|accept"}\n\`\`\`\n\nOutput ONLY the JSON.`;
+    }
+
+    const resolvedCacheDir = expandHomeDir(path.join(this.cacheDir, this.leaderInstanceId));
+    const evalLogPath = path.join(resolvedCacheDir, `${uniqueKey}-eval.log`);
+    const evalResultPath = path.join(resolvedCacheDir, `${uniqueKey}-eval-result.md`);
+
+    const evalPrompt = evalTemplate
+      .replace(/\{\{name\}\}/g, this.instanceName)
+      .replace(/\{\{preset_role\}\}/g, this.instanceRole)
+      .replace(/\{\{link\}\}/g, link)
+      .replace(/\{\{task_title\}\}/g, (msg.task_title as string) ?? "")
+      .replace(/\{\{task_description\}\}/g, (msg.task_description as string) ?? msg.content as string)
+      .replace(/\{\{task_criteria\}\}/g, (msg.task_criteria as string) ?? "")
+      .replace(/\{\{task_doc_path\}\}/g, (msg.task_doc_path as string) ?? "")
+      .replace(/\{\{task_result_path\}\}/g, resultPath)
+      .replace(/\{\{result_path\}\}/g, evalResultPath)
+      .replace(/\{\{work_dir\}\}/g, this.workDir)
+      .replace(/\{\{time\}\}/g, new Date().toISOString())
+      .replace(/\{\{content\}\}/g, msg.content as string);
+
+    console.log(`[Watcher] Running self-evaluation...`);
+    await execWithTee(this.command, evalPrompt, evalLogPath, this.workDir);
+
+    // Try to read evaluation result
+    try {
+      const content = await fs.promises.readFile(evalResultPath, "utf-8");
+      if (content.trim()) {
+        // Try to parse as JSON — if valid, use directly
+        try {
+          JSON.parse(content.trim());
+          return content.trim();
+        } catch {
+          // Not valid JSON, wrap with context
+        }
+      }
+    } catch {
+      // Evaluation result file not found or empty
+    }
+
+    // Fallback: auto-advance
+    const NEXT: Record<string, string | null> = {
+      plan: "build", build: "verify", verify: "review",
+      review: "accept", accept: null,
+    };
+    const nextLink = NEXT[link];
+    if (nextLink) {
+      return JSON.stringify({ decision: "activate_next", reason: `Auto-advance from ${link}`, nextLink });
+    }
+    return JSON.stringify({ decision: "close_chain", reason: "Accept link completed" });
   }
 
   stop(): void {

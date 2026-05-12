@@ -61,8 +61,6 @@ program
       zkHosts: config.zk.url,
       name,
       instanceId: config.instanceId,
-      command: config.cliCommand,
-      cacheDir: config.cacheDir,
     });
   });
 

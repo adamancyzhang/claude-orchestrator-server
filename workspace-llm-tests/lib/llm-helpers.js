@@ -161,6 +161,45 @@ export function validateLeaderDecision(output) {
   return { valid: errors.length === 0, errors, warnings, parsed };
 }
 
+export function validateEvalDecision(output) {
+  const errors = [];
+  const warnings = [];
+
+  if (!output || output.length < 10) {
+    errors.push("Output is empty or too short");
+    return { valid: false, errors, warnings, parsed: null };
+  }
+
+  let parsed = null;
+  const jsonBlock = output.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  const candidate = jsonBlock ? jsonBlock[1].trim() : output.trim();
+
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    const objMatch = output.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      try {
+        parsed = JSON.parse(objMatch[0]);
+      } catch {
+        errors.push("Could not parse JSON from output");
+      }
+    } else {
+      errors.push("No JSON object found in output");
+    }
+  }
+
+  if (parsed) {
+    const validDecisions = ["activate_next", "feedback", "close_chain"];
+    if (!parsed.decision) errors.push("Missing 'decision' field");
+    else if (!validDecisions.includes(parsed.decision)) errors.push(`Invalid decision '${parsed.decision}', must be one of: ${validDecisions.join(", ")}`);
+    if (!parsed.reason) warnings.push("Missing 'reason' field");
+    if (parsed.decision === "activate_next" && !parsed.nextLink) warnings.push("activate_next decision should include 'nextLink'");
+  }
+
+  return { valid: errors.length === 0, errors, warnings, parsed };
+}
+
 /**
  * Wrap a test function with PASS/FAIL output and timing.
  */

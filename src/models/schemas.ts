@@ -5,7 +5,7 @@ import { z } from "zod";
 export const InstanceStatus = z.enum(["idle", "busy"]);
 export type InstanceStatus = z.infer<typeof InstanceStatus>;
 
-export const InstanceRole = z.enum(["planner", "builder", "verifier", "reviewer", "accepter", "leader"]);
+export const InstanceRole = z.enum(["planner", "builder", "verifier", "reviewer", "accepter", "evaluator", "leader"]);
 export type InstanceRole = z.infer<typeof InstanceRole>;
 
 export const TaskLink = z.enum(["plan", "build", "verify", "review", "accept"]);
@@ -243,3 +243,35 @@ export const DismissMessageInput = z.object({
   instance_id: z.string(),
   message_id: z.string(),
 });
+
+// ── Chain & Evaluation Schemas ──
+
+export const ChainTaskDefSchema = z.object({
+  title: z.string(),
+  description: z.string(),
+  criteria: z.string(),
+  priority: z.number().int().min(0).max(3),
+});
+export type ChainTaskDef = z.infer<typeof ChainTaskDefSchema>;
+
+export const ChainDefSchema = z.object({
+  chain_id: z.string(),
+  chain_title: z.string(),
+  tasks: z.object({
+    plan: ChainTaskDefSchema.nullable(),
+    build: ChainTaskDefSchema,
+    verify: ChainTaskDefSchema,
+    review: ChainTaskDefSchema,
+    accept: ChainTaskDefSchema,
+  }),
+});
+export type ChainDef = z.infer<typeof ChainDefSchema>;
+
+export const EvalDecisionSchema = z.object({
+  decision: z.enum(["activate_next", "feedback", "close_chain"]),
+  reason: z.string(),
+  feedback: z.string().optional(),
+  nextLink: z.string().optional(),
+  suggestedWorker: z.string().nullable().optional(),
+});
+export type EvalDecision = z.infer<typeof EvalDecisionSchema>;

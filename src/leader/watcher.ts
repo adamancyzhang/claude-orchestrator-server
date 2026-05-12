@@ -1,13 +1,8 @@
-import path from "node:path";
 import { ZkClient } from "../zk/client.js";
 import * as paths from "../zk/paths.js";
 import { MessageSchema } from "../models/schemas.js";
 import { LeaderEventBus } from "./event-bus.js";
-import { execWithTee } from "../utils/exec.js";
-import { expandHomeDir } from "../config.js";
-import { HookEngine } from "../hooks/engine.js";
-import type { DecisionEngine } from "./decision-engine.js";
-import type { TaskGenerator } from "./task-generator.js";
+import type { ChainRouter } from "./chain-router.js";
 
 export class LeaderWatcher {
   private inFlight = new Set<string>();
@@ -17,11 +12,7 @@ export class LeaderWatcher {
     private zk: ZkClient,
     private eventBus: LeaderEventBus,
     private leaderInstanceId: string,
-    private command: string,
-    private cacheDir: string,
-    private hooks: HookEngine,
-    private decisionEngine?: DecisionEngine,
-    private taskGenerator?: TaskGenerator,
+    private chainRouter: ChainRouter,
   ) {}
 
   async start(): Promise<void> {
@@ -54,7 +45,6 @@ export class LeaderWatcher {
 
     this.inFlight.add(msgId);
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
-    const uniqueKey = `msg-${msgId}-${Date.now().toString(36)}`;
 
     console.log(`[Watcher] Message from ${fromLabel} (${msg.type}): ${msg.content.slice(0, 100)}`);
 
@@ -65,43 +55,7 @@ export class LeaderWatcher {
       msgId,
     });
 
-    const resolvedCacheDir = expandHomeDir(this.cacheDir);
-    const logPath = path.join(resolvedCacheDir, this.leaderInstanceId, `${uniqueKey}.log`);
-
-    const hookCtx = {
-      instanceId: this.leaderInstanceId,
-      instanceName: "Leader",
-      instanceRole: "leader",
-      messageId: msgId,
-      messageType: msg.type,
-      messageContent: msg.content,
-      fromInstance: msg.from_instance,
-      fromName: msg.from_name,
-      toInstance: msg.to_instance ?? "",
-      workDir: process.cwd(),
-      link: (msg.link as string) ?? null,
-    };
-
-    this.hooks.fire("leader_message_start", hookCtx);
-
-    let exitCode = 0;
-
-    // Use DecisionEngine for Worker completion reports (messages with link field)
-    if (this.decisionEngine && msg.link) {
-      console.log(`[Watcher] Delegating to DecisionEngine (link: ${msg.link})`);
-      await this.decisionEngine.evaluate(msg, {
-        teamStatus: {},
-        taskQueues: {},
-        chainStatus: {},
-      });
-    } else if (this.taskGenerator) {
-      console.log(`[Watcher] Routing to TaskGenerator for decomposition`);
-      await this.taskGenerator.decompose(msg.content, {});
-    } else {
-      console.log(`[Watcher] No TaskGenerator available, executing directly`);
-      const result = await execWithTee(this.command, msg.content, logPath);
-      exitCode = result.code;
-    }
+    await this.chainRouter.route(msg);
 
     try {
       msg.read = true;
@@ -110,10 +64,8 @@ export class LeaderWatcher {
       // best effort
     }
 
-    this.hooks.fire("leader_message_end", { ...hookCtx, logPath, exitCode });
-
     this.inFlight.delete(msgId);
-    this.eventBus.emit({ type: "message_processed", msgId, logPath });
+    this.eventBus.emit({ type: "message_processed", msgId });
   }
 
   stop(): void {

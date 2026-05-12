@@ -10,7 +10,7 @@ import { output } from "../utils/output.js";
 import { HookEngine } from "../hooks/engine.js";
 import { WorkerWatcher } from "../worker/watcher.js";
 
-const VALID_ROLES = ["planner", "builder", "verifier", "reviewer", "accepter", "leader"] as const;
+const VALID_ROLES = ["planner", "builder", "verifier", "reviewer", "accepter", "evaluator", "leader"] as const;
 
 async function withZk<T>(
   hosts: string,
@@ -298,8 +298,8 @@ export async function cmdSetup(options: {
   const agentsDir = path.join(process.cwd(), ".claude-orchestrator", "agents");
 
   const templates: Record<string, string> = {
-    "leader-decompose.md": path.join(templateDir, "leader-decompose.md"),
-    "leader-decide.md": path.join(templateDir, "leader-decide.md"),
+    "worker-decompose.md": path.join(templateDir, "worker-decompose.md"),
+    "worker-evaluate.md": path.join(templateDir, "worker-evaluate.md"),
     "worker-plan.md": path.join(templateDir, "worker-plan.md"),
     "worker-build.md": path.join(templateDir, "worker-build.md"),
     "worker-verify.md": path.join(templateDir, "worker-verify.md"),

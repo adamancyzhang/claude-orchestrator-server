@@ -9,37 +9,22 @@ import { WorkerMonitor } from "./monitor.js";
 import { TaskOrchestrator } from "./orchestrator.js";
 import { TaskRecovery } from "./recovery.js";
 import { LeaderWatcher } from "./watcher.js";
-import { TaskGenerator } from "./task-generator.js";
-import { DecisionEngine } from "./decision-engine.js";
+import { ChainRouter } from "./chain-router.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
-import { expandHomeDir, loadGlobalConfig, loadInstanceConfig, saveInstanceId } from "../config.js";
-import { HookEngine } from "../hooks/engine.js";
+import { expandHomeDir, loadInstanceConfig, saveInstanceId } from "../config.js";
 import { LeaderTui } from "./tui.js";
 
 export async function startLeader(config: {
   zkHosts: string;
   name?: string;
   instanceId?: string;
-  command?: string;
-  cacheDir?: string;
 }): Promise<void> {
   const zk = new ZkClient(config.zkHosts);
   await zk.connect();
 
   const instanceConfig = loadInstanceConfig();
-  const globalConfig = loadGlobalConfig();
   const leaderName = config.name || instanceConfig.name || "Leader";
-  const command = config.command || globalConfig.commands?.["claude-cli"] || "claude --dangerously-skip-permissions --permission-mode dontAsk";
-  const cacheDir = config.cacheDir || globalConfig.cache_dir || "~/.claude-orchestrator/sessions";
-
-  // Load hooks from config
-  const hooks = new HookEngine();
-  const hooksConfig = {
-    ...globalConfig.hooks,
-    ...instanceConfig.hooks,
-  };
-  hooks.load(hooksConfig);
 
   // Create /leader EPHEMERAL node
   const leaderId = crypto.randomUUID().replace(/-/g, "");
@@ -67,7 +52,7 @@ export async function startLeader(config: {
   saveInstanceId(instance.id);
 
   // Initialize CACHE_DIR
-  const resolvedCache = expandHomeDir(cacheDir);
+  const resolvedCache = expandHomeDir("~/.claude-orchestrator/sessions");
   const myCacheDir = path.join(resolvedCache, instance.id);
   await fs.promises.mkdir(myCacheDir, { recursive: true });
 
@@ -80,15 +65,14 @@ export async function startLeader(config: {
 
   eventBus.onAll((event) => state.apply(event));
 
-  // Initialize TaskQueue and MessageRouter for decision engine
+  // Initialize TaskQueue, MessageRouter, and ChainRouter
   const taskQueue = new TaskQueue(zk);
   const messageRouter = new MessageRouter(zk);
 
-  const taskGenerator = new TaskGenerator(zk, taskQueue, command, resolvedCache, instance.id);
-  const decisionEngine = new DecisionEngine(zk, taskQueue, messageRouter, command, resolvedCache, instance.id);
+  const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, resolvedCache);
 
   // Start subsystems
-  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, command, resolvedCache, hooks, decisionEngine, taskGenerator);
+  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, chainRouter);
   await leaderWatcher.start();
 
   const monitor = new WorkerMonitor(zk, eventBus);
