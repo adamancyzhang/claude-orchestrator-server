@@ -136,27 +136,16 @@ program
 
 program
   .command("send-message")
-  .description("Send a message to another instance or broadcast to all")
+  .description("Send a message to the leader instance")
   .requiredOption("--content <text>", "Message content")
-  .option("--to <id>", "Recipient instance ID")
-  .option("--to-name <name>", "Recipient instance name (e.g. @Tom, @All)")
-  .option("--broadcast", "Send to all instances", false)
-  .option("--request-help", "Send as a help request", false)
   .option("--instance-id <id>", "Sender instance ID (default from project config)")
   .action(async function (this: Command) {
     try {
-      const { content, to, toName, broadcast, requestHelp, instanceId } = getSubOpts<{
+      const { content, instanceId } = getSubOpts<{
         content: string;
-        to?: string;
-        toName?: string;
-        broadcast: boolean;
-        requestHelp: boolean;
         instanceId?: string;
       }>(this);
-      if (!to && !toName && !broadcast && !requestHelp) {
-        throw new Error("Must specify --to, --to-name, --broadcast, or --request-help");
-      }
-      await cmdSendMessage(getZkHosts(this), instanceId, content, to, broadcast, toName, requestHelp);
+      await cmdSendMessage(getZkHosts(this), instanceId, content);
     } catch (e) {
       output({ error: String(e) }, true);
     }

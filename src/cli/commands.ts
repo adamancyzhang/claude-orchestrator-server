@@ -160,10 +160,6 @@ export async function cmdSendMessage(
   zkHosts: string,
   cliInstanceId: string | undefined,
   content: string,
-  toInstance?: string,
-  broadcast: boolean = false,
-  toName?: string,
-  help: boolean = false,
 ): Promise<void> {
   await withZk(zkHosts, async ({ registry, messageRouter }) => {
     const instanceId = cliInstanceId || loadInstanceId() || "";
@@ -174,14 +170,22 @@ export async function cmdSendMessage(
     } else {
       fromName = "CLI";
     }
+
+    const instances = await registry.listAll();
+    const leader = instances.find((i) => i.role === "leader");
+    if (!leader) {
+      throw new Error("No leader instance found");
+    }
+    const leaderId = leader.id as string;
+
     const messages = await messageRouter.send(
       instanceId,
       fromName,
       content,
-      toInstance,
-      broadcast,
-      toName,
-      help,
+      leaderId,
+      false,
+      undefined,
+      false,
     );
     const targets = messages.map((m) => m.to_instance);
     output({ sent_to: targets, message_count: targets.length });
