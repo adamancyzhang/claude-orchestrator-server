@@ -11,7 +11,7 @@ export interface ZkConfig {
   auth: string | null;
 }
 
-export interface CommandConfig {
+export interface CommandsConfig {
   "claude-cli"?: string;
   "leader-sync"?: string | null;
 }
@@ -20,7 +20,7 @@ export interface InstanceConfig {
   instance_id?: string;
   name?: string;
   role?: string;
-  command?: CommandConfig;
+  commands?: CommandsConfig;
   cache_dir?: string;
   zookeeper?: ZkConfig;
 }
@@ -75,9 +75,9 @@ export function loadConfig(cliOpts: {
   const cacheDir = global.cache_dir || defaultCacheDir();
 
   // Command: project overrides global
-  const mergedCommand = project.command || global.command;
-  const cliCommand = mergedCommand?.["claude-cli"] || defaultCliCommand();
-  const leaderSync = mergedCommand?.["leader-sync"] ?? null;
+  const mergedCommands = project.commands || global.commands;
+  const cliCommand = mergedCommands?.["claude-cli"] || defaultCliCommand();
+  const leaderSync = mergedCommands?.["leader-sync"] ?? null;
 
   const instanceId = project.instance_id;
   const name = project.name;

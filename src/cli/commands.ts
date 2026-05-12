@@ -239,12 +239,12 @@ export async function cmdSetup(options: {
   // ── Write global config ──
   const existingGlobal = loadGlobalConfig();
   const globalZk = existingGlobal.zookeeper || { url: "127.0.0.1:2181", root_path: "/claude-orchestrator", auth: null };
-  const prevCommand = existingGlobal.command;
+  const prevCommands = existingGlobal.commands;
   saveInstanceConfig(
     {
-      command: {
-        "claude-cli": command || prevCommand?.["claude-cli"] || defaultCliCommand,
-        "leader-sync": prevCommand?.["leader-sync"] ?? null,
+      commands: {
+        "claude-cli": command || prevCommands?.["claude-cli"] || defaultCliCommand,
+        "leader-sync": prevCommands?.["leader-sync"] ?? null,
       },
       cache_dir: cacheDir || existingGlobal.cache_dir || defaultCacheDir,
       zookeeper: {

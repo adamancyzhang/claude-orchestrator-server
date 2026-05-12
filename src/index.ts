@@ -100,8 +100,8 @@ program
       zookeeper: config.zk,
       global: {
         cache_dir: config.cacheDir,
-        "command.claude-cli": config.cliCommand,
-        "command.leader-sync": config.leaderSync,
+        "commands.claude-cli": config.cliCommand,
+        "commands.leader-sync": config.leaderSync,
       },
       project: {
         name: projectConfig.name || "(not set)",
