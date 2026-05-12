@@ -45,6 +45,7 @@ export class LeaderTui {
   private inputBuffer = "";
   private inputCallback: ((text: string) => void) | null = null;
   private rawMode = false;
+  private state: LeaderState | null = null;
 
   constructor() {
     this.setupInput();
@@ -70,6 +71,10 @@ export class LeaderTui {
     this.rawMode = false;
   }
 
+  private rerender(): void {
+    if (this.state) this.render(this.state);
+  }
+
   private setupInput(): void {
     process.stdin.on("data", (data: Buffer) => {
       const key = data.toString();
@@ -85,27 +90,32 @@ export class LeaderTui {
           this.inputCallback(this.inputBuffer.trim());
         }
         this.inputBuffer = "";
+        this.rerender();
         return;
       }
 
       if (key === "\x7f" || key === "\x08") {
         this.inputBuffer = this.inputBuffer.slice(0, -1);
+        this.rerender();
         return;
       }
 
       if (key === "\x1b") {
         this.inputBuffer = "";
+        this.rerender();
         return;
       }
 
       // Printable characters only
       if (key >= " ") {
         this.inputBuffer += key;
+        this.rerender();
       }
     });
   }
 
   render(state: LeaderState): void {
+    this.state = state;
     this.enableRawMode();
 
     const cols = process.stdout.columns || 120;
