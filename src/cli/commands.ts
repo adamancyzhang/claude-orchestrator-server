@@ -308,13 +308,47 @@ export async function cmdSetup(options: {
     }
   }
 
+  // ── Copy skills to .claude/skills/ ──
+  const skillsSrcDir = path.join(__dirname, "..", "skills");
+  const skillsDstDir = path.join(process.cwd(), ".claude", "skills");
+
+  const skillsWritten: string[] = [];
+  const skillsSkipped: string[] = [];
+
+  if (fs.existsSync(skillsSrcDir)) {
+    const skillNames = fs.readdirSync(skillsSrcDir, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+
+    for (const skillName of skillNames) {
+      const srcSkillPath = path.join(skillsSrcDir, skillName, "SKILL.md");
+      const dstSkillDir = path.join(skillsDstDir, skillName);
+      const dstSkillPath = path.join(dstSkillDir, "SKILL.md");
+
+      if (!fs.existsSync(srcSkillPath)) continue;
+
+      fs.mkdirSync(dstSkillDir, { recursive: true });
+
+      if (fs.existsSync(dstSkillPath)) {
+        skillsSkipped.push(skillName);
+      } else {
+        const content = fs.readFileSync(srcSkillPath, "utf-8");
+        fs.writeFileSync(dstSkillPath, content);
+        skillsWritten.push(skillName);
+      }
+    }
+  }
+
   const result: Record<string, unknown> = {
     status: "configured",
     project_config: path.join(process.cwd(), ".claude-orchestrator", "config.json"),
     templates_dir: agentsDir,
+    skills_dir: skillsDstDir,
   };
   if (written.length > 0) result["templates_written"] = written;
   if (skipped.length > 0) result["templates_skipped"] = skipped;
+  if (skillsWritten.length > 0) result["skills_written"] = skillsWritten;
+  if (skillsSkipped.length > 0) result["skills_skipped"] = skillsSkipped;
   if (!resolvedName) result["warning"] = "No name provided. Use --name to set instance name.";
 
   output(result);

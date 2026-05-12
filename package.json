@@ -9,7 +9,7 @@
     "claude-orchestrator": "bin/claude-orchestrator"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc && cp -r src/templates dist/templates",
+    "build": "rm -rf dist && tsc && cp -r src/templates dist/templates && cp -r skills dist/skills",
     "start": "node dist/index.js leader",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
