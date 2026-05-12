@@ -71,7 +71,7 @@ export async function cmdRegister(zkHosts: string): Promise<void> {
     zk,
     instance.id,
     process.cwd(),
-    resolvedConfig.command,
+    resolvedConfig.cliCommand,
     resolvedConfig.cacheDir,
     leaderInstanceId,
   );
@@ -233,15 +233,25 @@ export async function cmdSetup(options: {
   const resolvedRole = leader ? "leader" : (role || "general");
   const resolvedName = name || (leader ? "Leader" : undefined);
 
-  const defaultCommand = "claude --dangerously-skip-permissions -v";
+  const defaultCliCommand = "claude --dangerously-skip-permissions --permission-mode dontAsk";
   const defaultCacheDir = "~/.claude-orchestrator/sessions";
 
   // ── Write global config ──
   const existingGlobal = loadGlobalConfig();
   const globalZk = existingGlobal.zookeeper || { url: "127.0.0.1:2181", root_path: "/claude-orchestrator", auth: null };
+  const existingCommand = existingGlobal.command;
+  const prevCliCommand = typeof existingCommand === "string"
+    ? existingCommand
+    : existingCommand?.["claude-cli"];
+  const prevLeaderSync = typeof existingCommand === "object" && existingCommand !== null
+    ? existingCommand["leader-sync"] ?? null
+    : null;
   saveInstanceConfig(
     {
-      command: command || existingGlobal.command || defaultCommand,
+      command: {
+        "claude-cli": command || prevCliCommand || defaultCliCommand,
+        "leader-sync": prevLeaderSync,
+      },
       cache_dir: cacheDir || existingGlobal.cache_dir || defaultCacheDir,
       zookeeper: {
         url: globalZk.url || "127.0.0.1:2181",

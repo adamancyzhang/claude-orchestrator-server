@@ -11,11 +11,16 @@ export interface ZkConfig {
   auth: string | null;
 }
 
+export interface CommandConfig {
+  "claude-cli"?: string;
+  "leader-sync"?: string | null;
+}
+
 export interface InstanceConfig {
   instance_id?: string;
   name?: string;
   role?: string;
-  command?: string;
+  command?: CommandConfig | string;
   cache_dir?: string;
   zookeeper?: ZkConfig;
 }
@@ -23,7 +28,8 @@ export interface InstanceConfig {
 export interface ResolvedConfig {
   zk: ZkConfig;
   cacheDir: string;
-  command: string;
+  cliCommand: string;
+  leaderSync: string | null;
   instanceId?: string;
   name?: string;
   role?: string;
@@ -45,8 +51,18 @@ function defaultCacheDir(): string {
   return "~/.claude-orchestrator/sessions";
 }
 
-function defaultCommand(): string {
-  return "claude --dangerously-skip-permissions -v";
+function defaultCliCommand(): string {
+  return "claude --dangerously-skip-permissions --permission-mode dontAsk";
+}
+
+function resolveCommandConfig(raw: InstanceConfig["command"]): { cliCommand: string; leaderSync: string | null } {
+  if (typeof raw === "string") {
+    return { cliCommand: raw, leaderSync: null };
+  }
+  return {
+    cliCommand: raw?.["claude-cli"] || defaultCliCommand(),
+    leaderSync: raw?.["leader-sync"] ?? null,
+  };
 }
 
 export function loadConfig(cliOpts: {
@@ -67,12 +83,16 @@ export function loadConfig(cliOpts: {
   }
 
   const cacheDir = global.cache_dir || defaultCacheDir();
-  const command = project.command || global.command || defaultCommand();
+
+  // Command: project overrides global; supports both old flat string and new nested object
+  const mergedCommand = project.command || global.command;
+  const { cliCommand, leaderSync } = resolveCommandConfig(mergedCommand);
+
   const instanceId = project.instance_id;
   const name = project.name;
   const role = project.role;
 
-  return { zk, cacheDir, command, instanceId, name, role };
+  return { zk, cacheDir, cliCommand, leaderSync, instanceId, name, role };
 }
 
 function readConfigFile(filePath: string): InstanceConfig {

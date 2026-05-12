@@ -61,7 +61,7 @@ program
       zkHosts: config.zk.url,
       name,
       instanceId: config.instanceId,
-      command: config.command,
+      command: config.cliCommand,
       cacheDir: config.cacheDir,
     });
   });
@@ -100,7 +100,8 @@ program
       zookeeper: config.zk,
       global: {
         cache_dir: config.cacheDir,
-        command: config.command,
+        "command.claude-cli": config.cliCommand,
+        "command.leader-sync": config.leaderSync,
       },
       project: {
         name: projectConfig.name || "(not set)",
