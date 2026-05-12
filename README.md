@@ -327,7 +327,6 @@ Zero external database. All state lives in ZooKeeper.
 | Verifier | `verifier` | Claims verify tasks, checks Builder output against Plan |
 | Reviewer | `reviewer` | Claims review tasks, quality gate for design consistency |
 | Accepter | `accepter` | Claims accept tasks, final Go/No-Go validation |
-| Evaluator | `evaluator` | Dedicated evaluation Worker (optional; self-evaluation is built-in) |
 
 ---
 
@@ -361,7 +360,11 @@ Zero external database. All state lives in ZooKeeper.
 │   │   ├── watcher.ts         #   LeaderWatcher — message processing
 │   │   └── chain-router.ts    #   ChainRouter — mechanical routing (no AI)
 │   ├── worker/                # Worker node (v0.3.1)
-│   │   └── watcher.ts         #   WorkerWatcher — persistent message loop + self-evaluation
+│   │   ├── watcher.ts         #   WorkerWatcher — ZK watch loop + orchestration
+│   │   └── evaluator.ts       #   SelfEvaluator — built-in self-evaluation
+│   ├── executor/              # Template execution engine
+│   │   ├── template.ts        #   TemplateEngine — loading + rendering
+│   │   └── runner.ts          #   ClaudeRunner — CLI execution wrapper
 │   ├── templates/             # Built-in agent templates
 │   │   ├── worker-decompose.md #   Planner decompose prompt
 │   │   ├── worker-evaluate.md  #   Worker self-evaluation prompt
@@ -383,7 +386,8 @@ Zero external database. All state lives in ZooKeeper.
 │   │   └── schemas.ts         # Zod schemas and inferred types
 │   └── utils/
 │       ├── exec.ts            # Shell execution (execWithTee)
-│       └── output.ts          # CLI output formatting
+│       ├── output.ts          # CLI output formatting
+│       └── logger.ts          # Tagged logger for contextual output
 ├── bin/
 │   └── claude-orchestrator     # npm CLI entry (Node.js)
 ├── scripts/

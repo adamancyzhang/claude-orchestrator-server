@@ -2,11 +2,13 @@ import { ZkClient } from "../zk/client.js";
 import * as paths from "../zk/paths.js";
 import { MessageSchema } from "../models/schemas.js";
 import { LeaderEventBus } from "./event-bus.js";
+import { Logger } from "../utils/logger.js";
 import type { ChainRouter } from "./chain-router.js";
 
 export class LeaderWatcher {
   private inFlight = new Set<string>();
   private stopped = false;
+  private logger = new Logger("LeaderWatcher");
 
   constructor(
     private zk: ZkClient,
@@ -46,7 +48,7 @@ export class LeaderWatcher {
     this.inFlight.add(msgId);
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
 
-    console.log(`[Watcher] Message from ${fromLabel} (${msg.type}): ${msg.content.slice(0, 100)}`);
+    this.logger.info(`Message from ${fromLabel} (${msg.type}): ${msg.content.slice(0, 100)}`);
 
     this.eventBus.emit({
       type: "message_received",

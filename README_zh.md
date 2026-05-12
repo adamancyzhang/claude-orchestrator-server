@@ -327,7 +327,6 @@ npm test
 | Verifier | `verifier` | 认领验证任务，检查 Builder 输出是否符合 Plan |
 | Reviewer | `reviewer` | 认领审核任务，设计一致性质检 |
 | Accepter | `accepter` | 认领验收任务，最终 Go/No-Go 决策 |
-| Evaluator | `evaluator` | 独立评估 Worker（可选；自评估已内置） |
 
 ---
 
@@ -361,7 +360,11 @@ npm test
 │   │   ├── watcher.ts         #   LeaderWatcher — 消息处理
 │   │   └── chain-router.ts    #   ChainRouter — 机械路由（无 AI 调用）
 │   ├── worker/                # Worker 节点（v0.3.1）
-│   │   └── watcher.ts         #   WorkerWatcher — 持久消息监听 + 自评估
+│   │   ├── watcher.ts         #   WorkerWatcher — ZK 监听 + 编排
+│   │   └── evaluator.ts       #   SelfEvaluator — 内置自评估
+│   ├── executor/              # 模板执行引擎
+│   │   ├── template.ts        #   TemplateEngine — 加载 + 渲染
+│   │   └── runner.ts          #   ClaudeRunner — CLI 执行封装
 │   ├── templates/             # 内置 agent 模板（v0.3.1）
 │   │   ├── worker-decompose.md #   Planner 拆解模板
 │   │   ├── worker-evaluate.md  #   Worker 自评估模板
@@ -383,7 +386,8 @@ npm test
 │   │   └── schemas.ts         # Zod 模式 + 推断类型
 │   └── utils/
 │       ├── exec.ts            # Shell 执行工具（execWithTee）
-│       └── output.ts          # CLI 输出格式化
+│       ├── output.ts          # CLI 输出格式化
+│       └── logger.ts          # 标记化日志工具
 ├── bin/
 │   └── claude-orchestrator     # npm CLI 入口（Node.js）
 ├── scripts/

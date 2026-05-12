@@ -5,7 +5,7 @@ import { z } from "zod";
 export const InstanceStatus = z.enum(["idle", "busy"]);
 export type InstanceStatus = z.infer<typeof InstanceStatus>;
 
-export const InstanceRole = z.enum(["planner", "builder", "verifier", "reviewer", "accepter", "evaluator", "leader"]);
+export const InstanceRole = z.enum(["planner", "builder", "verifier", "reviewer", "accepter", "leader"]);
 export type InstanceRole = z.infer<typeof InstanceRole>;
 
 export const TaskLink = z.enum(["plan", "build", "verify", "review", "accept"]);

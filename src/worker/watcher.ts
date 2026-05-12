@@ -1,56 +1,40 @@
 import * as fs from "node:fs";
-import path from "node:path";
 import { ZkClient } from "../zk/client.js";
 import * as paths from "../zk/paths.js";
 import { MessageSchema } from "../models/schemas.js";
-import { execWithTee } from "../utils/exec.js";
-import { expandHomeDir } from "../config.js";
 import { HookEngine } from "../hooks/engine.js";
-
-const LINK_TEMPLATES = ["plan", "build", "verify", "review", "accept", "decompose"];
-const CHAIN_LINKS = ["plan", "build", "verify", "review", "accept"];
+import { Logger } from "../utils/logger.js";
+import { TemplateEngine, LINK_TEMPLATES } from "../executor/template.js";
+import { ClaudeRunner } from "../executor/runner.js";
+import { SelfEvaluator, CHAIN_LINKS } from "./evaluator.js";
 
 export class WorkerWatcher {
   private inFlight = new Set<string>();
-  private templates: Record<string, string> = {};
   private instanceName = "";
   private instanceRole = "";
+  private logger = new Logger("WorkerWatcher");
   stopped = false;
 
   constructor(
     private zk: ZkClient,
     private instanceId: string,
-    private workDir: string,
-    private command: string,
-    private cacheDir: string,
     private leaderInstanceId: string,
     private hooks: HookEngine,
+    private templateEngine: TemplateEngine,
+    private runner: ClaudeRunner,
+    private evaluator: SelfEvaluator,
   ) {}
 
   async start(): Promise<void> {
-    // Load instance metadata
     const instData = await this.zk.getInstance(this.instanceId);
     this.instanceName = (instData?.name as string) ?? this.instanceId.slice(0, 8);
     this.instanceRole = (instData?.role as string) ?? "builder";
 
-    // Load link templates from agents dir
-    const agentsDir = path.join(this.workDir, ".claude-orchestrator", "agents");
-    for (const link of LINK_TEMPLATES) {
-      try {
-        this.templates[link] = await fs.promises.readFile(
-          path.join(agentsDir, `worker-${link}.md`), "utf-8",
-        );
-      } catch {
-        this.templates[link] = `You are a Worker.\n\n## Task\n\n{{content}}`;
-      }
-    }
+    await this.templateEngine.loadAll();
 
     await this.zk.mkdirp(paths.messageDirPath(this.instanceId));
-    console.log(`Watching for messages on instance ${this.instanceId.slice(0, 8)}...`);
-    console.log(`Work dir: ${this.workDir}`);
-    console.log(`Command: ${this.command}`);
-    console.log(`CACHE_DIR: ${path.join(expandHomeDir(this.cacheDir), this.leaderInstanceId)}`);
-    console.log("Press Ctrl+C to stop.\n");
+    this.logger.info(`Watching for messages on instance ${this.instanceId.slice(0, 8)}...`);
+    this.logger.info("Press Ctrl+C to stop.");
     this.watchLoop();
   }
 
@@ -79,40 +63,31 @@ export class WorkerWatcher {
 
     this.inFlight.add(msgId);
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
-    const timestamp = new Date().toLocaleTimeString();
     const link = (msg.link as string) ?? "_generic";
-
     const uniqueKey = `task-${msgId}-${Date.now().toString(36)}`;
-    const resolvedCacheDir = expandHomeDir(path.join(this.cacheDir, this.leaderInstanceId));
-    const resultPath = path.join(resolvedCacheDir, `${uniqueKey}-result.md`);
-    const logPath = path.join(resolvedCacheDir, `${uniqueKey}.log`);
 
-    // Select and render template
-    const template = this.templates[link];
-    let prompt: string;
-    if (template) {
-      prompt = template
-        .replace(/\{\{name\}\}/g, this.instanceName)
-        .replace(/\{\{preset_role\}\}/g, this.instanceRole)
-        .replace(/\{\{task_title\}\}/g, (msg.task_title as string) ?? "")
-        .replace(/\{\{task_description\}\}/g, (msg.task_description as string) ?? msg.content)
-        .replace(/\{\{task_criteria\}\}/g, (msg.task_criteria as string) ?? "")
-        .replace(/\{\{task_doc_path\}\}/g, (msg.task_doc_path as string) ?? "")
-        .replace(/\{\{result_path\}\}/g, resultPath)
-        .replace(/\{\{work_dir\}\}/g, this.workDir)
-        .replace(/\{\{time\}\}/g, new Date().toISOString())
-        .replace(/\{\{content\}\}/g, msg.content);
-    } else {
-      prompt = msg.content;
-    }
+    const logPath = this.runner.logPath(uniqueKey);
+    const resultPath = this.runner.resultPath(uniqueKey);
 
-    console.log(`[Watcher] [${timestamp}] Message from ${fromLabel} (${msg.type}):`);
-    console.log(`[Watcher]   ${msg.content.slice(0, 200)}`);
-    if (link !== "_generic") {
-      console.log(`[Watcher]   Link: ${link}`);
-    }
+    const template = this.templateEngine.get(link);
+    const prompt = template
+      ? this.templateEngine.render(template, {
+          name: this.instanceName,
+          preset_role: this.instanceRole,
+          task_title: (msg.task_title as string) ?? "",
+          task_description: (msg.task_description as string) ?? msg.content,
+          task_criteria: (msg.task_criteria as string) ?? "",
+          task_doc_path: (msg.task_doc_path as string) ?? "",
+          result_path: resultPath,
+          work_dir: "",
+          time: new Date().toISOString(),
+          content: msg.content,
+        })
+      : msg.content;
 
-    console.log(`[Watcher] [${timestamp}] Processing...`);
+    this.logger.info(`Message from ${fromLabel} (${msg.type}): ${msg.content.slice(0, 200)}`);
+    if (link !== "_generic") this.logger.info(`  Link: ${link}`);
+    this.logger.info("Processing...");
 
     const hookCtx = {
       instanceId: this.instanceId,
@@ -124,58 +99,16 @@ export class WorkerWatcher {
       fromInstance: msg.from_instance,
       fromName: msg.from_name,
       toInstance: msg.to_instance ?? "",
-      workDir: this.workDir,
+      workDir: "",
       link: link !== "_generic" ? link : null,
     };
 
     this.hooks.fire("worker_message_start", hookCtx);
-
-    const result = await execWithTee(this.command, prompt, logPath, this.workDir);
-
+    const result = await this.runner.run(prompt, logPath);
     this.hooks.fire("worker_message_end", { ...hookCtx, logPath, exitCode: result.code });
 
-    // Send completion report to leader (only for linked task messages)
     if (link !== "_generic") {
-      try {
-        let reportContent: string;
-        let reportLink = link;
-
-        if (link === "decompose") {
-          // Read result file for ChainDef JSON
-          try {
-            reportContent = await fs.promises.readFile(resultPath, "utf-8");
-            reportLink = "task_defs";
-          } catch {
-            reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}`;
-          }
-        } else if (CHAIN_LINKS.includes(link)) {
-          // Self-evaluate using worker-evaluate.md template
-          reportContent = await this.selfEvaluate(link, msg, resultPath, uniqueKey);
-        } else {
-          reportContent = [
-            `Link: ${link}`,
-            `Status: completed`,
-            `Result Path: ${resultPath}`,
-            `Task completed.`,
-          ].join("\n");
-        }
-
-        await this.zk.createMessage(this.leaderInstanceId, {
-          type: "direct",
-          from_instance: this.instanceId,
-          from_name: this.instanceName,
-          from_role: this.instanceRole,
-          to_instance: this.leaderInstanceId,
-          content: reportContent,
-          created_at: new Date().toISOString(),
-          read: false,
-          result_path: resultPath,
-          link: reportLink,
-        });
-        console.log(`[Watcher] [${timestamp}] Completion report sent to Leader.`);
-      } catch (err) {
-        console.error(`[Watcher] [${timestamp}] Failed to send completion report: ${err}`);
-      }
+      await this.sendCompletionReport(link, msg, resultPath, uniqueKey);
     }
 
     try {
@@ -186,73 +119,55 @@ export class WorkerWatcher {
     }
 
     this.inFlight.delete(msgId);
-    console.log(`[Watcher] [${timestamp}] Done. Log: ${logPath}`);
+    this.logger.info(`Done. Log: ${logPath}`);
   }
 
-  private async selfEvaluate(
+  private async sendCompletionReport(
     link: string,
     msg: Record<string, unknown>,
     resultPath: string,
     uniqueKey: string,
-  ): Promise<string> {
-    // Load evaluate template
-    let evalTemplate: string;
-    const agentsDir = path.join(this.workDir, ".claude-orchestrator", "agents");
+  ): Promise<void> {
     try {
-      evalTemplate = await fs.promises.readFile(
-        path.join(agentsDir, "worker-evaluate.md"), "utf-8",
-      );
-    } catch {
-      evalTemplate = `You are {{name}}, a Worker with role {{preset_role}}. Evaluate your own output for the {{link}} task and decide the next step.\n\n## Task\n\n- **Title**: {{task_title}}\n- **Description**: {{task_description}}\n- **Criteria**: {{task_criteria}}\n\n## Your Result\n\nRead the result from {{task_result_path}}.\n\n## Output Format\n\nWrite the evaluation result to {{result_path}}. Output exactly one JSON decision:\n\n\`\`\`json\n{"decision": "activate_next" | "feedback" | "close_chain", "reason": "...", "nextLink": "build|verify|review|accept"}\n\`\`\`\n\nOutput ONLY the JSON.`;
-    }
+      let reportContent: string;
+      let reportLink = link;
 
-    const resolvedCacheDir = expandHomeDir(path.join(this.cacheDir, this.leaderInstanceId));
-    const evalLogPath = path.join(resolvedCacheDir, `${uniqueKey}-eval.log`);
-    const evalResultPath = path.join(resolvedCacheDir, `${uniqueKey}-eval-result.md`);
-
-    const evalPrompt = evalTemplate
-      .replace(/\{\{name\}\}/g, this.instanceName)
-      .replace(/\{\{preset_role\}\}/g, this.instanceRole)
-      .replace(/\{\{link\}\}/g, link)
-      .replace(/\{\{task_title\}\}/g, (msg.task_title as string) ?? "")
-      .replace(/\{\{task_description\}\}/g, (msg.task_description as string) ?? msg.content as string)
-      .replace(/\{\{task_criteria\}\}/g, (msg.task_criteria as string) ?? "")
-      .replace(/\{\{task_doc_path\}\}/g, (msg.task_doc_path as string) ?? "")
-      .replace(/\{\{task_result_path\}\}/g, resultPath)
-      .replace(/\{\{result_path\}\}/g, evalResultPath)
-      .replace(/\{\{work_dir\}\}/g, this.workDir)
-      .replace(/\{\{time\}\}/g, new Date().toISOString())
-      .replace(/\{\{content\}\}/g, msg.content as string);
-
-    console.log(`[Watcher] Running self-evaluation...`);
-    await execWithTee(this.command, evalPrompt, evalLogPath, this.workDir);
-
-    // Try to read evaluation result
-    try {
-      const content = await fs.promises.readFile(evalResultPath, "utf-8");
-      if (content.trim()) {
-        // Try to parse as JSON — if valid, use directly
+      if (link === "decompose") {
         try {
-          JSON.parse(content.trim());
-          return content.trim();
+          reportContent = await fs.promises.readFile(resultPath, "utf-8");
+          reportLink = "task_defs";
         } catch {
-          // Not valid JSON, wrap with context
+          reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}`;
         }
+      } else if (CHAIN_LINKS.includes(link)) {
+        const msgVars: Record<string, string> = {
+          task_title: (msg.task_title as string) ?? "",
+          task_description: (msg.task_description as string) ?? "",
+          task_criteria: (msg.task_criteria as string) ?? "",
+          task_doc_path: (msg.task_doc_path as string) ?? "",
+          content: msg.content as string,
+        };
+        reportContent = await this.evaluator.evaluate(link, msgVars, resultPath, uniqueKey);
+      } else {
+        reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}\nTask completed.`;
       }
-    } catch {
-      // Evaluation result file not found or empty
-    }
 
-    // Fallback: auto-advance
-    const NEXT: Record<string, string | null> = {
-      plan: "build", build: "verify", verify: "review",
-      review: "accept", accept: null,
-    };
-    const nextLink = NEXT[link];
-    if (nextLink) {
-      return JSON.stringify({ decision: "activate_next", reason: `Auto-advance from ${link}`, nextLink });
+      await this.zk.createMessage(this.leaderInstanceId, {
+        type: "direct",
+        from_instance: this.instanceId,
+        from_name: this.instanceName,
+        from_role: this.instanceRole,
+        to_instance: this.instanceId,
+        content: reportContent,
+        created_at: new Date().toISOString(),
+        read: false,
+        result_path: resultPath,
+        link: reportLink,
+      });
+      this.logger.info("Completion report sent.");
+    } catch (err) {
+      this.logger.error("Failed to send completion report", err);
     }
-    return JSON.stringify({ decision: "close_chain", reason: "Accept link completed" });
   }
 
   stop(): void {

@@ -13,6 +13,7 @@ import { ChainRouter } from "./chain-router.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { expandHomeDir, loadInstanceConfig, saveInstanceId } from "../config.js";
+import { Logger } from "../utils/logger.js";
 import { LeaderTui } from "./tui.js";
 
 export async function startLeader(config: {
@@ -20,6 +21,8 @@ export async function startLeader(config: {
   name?: string;
   instanceId?: string;
 }): Promise<void> {
+  const logger = new Logger("Leader");
+
   const zk = new ZkClient(config.zkHosts);
   await zk.connect();
 
@@ -40,7 +43,7 @@ export async function startLeader(config: {
     });
   } catch (err) {
     if (isNodeExists(err)) {
-      console.error("Another leader is already running.");
+      logger.error("Another leader is already running.");
       process.exit(1);
     }
     throw err;

@@ -4,6 +4,7 @@ import { ZkClient } from "../zk/client.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { LeaderEventBus } from "./event-bus.js";
+import { Logger } from "../utils/logger.js";
 import {
   MessageSchema,
   createMessage,
@@ -22,6 +23,8 @@ const NEXT_LINKS: Record<string, string | null> = {
 };
 
 export class ChainRouter {
+  private logger = new Logger("ChainRouter");
+
   constructor(
     private zk: ZkClient,
     private taskQueue: TaskQueue,
@@ -46,7 +49,7 @@ export class ChainRouter {
   private async handleRequirement(msg: Message): Promise<void> {
     const planner = await this.findWorkerByRole("planner");
     if (!planner) {
-      console.error("[ChainRouter] No planner worker available. Requirement not processed.");
+      this.logger.error("No planner worker available. Requirement not processed.");
       return;
     }
 
@@ -61,7 +64,7 @@ export class ChainRouter {
     });
 
     await this.zk.createMessage(planner.id, fwd as unknown as Record<string, unknown>);
-    console.log(`[ChainRouter] Forwarded requirement to planner ${planner.name} (${planner.id.slice(0, 8)})`);
+    this.logger.info(`Forwarded requirement to planner ${planner.name} (${planner.id.slice(0, 8)})`);
   }
 
   private async handleTaskDefinitions(msg: Message): Promise<void> {
@@ -69,7 +72,7 @@ export class ChainRouter {
     try {
       chainDef = ChainDefSchema.parse(JSON.parse(msg.content));
     } catch (err) {
-      console.error("[ChainRouter] Failed to parse task definitions:", err);
+      this.logger.error("Failed to parse task definitions", err);
       return;
     }
 

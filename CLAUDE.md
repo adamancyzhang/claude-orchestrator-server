@@ -65,14 +65,29 @@ The Leader no longer calls `claude -p`. Task decomposition and decision evaluati
 
 The TUI has a keyboard input line — typed text is sent as a message to the Leader's own ZK message queue, which the `LeaderWatcher` picks up and routes to `ChainRouter` for forwarding to a Planner Worker.
 
-### Worker Node (`src/worker/watcher.ts`)
+### Worker Node (`src/worker/`)
+
+Split into three modules:
+
+| File | Role |
+|------|------|
+| `watcher.ts` | ZK watch loop + orchestration. Wires template rendering, Claude execution, and self-evaluation |
+| `evaluator.ts` | Built-in self-evaluation after task completion. Loads `worker-evaluate.md`, runs Claude, returns EvalDecision JSON |
+
+### Executor (`src/executor/`)
+
+Standalone template execution, reusable across Worker components:
+
+| File | Role |
+|------|------|
+| `template.ts` | Template loading from `.claude-orchestrator/agents/` and variable rendering |
+| `runner.ts` | Claude CLI execution wrapper around `execWithTee` — manages log/output paths |
 
 A persistent ZK watch loop on the Worker's own message directory. On new message:
-1. Selects the template by `msg.link` (`plan`/`build`/`verify`/`review`/`accept`/`decompose` or `_generic`)
-2. Renders template variables (`{{name}}`, `{{content}}`, `{{work_dir}}`, etc.)
-3. Executes `$COMMAND -p "$prompt" | tee $CACHE_DIR/{key}.log`
-4. For chain-link tasks, runs built-in self-evaluation via `worker-evaluate.md` template
-5. Sends completion report (with EvalDecision JSON for chain links, or ChainDef JSON for decompose) back to Leader
+1. `TemplateEngine` selects and renders the template by `msg.link`
+2. `ClaudeRunner` executes `$COMMAND -p "$prompt" | tee $CACHE_DIR/{key}.log`
+3. For chain-link tasks, `SelfEvaluator` runs built-in evaluation via `worker-evaluate.md`
+4. Completion report (with EvalDecision JSON or ChainDef JSON) is sent back to Leader
 
 ### ZooKeeper Modules (`src/modules/`)
 
@@ -144,7 +159,11 @@ Context store (`/context`) paths are defined in `paths.ts` but not actively used
 | `src/leader/watcher.ts` | Leader message watch → ChainRouter mechanical routing |
 | `src/leader/chain-router.ts` | Pure mechanical router: forward requirements, parse task defs, execute EvalDecisions |
 | `src/leader/recovery.ts` | Orphan task recovery on Worker disconnect (max 3 retries) |
-| `src/worker/watcher.ts` | Worker message watch → template render → `claude -p` + self-evaluation |
+| `src/worker/watcher.ts` | Worker message watch → orchestration |
+| `src/worker/evaluator.ts` | Built-in self-evaluation after task completion |
+| `src/executor/template.ts` | Template loading and variable rendering |
+| `src/executor/runner.ts` | Claude CLI execution wrapper |
+| `src/utils/logger.ts` | Tagged logger for contextual output |
 | `src/zk/client.ts` | ZooKeeper client — all ZK operations + watch methods |
 | `src/zk/paths.ts` | ZK path constants and helper functions |
 | `src/modules/task-queue.ts` | Task lifecycle: push/claim/complete/block/fail/retry/list |

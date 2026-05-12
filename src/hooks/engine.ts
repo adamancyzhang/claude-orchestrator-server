@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { Logger } from "../utils/logger.js";
+
+const logger = new Logger("HookEngine");
 
 export interface HookContext {
   instanceId: string;
@@ -59,7 +62,7 @@ export class HookEngine {
     });
 
     child.on("error", (err) => {
-      console.error(`[HookEngine] ${event} hook failed: ${err.message}`);
+      logger.error(`${event} hook failed`, err);
     });
 
     child.unref();

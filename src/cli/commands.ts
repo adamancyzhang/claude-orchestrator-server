@@ -7,10 +7,14 @@ import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { loadConfig, loadInstanceConfig, saveInstanceConfig, saveInstanceId, loadInstanceId, loadGlobalConfig, resolveInstanceId, expandHomeDir } from "../config.js";
 import { output } from "../utils/output.js";
+import { Logger } from "../utils/logger.js";
 import { HookEngine } from "../hooks/engine.js";
 import { WorkerWatcher } from "../worker/watcher.js";
+import { TemplateEngine } from "../executor/template.js";
+import { ClaudeRunner } from "../executor/runner.js";
+import { SelfEvaluator } from "../worker/evaluator.js";
 
-const VALID_ROLES = ["planner", "builder", "verifier", "reviewer", "accepter", "evaluator", "leader"] as const;
+const VALID_ROLES = ["planner", "builder", "verifier", "reviewer", "accepter"] as const;
 
 async function withZk<T>(
   hosts: string,
@@ -68,17 +72,34 @@ export async function cmdRegister(zkHosts: string): Promise<void> {
   const leaderData = await zk.getLeader();
   const leaderInstanceId = (leaderData?.instance_id as string) ?? instance.id;
 
+  const workDir = process.cwd();
+  const agentsDir = path.join(workDir, ".claude-orchestrator", "agents");
+
   const hooks = new HookEngine();
   hooks.load(resolvedConfig.hooks);
+
+  const templateEngine = new TemplateEngine(agentsDir);
+  const runner = new ClaudeRunner(
+    resolvedConfig.cliCommand,
+    resolvedConfig.cacheDir,
+    leaderInstanceId,
+    workDir,
+  );
+  const evaluator = new SelfEvaluator(
+    templateEngine,
+    runner,
+    name,
+    role,
+  );
 
   const watcher = new WorkerWatcher(
     zk,
     instance.id,
-    process.cwd(),
-    resolvedConfig.cliCommand,
-    resolvedConfig.cacheDir,
     leaderInstanceId,
     hooks,
+    templateEngine,
+    runner,
+    evaluator,
   );
 
   const onSigint = () => {
@@ -98,10 +119,11 @@ export async function cmdRegister(zkHosts: string): Promise<void> {
     }, 200);
   });
 
+  const logger = new Logger("CLI");
   await registry.unregister(instance.id);
   await zk.disconnect();
   process.removeListener("SIGINT", onSigint);
-  console.log("Unregistered. Goodbye.");
+  logger.info("Unregistered. Goodbye.");
 }
 
 export async function cmdPushTask(
