@@ -46,7 +46,7 @@ The Leader is a read-only TUI with an event-driven architecture:
 
 ```
 ZK watches (instances, tasks, messages)
-  → LeaderEventBus (typed EventEmitter, 11 event types)
+  → LeaderEventBus (typed EventEmitter, 13 event types)
     → LeaderState (centralized state, .apply() reduces each event)
       → LeaderTui (ANSI escape-code rendering, re-renders on every event)
 ```
@@ -58,19 +58,21 @@ ZK watches (instances, tasks, messages)
 | `WorkerMonitor` | Watches `/instances` children → emits `worker_joined` / `worker_left` |
 | `TaskOrchestrator` | Watches `/tasks/pending` and `/tasks/claimed` → emits `task_created` / `task_claimed` / `task_completed` |
 | `TaskRecovery` | On `worker_left`, scans claimed tasks for that worker → re-queues (max 3 retries) or archives as failed |
-| `LeaderWatcher` | Watches own message dir → routes to `DecisionEngine` (if msg has `link`) or `TaskGenerator` (otherwise) |
-| `DecisionEngine` | Evaluates Worker completion reports via `claude -p` + `leader-decide.md` template → pass/feedback/reject |
-| `TaskGenerator` | Decomposes requirements via `claude -p` + `leader-decompose.md` template → creates responsibility chains |
+| `LeaderWatcher` | Watches own message dir → routes to `ChainRouter` for mechanical dispatching |
+| `ChainRouter` | Pure mechanical router — no claude-cli calls. Forwards requirements to Planner Worker, parses task definitions, executes Worker self-evaluation decisions |
 
-The TUI has a keyboard input line — typed text is sent as a message to the Leader's own ZK message queue, which the `LeaderWatcher` picks up and routes to `TaskGenerator` for decomposition.
+The Leader no longer calls `claude -p`. Task decomposition and decision evaluation are Worker capabilities. The Leader only does message forwarding, task creation from structured definitions, and mechanical execution of EvalDecision JSON from Workers.
+
+The TUI has a keyboard input line — typed text is sent as a message to the Leader's own ZK message queue, which the `LeaderWatcher` picks up and routes to `ChainRouter` for forwarding to a Planner Worker.
 
 ### Worker Node (`src/worker/watcher.ts`)
 
 A persistent ZK watch loop on the Worker's own message directory. On new message:
-1. Selects the template by `msg.link` (`plan`/`build`/`verify`/`review`/`accept` or `_generic`)
+1. Selects the template by `msg.link` (`plan`/`build`/`verify`/`review`/`accept`/`decompose` or `_generic`)
 2. Renders template variables (`{{name}}`, `{{content}}`, `{{work_dir}}`, etc.)
 3. Executes `$COMMAND -p "$prompt" | tee $CACHE_DIR/{key}.log`
-4. If the message has a `link`, sends a completion report back to the Leader
+4. For chain-link tasks, runs built-in self-evaluation via `worker-evaluate.md` template
+5. Sends completion report (with EvalDecision JSON for chain links, or ChainDef JSON for decompose) back to Leader
 
 ### ZooKeeper Modules (`src/modules/`)
 
@@ -96,7 +98,7 @@ This ensures planners claim `plan` tasks, builders claim `build` tasks, etc., bu
 plan → build → verify → review → accept
 ```
 
-Each link is a Claude Code skill under `skills/` and a Worker template under `src/templates/`. Tasks in a chain share a `chain_id`. The Leader's `DecisionEngine` evaluates each link's completion before activating the next.
+Each link is a Claude Code skill under `skills/` and a Worker template under `src/templates/`. Tasks in a chain share a `chain_id`. Each Worker self-evaluates its own output after completing a task, then sends an EvalDecision JSON to the Leader, which mechanically activates the next link or handles feedback.
 
 ### Configuration Layering
 
@@ -136,21 +138,20 @@ Context store (`/context`) paths are defined in `paths.ts` but not actively used
 | `src/index.ts` | CLI entry point (commander, 15 commands) |
 | `src/config.ts` | Config loading, layering, instance ID persistence |
 | `src/leader/index.ts` | Leader startup orchestration — wires all subsystems |
-| `src/leader/event-bus.ts` | Typed EventEmitter with 11 `LeaderEventType` values |
+| `src/leader/event-bus.ts` | Typed EventEmitter with 13 `LeaderEventType` values |
 | `src/leader/state.ts` | `LeaderState.apply()` — reduces events into display state |
 | `src/leader/tui.ts` | ANSI escape-code TUI rendering (team, tasks, event log, input) |
-| `src/leader/watcher.ts` | Leader message watch → DecisionEngine / TaskGenerator routing |
-| `src/leader/decision-engine.ts` | Claude-driven decision on Worker completion reports |
-| `src/leader/task-generator.ts` | Claude-driven requirement decomposition into task chains |
+| `src/leader/watcher.ts` | Leader message watch → ChainRouter mechanical routing |
+| `src/leader/chain-router.ts` | Pure mechanical router: forward requirements, parse task defs, execute EvalDecisions |
 | `src/leader/recovery.ts` | Orphan task recovery on Worker disconnect (max 3 retries) |
-| `src/worker/watcher.ts` | Worker message watch → template render → `claude -p` |
+| `src/worker/watcher.ts` | Worker message watch → template render → `claude -p` + self-evaluation |
 | `src/zk/client.ts` | ZooKeeper client — all ZK operations + watch methods |
 | `src/zk/paths.ts` | ZK path constants and helper functions |
 | `src/modules/task-queue.ts` | Task lifecycle: push/claim/complete/block/fail/retry/list |
 | `src/modules/message-router.ts` | Message send/poll/wait/dismiss + template rendering |
-| `src/models/schemas.ts` | Zod schemas for Instance, Task, Message + factory functions |
+| `src/models/schemas.ts` | Zod schemas for Instance, Task, Message + ChainDef, EvalDecision + factory functions |
 | `src/utils/exec.ts` | `execWithTee` (streaming) and `execAndCapture` (buffered) |
-| `src/templates/` | Agent prompt templates (leader-decompose, leader-decide, worker-{plan,build,verify,review,accept}) |
+| `src/templates/` | Agent prompt templates (worker-{decompose,evaluate,plan,build,verify,review,accept}) |
 | `skills/` | Claude Code skills for responsibility chain + CLI reference |
 
 ## Testing

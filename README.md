@@ -22,7 +22,7 @@
 
 Behind the scenes, ZooKeeper acts as the coordination backbone: ephemeral nodes for instance heartbeat, sequential nodes for FIFO task ordering, and watches for real-time change notification.
 
-v0.3.1 delivers a **Leader-Worker CLI-native architecture**: no MCP server, no HTTP. The Leader runs a read-only TUI monitoring the team, while Workers connect directly to ZooKeeper and process messages via `claude -p`. All messaging happens through the CLI. Built-in Claude Code skills (task-planning, task-execution, task-verification, task-review, task-acceptance, task-traceability) enforce a standardized responsibility chain for every task.
+v0.3.1 delivers a **Leader-Worker CLI-native architecture**: no MCP server, no HTTP. The Leader runs a read-only TUI and acts as a pure message/task router — it never calls `claude -p`. Workers connect directly to ZooKeeper, process messages via `claude -p`, self-evaluate their output, and send structured decisions back to the Leader. All AI intelligence lives in Workers; the Leader only handles mechanical forwarding, task distribution, and recovery. Built-in Claude Code skills (task-planning, task-execution, task-verification, task-review, task-acceptance, task-traceability) enforce a standardized responsibility chain for every task.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -66,7 +66,7 @@ docker-compose up -d
 claude-orchestrator setup --leader --name Tom
 
 # For each Worker (the doers):
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
 ```
 
 This creates `.claude-orchestrator/agents/` with message templates, `.claude/skills/` with responsibility-chain skills, and writes project + global config.
@@ -107,15 +107,15 @@ claude-orchestrator poll-task
 
 | Component | What it does | ZK magic |
 |-----------|-------------|----------|
-| **Leader** | Read-only TUI, monitors team, recovers orphaned tasks | `/leader` EPHEMERAL — only one Leader at a time |
-| **Worker** | Persistent ZK connection, auto-processes messages via `claude -p` | Ephemeral nodes → auto-cleanup on disconnect |
+| **Leader** | Read-only TUI, mechanical message/task router, recovers orphaned tasks. No AI calls. | `/leader` EPHEMERAL — only one Leader at a time |
+| **Worker** | Persistent ZK connection, auto-processes messages via `claude -p`, self-evaluates output | Ephemeral nodes → auto-cleanup on disconnect |
 | **Task Queue** | Push → Claim → In Progress → Complete (or Block/Fail/Retry) | Sequential nodes for FIFO, ephemeral claims for atomic locks |
 | **Message Router** | P2P messages, broadcast, help requests, templates | Persistent-sequential nodes, ZK watches for push |
 | **Context Store** | Shared key-value storage, watch for changes | Persistent nodes, cross-instance visibility |
 
 ### CLI-Native — No MCP Server
 
-v0.3.0 removes the centralized MCP Server entirely. Leader and Workers each connect directly to ZooKeeper. Messages are delivered via ZK watches that trigger `$COMMAND -p "$MSG" | tee $CACHE_DIR/{key}.log` on the recipient. This eliminates 3 layers of indirection (MCP protocol, SSE, HTTP) and makes every node self-contained.
+v0.3.x removes the centralized MCP Server entirely. Leader and Workers each connect directly to ZooKeeper. The Leader is a pure router: it forwards requirements to Planner Workers, creates tasks from structured definitions, and mechanically executes EvalDecision JSON from Workers. AI intelligence (task decomposition, self-evaluation) runs exclusively on Workers via `claude -p`. This eliminates 3 layers of indirection (MCP protocol, SSE, HTTP) and makes every node self-contained.
 
 ### CLI Commands (15)
 
@@ -157,8 +157,8 @@ claude-orchestrator register
 ```
 ```
 TUI updates:
-  [TEAM] Jerry joined (developer)
-  [EVENT] 9:15:03 PM Jerry joined (developer)
+  [TEAM] Jerry joined (builder)
+  [EVENT] 9:15:03 PM Jerry joined (builder)
 ```
 
 **Tom assigns work (from another terminal):**
@@ -321,11 +321,13 @@ Zero external database. All state lives in ZooKeeper.
 
 | Role | Value | Typical behavior |
 |------|-------|-----------------|
-| Leader | `leader` | Runs TUI, monitors team, recovers orphaned tasks |
-| Architect | `architect` | Sets standards, designs tasks, reviews results |
-| Developer | `developer` | Claims tasks, writes code, submits PRs |
-| Tester | `tester` | Claims test tasks, E2E verification |
-| General | `general` | Any role |
+| Leader | `leader` | Runs TUI, mechanical message/task routing, recovers orphaned tasks |
+| Planner | `planner` | Decomposes requirements into task chains, defines blueprints |
+| Builder | `builder` | Claims build tasks, writes code, submits PRs |
+| Verifier | `verifier` | Claims verify tasks, checks Builder output against Plan |
+| Reviewer | `reviewer` | Claims review tasks, quality gate for design consistency |
+| Accepter | `accepter` | Claims accept tasks, final Go/No-Go validation |
+| Evaluator | `evaluator` | Dedicated evaluation Worker (optional; self-evaluation is built-in) |
 
 ---
 
@@ -348,20 +350,21 @@ Zero external database. All state lives in ZooKeeper.
 │   ├── config.ts              # Configuration handling
 │   ├── cli/
 │   │   └── commands.ts        # CLI subcommand implementations
-│   ├── leader/                # Leader node (v0.3.0)
+│   ├── leader/                # Leader node (v0.3.1)
 │   │   ├── index.ts           #   startup / shutdown orchestration
 │   │   ├── tui.ts             #   ANSI-based read-only TUI
-│   │   ├── event-bus.ts       #   typed EventEmitter
+│   │   ├── event-bus.ts       #   typed EventEmitter (13 events)
 │   │   ├── state.ts           #   centralized LeaderState
 │   │   ├── monitor.ts         #   WorkerMonitor — join/leave detection
 │   │   ├── orchestrator.ts    #   TaskOrchestrator — lifecycle tracking
 │   │   ├── recovery.ts        #   TaskRecovery — orphan recovery (max 3 retries)
-│   │   └── watcher.ts         #   LeaderWatcher — message processing
-│   ├── worker/                # Worker node (v0.3.0)
-│   │   └── watcher.ts         #   WorkerWatcher — persistent message loop
+│   │   ├── watcher.ts         #   LeaderWatcher — message processing
+│   │   └── chain-router.ts    #   ChainRouter — mechanical routing (no AI)
+│   ├── worker/                # Worker node (v0.3.1)
+│   │   └── watcher.ts         #   WorkerWatcher — persistent message loop + self-evaluation
 │   ├── templates/             # Built-in agent templates
-│   │   ├── leader-decompose.md #   Leader decompose prompt
-│   │   ├── leader-decide.md   #   Leader decide prompt
+│   │   ├── worker-decompose.md #   Planner decompose prompt
+│   │   ├── worker-evaluate.md  #   Worker self-evaluation prompt
 │   │   ├── worker-plan.md     #   Planner template (task-traceability + task-acceptance)
 │   │   ├── worker-build.md    #   Builder template (task-traceability)
 │   │   ├── worker-verify.md   #   Verifier template (task-traceability)

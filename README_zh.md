@@ -22,7 +22,7 @@
 
 底层通过 ZooKeeper 实现分布式协调：临时节点管理实例心跳，顺序节点保证任务 FIFO 排序，Watch 机制实现实时通知。
 
-v0.3.0 引入了 **Leader-Worker CLI 原生架构**：不再依赖 MCP 服务器，没有 HTTP 协议。Leader 运行只读 TUI 监控团队，Worker 直连 ZooKeeper 并通过 `claude -p` 处理消息。所有通信都通过 CLI 完成。
+v0.3.1 引入了 **Leader-Worker CLI 原生架构**：不再依赖 MCP 服务器，没有 HTTP 协议。Leader 运行只读 TUI，作为纯消息/任务路由器 — 不调用 `claude -p`。Worker 直连 ZooKeeper，通过 `claude -p` 处理消息，完成后自评估并发送结构化决策给 Leader。所有 AI 智能在 Worker 端运行；Leader 只做机械转发、任务分发和恢复。
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -66,7 +66,7 @@ docker-compose up -d
 claude-orchestrator setup --leader --name Tom
 
 # Worker（执行者——每个 Worker 一个）：
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
 ```
 
 这会创建 `.claude-orchestrator/agents/` 目录并写入消息模板，同时写入项目和全局配置。
@@ -83,11 +83,10 @@ Leader TUI 是只读的 —— 它显示谁在线、任务状态（待处理/进
 ### 5. 注册 Worker
 
 ```bash
-# 持久模式 —— 保持连接，自动处理消息：
-claude-orchestrator register --name Jerry --role developer --work-dir /path/to/project
-
-# 一次性模式 —— 仅注册，不启动持久监听器：
-claude-orchestrator register --name Jerry --role developer
+# 从 .claude-orchestrator/config.json 读取 name/role（setup 时设定）。
+# 启动 Worker Watcher —— 监听消息并通过 claude -p 自动处理：
+claude-orchestrator register
+# 按 Ctrl+C 停止并注销
 ```
 
 ### 6. 开始使用
@@ -108,45 +107,34 @@ claude-orchestrator list-tasks --status pending
 
 | 组件 | 功能 | ZK 魔法 |
 |------|------|---------|
-| **Leader** | 只读 TUI，监控团队，恢复孤儿任务 | `/leader` EPHEMERAL — 同时只有一个 Leader |
-| **Worker** | 持久 ZK 连接，通过 `claude -p` 自动处理消息 | 临时节点 → 断线自动清理 |
+| **Leader** | 只读 TUI，机械消息/任务路由，恢复孤儿任务。不调用 AI。 | `/leader` EPHEMERAL — 同时只有一个 Leader |
+| **Worker** | 持久 ZK 连接，通过 `claude -p` 自动处理消息，内置自评估 | 临时节点 → 断线自动清理 |
 | **任务队列** | 推送 → 认领 → 进行中 → 完成（或阻塞/失败/重试） | 顺序节点保证 FIFO，临时节点实现原子锁 |
 | **消息路由** | 点对点消息、广播、求助、模板渲染 | 持久顺序节点 + ZK Watch 推送 |
 | **上下文存储** | 共享键值存储、变更监听 | 持久节点，跨实例可见 |
 
 ### CLI 原生 —— 零 MCP 服务器
 
-v0.3.0 完全移除了中心化的 MCP 服务器。Leader 和 Worker 各自直连 ZooKeeper。消息通过 ZK Watch 触发接收方执行 `$COMMAND -p "$MSG" | tee $CACHE_DIR/{key}.log`。这消除了 3 层中间层（MCP 协议、SSE、HTTP），让每个节点完全自包含。
+v0.3.x 完全移除了中心化的 MCP 服务器。Leader 和 Worker 各自直连 ZooKeeper。Leader 是纯路由器：转发需求给 Planner Worker、从结构化定义创建任务、机械执行 Worker 发送的 EvalDecision JSON。AI 智能（任务拆解、自评估）只在 Worker 端通过 `claude -p` 运行。这消除了 3 层中间层（MCP 协议、SSE、HTTP），让每个节点完全自包含。
 
-### CLI 命令（25 个）
+### CLI 命令（15 个）
 
 | 命令 | 功能 |
 |------|------|
 | `leader` | 启动 Leader 节点，显示只读 TUI |
-| `setup` | 初始化环境：模板、配置、agent 目录 |
-| `register` | 加入团队。加 `--work-dir` 启用持久消息监听 |
-| `heartbeat` | 保持在线，可选报告当前任务 |
-| `status` | 健康检查（ZK 连接状态） |
-| `list-instances` | 查看当前在线实例 |
+| `setup` | 初始化环境：模板、技能、配置 |
+| `register` | 加入团队，启动持久消息监听 |
+| `unregister` | 显式注销实例 |
 | `push-task` | 创建任务（可指定分配给某人） |
 | `claim-task` | 认领下一个任务 —— 原子操作，不会重复认领 |
 | `complete-task` | 标记任务完成并提交结果 |
+| `poll-task` | 按状态查看任务 |
 | `task-block` | 标记任务为阻塞（附原因） |
 | `task-fail` | 标记任务为失败（附原因） |
 | `task-retry` | 重新入队失败任务（retry_count + 1，最多 3 次） |
-| `list-tasks` | 按状态查看任务（pending/claimed/in_progress/completed/blocked/failed） |
-| `send-message` | 按名称私聊其他实例或广播给所有人 |
-| `poll-messages` | 检查收件箱 |
-| `wait-for-message` | 长轮询 —— 阻塞等待新消息 |
-| `dismiss-message` | 删除收件箱中的消息 |
-| `request-help` | 向整个团队广播求助 |
-| `set-context` | 写入共享键值对 |
-| `get-context` | 读取共享键值对 |
-| `delete-context` | 删除共享上下文键 |
-| `list-context-keys` | 列出所有上下文键 |
-| `watch-context` | 监听上下文键变更（阻塞直到变化） |
-| `watch-tasks` | 监听新任务（阻塞直到新任务） |
-| `unregister` | 显式注销实例 |
+| `send-message` | 向 Leader 发送消息 |
+| `poll-message` | 检查收件箱 |
+| `delete-message` | 删除收件箱中的消息 |
 | `config` | 查看当前配置 |
 
 所有 CLI 命令返回 JSON 格式。每个命令都支持 `--zookeeper` / `-z`（或环境变量 `ZK_HOSTS`）以指向远程 ZooKeeper。
@@ -165,12 +153,12 @@ claude-orchestrator leader --name Tom
 
 **Jerry 注册为 Worker：**
 ```bash
-claude-orchestrator register --name Jerry --role developer --work-dir ~/project
+claude-orchestrator register
 ```
 ```
 TUI 更新：
-  [TEAM] Jerry joined (developer)
-  [EVENT] 9:15:03 PM Jerry joined (developer)
+  [TEAM] Jerry joined (builder)
+  [EVENT] 9:15:03 PM Jerry joined (builder)
 ```
 
 **Tom 分配工作（从另一个终端）：**
@@ -265,7 +253,7 @@ claimed → pending（Worker 断线，Leader 恢复孤儿任务）
 
 - Node.js 18+
 - Docker（用于 ZooKeeper）
-- Claude Code CLI（用于 `register --work-dir` 消息处理）
+- Claude Code CLI（用于 Worker 消息处理）
 
 ### 源码安装
 
@@ -299,17 +287,18 @@ npm test
 
 ## 内置技能
 
-仓库内置了 Claude Code 技能，让编排器更好用：
+仓库内置了 Claude Code 技能，为责任链各环节提供标准化流程：
 
 | 技能 | 功能 |
 |------|------|
-| `claude-orchestrator` | 完整 CLI 参考 —— 全部 25 条命令及示例 |
-| `orchestrator-setup` | 自动配置环境和 agent 模板 |
-| `orchestrator-register` | 引导式注册流程 |
-| `orchestrator-status` | 仪表盘：健康状态、实例、任务 |
-| `orchestrator-communicate` | 消息模式：轮询、私聊、广播 |
-| `orchestrator-help` | 求助工作流 |
-| `orchestrator-agent` | 自主代理循环：检查 → 认领 → 工作 → 完成 |
+| `task-planning` | Planner — 分析需求、定义蓝图、拆解任务 |
+| `task-execution` | Builder — 认领任务、按蓝图实施、提交代码 |
+| `task-verification` | Verifier — 独立验证 Builder 输出是否符合 Plan 标准 |
+| `task-review` | Reviewer — 审核完整链路（Plan→Build→Verify）的设计一致性 |
+| `task-acceptance` | Accepter — 按业务标准验证最终交付物，签署 Go/No-Go |
+| `task-traceability` | 基础层 — Trace → Execute → Map → Evidence → Record，所有角色共用 |
+| `claude-orchestrator` | 基础设施 — 完整 CLI 参考，全部 15 条命令及示例 |
+| `claude-code-developer` | 基础设施 — Hooks、Settings、MCP、CLI 参考 |
 
 ---
 
@@ -332,11 +321,13 @@ npm test
 
 | 角色 | 值 | 典型职责 |
 |------|-----|---------|
-| Leader | `leader` | 运行 TUI，监控团队，恢复孤儿任务 |
-| 架构师 | `architect` | 制定规范、设计任务、审核结果 |
-| 开发者 | `developer` | 认领任务、编码实现、提交 PR |
-| 测试 | `tester` | 认领测试任务、E2E 验证 |
-| 通用 | `general` | 任意角色 |
+| Leader | `leader` | 运行 TUI，机械消息/任务路由，恢复孤儿任务 |
+| Planner | `planner` | 将需求拆解为任务链，定义蓝图 |
+| Builder | `builder` | 认领构建任务、编码实现、提交 PR |
+| Verifier | `verifier` | 认领验证任务，检查 Builder 输出是否符合 Plan |
+| Reviewer | `reviewer` | 认领审核任务，设计一致性质检 |
+| Accepter | `accepter` | 认领验收任务，最终 Go/No-Go 决策 |
+| Evaluator | `evaluator` | 独立评估 Worker（可选；自评估已内置） |
 
 ---
 
@@ -359,20 +350,26 @@ npm test
 │   ├── config.ts              # 配置管理
 │   ├── cli/
 │   │   └── commands.ts        # CLI 子命令实现
-│   ├── leader/                # Leader 节点（v0.3.0 新增）
+│   ├── leader/                # Leader 节点（v0.3.1）
 │   │   ├── index.ts           #   启动 / 关闭编排
 │   │   ├── tui.ts             #   ANSI 只读 TUI
-│   │   ├── event-bus.ts       #   类型化 EventEmitter
+│   │   ├── event-bus.ts       #   类型化 EventEmitter（13 个事件）
 │   │   ├── state.ts           #   LeaderState 中心状态
 │   │   ├── monitor.ts         #   WorkerMonitor — 上下线检测
 │   │   ├── orchestrator.ts    #   TaskOrchestrator — 任务生命周期
 │   │   ├── recovery.ts        #   TaskRecovery — 孤儿恢复（最多 3 次重试）
-│   │   └── watcher.ts         #   LeaderWatcher — 消息处理
-│   ├── worker/                # Worker 节点（v0.3.0 新增）
-│   │   └── watcher.ts         #   WorkerWatcher — 持久消息监听
-│   ├── templates/             # 内置 agent 模板（v0.3.0 新增）
-│   │   ├── leader.md          #   Leader 消息模板
-│   │   └── worker.md          #   Worker 完成报告模板
+│   │   ├── watcher.ts         #   LeaderWatcher — 消息处理
+│   │   └── chain-router.ts    #   ChainRouter — 机械路由（无 AI 调用）
+│   ├── worker/                # Worker 节点（v0.3.1）
+│   │   └── watcher.ts         #   WorkerWatcher — 持久消息监听 + 自评估
+│   ├── templates/             # 内置 agent 模板（v0.3.1）
+│   │   ├── worker-decompose.md #   Planner 拆解模板
+│   │   ├── worker-evaluate.md  #   Worker 自评估模板
+│   │   ├── worker-plan.md     #   Planner 任务模板
+│   │   ├── worker-build.md    #   Builder 任务模板
+│   │   ├── worker-verify.md   #   Verifier 任务模板
+│   │   ├── worker-review.md   #   Reviewer 任务模板
+│   │   └── worker-accept.md   #   Accepter 任务模板
 │   ├── zk/
 │   │   ├── client.ts          # ZooKeeper 连接管理
 │   │   ├── paths.ts           # ZK 路径常量
