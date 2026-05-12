@@ -8,3 +8,4 @@ bin/orchestrator-binary
 .npmrc
 sessions/
 .claude-orchestrator/
+countlines-cli/
