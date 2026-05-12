@@ -312,31 +312,32 @@ export async function cmdSetup(options: {
   const skillsSrcDir = path.join(__dirname, "..", "skills");
   const skillsDstDir = path.join(process.cwd(), ".claude", "skills");
 
+  const SKILLS_TO_COPY = [
+    "task-planning",
+    "task-execution",
+    "task-verification",
+    "task-review",
+    "task-acceptance",
+    "task-traceability",
+  ];
+
   const skillsWritten: string[] = [];
-  const skillsSkipped: string[] = [];
 
   if (fs.existsSync(skillsSrcDir)) {
-    const skillNames = fs.readdirSync(skillsSrcDir, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name)
-      .filter(n => n.startsWith("task-"));
-
-    for (const skillName of skillNames) {
+    for (const skillName of SKILLS_TO_COPY) {
       const srcSkillPath = path.join(skillsSrcDir, skillName, "SKILL.md");
       const dstSkillDir = path.join(skillsDstDir, skillName);
       const dstSkillPath = path.join(dstSkillDir, "SKILL.md");
 
       if (!fs.existsSync(srcSkillPath)) continue;
 
-      fs.mkdirSync(dstSkillDir, { recursive: true });
-
-      if (fs.existsSync(dstSkillPath)) {
-        skillsSkipped.push(skillName);
-      } else {
-        const content = fs.readFileSync(srcSkillPath, "utf-8");
-        fs.writeFileSync(dstSkillPath, content);
-        skillsWritten.push(skillName);
+      if (fs.existsSync(dstSkillDir)) {
+        fs.rmSync(dstSkillDir, { recursive: true, force: true });
       }
+      fs.mkdirSync(dstSkillDir, { recursive: true });
+      const content = fs.readFileSync(srcSkillPath, "utf-8");
+      fs.writeFileSync(dstSkillPath, content);
+      skillsWritten.push(skillName);
     }
   }
 
@@ -349,7 +350,6 @@ export async function cmdSetup(options: {
   if (written.length > 0) result["templates_written"] = written;
   if (skipped.length > 0) result["templates_skipped"] = skipped;
   if (skillsWritten.length > 0) result["skills_written"] = skillsWritten;
-  if (skillsSkipped.length > 0) result["skills_skipped"] = skillsSkipped;
   if (!resolvedName) result["warning"] = "No name provided. Use --name to set instance name.";
 
   output(result);
