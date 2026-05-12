@@ -5,8 +5,11 @@ import { z } from "zod";
 export const InstanceStatus = z.enum(["idle", "busy"]);
 export type InstanceStatus = z.infer<typeof InstanceStatus>;
 
-export const InstanceRole = z.enum(["architect", "developer", "tester", "general", "leader"]);
+export const InstanceRole = z.enum(["planner", "builder", "verifier", "reviewer", "accepter", "leader"]);
 export type InstanceRole = z.infer<typeof InstanceRole>;
+
+export const TaskLink = z.enum(["plan", "build", "verify", "review", "accept"]);
+export type TaskLink = z.infer<typeof TaskLink>;
 
 export const TaskStatus = z.enum(["pending", "claimed", "in_progress", "completed", "blocked", "failed"]);
 export type TaskStatus = z.infer<typeof TaskStatus>;
@@ -32,7 +35,7 @@ function utcNow(): string {
 export const InstanceSchema = z.object({
   id: z.string(),
   name: z.string(),
-  role: InstanceRole.default("general"),
+  role: InstanceRole.default("builder"),
   status: InstanceStatus.default("idle"),
   current_task_id: z.string().nullable().default(null),
   connected_since: z.string(),
@@ -53,6 +56,8 @@ export const TaskSchema = z.object({
   completed_at: z.string().nullable().default(null),
   claimed_by: z.string().nullable().default(null),
   result: z.string().nullable().default(null),
+  link: TaskLink.nullable().default(null),
+  chain_id: z.string().nullable().default(null),
   retry_count: z.number().int().default(0),
   blocked_reason: z.string().nullable().default(null),
   fail_reason: z.string().nullable().default(null),
@@ -74,6 +79,10 @@ export const MessageSchema = z.object({
   content: z.string(),
   created_at: z.string(),
   read: z.boolean().default(false),
+  link: z.string().nullable().default(null),
+  task_title: z.string().nullable().default(null),
+  task_description: z.string().nullable().default(null),
+  task_criteria: z.string().nullable().default(null),
   task_doc_path: z.string().nullable().default(null),
   result_path: z.string().nullable().default(null),
   reply_to: z.string().nullable().default(null),
@@ -91,7 +100,7 @@ export function createInstance(overrides: {
   return InstanceSchema.parse({
     id: overrides.id ?? crypto.randomUUID().replace(/-/g, ""),
     name: overrides.name,
-    role: overrides.role ?? "general",
+    role: overrides.role ?? "builder",
     status: "idle",
     current_task_id: null,
     connected_since: utcNow(),
@@ -107,6 +116,8 @@ export function createTask(overrides: {
   assigned_to?: string | null;
   created_by_name?: string;
   assigned_to_name?: string | null;
+  link?: string | null;
+  chain_id?: string | null;
 }): Task {
   return TaskSchema.parse({
     id: "",
@@ -121,6 +132,8 @@ export function createTask(overrides: {
     completed_at: null,
     claimed_by: null,
     result: null,
+    link: overrides.link ?? null,
+    chain_id: overrides.chain_id ?? null,
     retry_count: 0,
     blocked_reason: null,
     fail_reason: null,
@@ -174,6 +187,8 @@ export const PushTaskInput = z.object({
   priority: TaskPriority.default(1),
   instance_id: z.string().default(""),
   assignee: z.string().optional(),
+  link: z.string().optional(),
+  chain_id: z.string().optional(),
 });
 
 export const ClaimTaskInput = z.object({

@@ -11,12 +11,12 @@ export class InstanceRegistry {
 
   async register(
     name: string,
-    role: string = "general",
+    role: string = "builder",
     instanceId?: string
   ): Promise<Instance> {
-    const validRole = ["architect", "developer", "tester", "general"].includes(role)
+    const validRole = ["planner", "builder", "verifier", "reviewer", "accepter", "leader"].includes(role)
       ? (role as InstanceRole)
-      : "general";
+      : "builder";
 
     if (instanceId) {
       const existing = await this.zk.getInstance(instanceId);

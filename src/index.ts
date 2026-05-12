@@ -116,7 +116,7 @@ program
   .description("Initialize orchestrator environment and agent templates")
   .option("--leader", "Initialize as Leader environment", false)
   .option("--name <name>", "Instance display name")
-  .option("--role <role>", "Instance role (developer/tester/architect/general)")
+  .option("--role <role>", "Instance role (planner/builder/verifier/reviewer/accepter)")
   .option("--cache-dir <path>", "Shared cache directory (default: ~/.claude-orchestrator/sessions)")
   .option("--command <cmd>", "Claude CLI command (default: claude --dangerously-skip-permissions -v)")
   .option("--global", "Write config only to ~/.claude-orchestrator/", false)
@@ -196,17 +196,21 @@ program
   .option("--description <text>", "Task description", "")
   .option("--priority <n>", "Priority: 0=HIGH, 1=MEDIUM, 2=LOW", "1")
   .option("--assignee <id>", "Target instance ID")
+  .option("--link <link>", "Responsibility chain link: plan, build, verify, review, accept")
+  .option("--chain-id <id>", "Chain identifier for grouping related tasks")
   .option("--instance-id <id>", "Creator instance ID (default from project config)")
   .action(async function (this: Command) {
     try {
-      const { title, description, priority, assignee, instanceId } = getSubOpts<{
+      const { title, description, priority, assignee, link, chainId, instanceId } = getSubOpts<{
         title: string;
         description: string;
         priority: string;
         assignee?: string;
+        link?: string;
+        chainId?: string;
         instanceId?: string;
       }>(this);
-      await cmdPushTask(getZkHosts(this), instanceId, title, description, parseInt(priority), assignee);
+      await cmdPushTask(getZkHosts(this), instanceId, title, description, parseInt(priority), assignee, link, chainId);
     } catch (e) {
       output({ error: String(e) }, true);
     }

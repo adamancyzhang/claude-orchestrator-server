@@ -35,15 +35,15 @@ describe("v0.3.0 Leader-Worker Integration", () => {
 
   it("Worker registers and appears in /instances", async () => {
     const registry = new InstanceRegistry(zk);
-    const instance = await registry.register("Jerry", "developer");
-    expect(instance.role).toBe("developer");
+    const instance = await registry.register("Jerry", "builder");
+    expect(instance.role).toBe("builder");
     const instances = await registry.listAll();
     expect(instances.some((i: Record<string, unknown>) => i.name === "Jerry")).toBe(true);
   });
 
   it("Task lifecycle: push -> claim -> complete", async () => {
     const taskQueue = new TaskQueue(zk);
-    const task = await taskQueue.push("Test task", "Test desc", 1, "tester-1");
+    const task = await taskQueue.push("Test task", "Test desc", 1, "creator-1");
     expect(task.status).toBe("pending");
     expect(task.retry_count).toBe(0);
 
@@ -57,7 +57,7 @@ describe("v0.3.0 Leader-Worker Integration", () => {
 
   it("Task lifecycle: push -> claim -> block -> fail -> retry", async () => {
     const taskQueue = new TaskQueue(zk);
-    const task = await taskQueue.push("Blockable task", "", 1, "tester-1");
+    const task = await taskQueue.push("Blockable task", "", 1, "creator-1");
     const claimed = await taskQueue.claim("worker-1");
     expect(claimed).not.toBeNull();
 
@@ -77,7 +77,7 @@ describe("v0.3.0 Leader-Worker Integration", () => {
 
   it("Message with new fields stores correctly", async () => {
     const registry = new InstanceRegistry(zk);
-    const instance = await registry.register("Alice", "developer");
+    const instance = await registry.register("Alice", "builder");
 
     const router = new MessageRouter(zk);
     const msgs = await router.send("sender-1", "Sender", "Test message", instance.id);
@@ -88,12 +88,59 @@ describe("v0.3.0 Leader-Worker Integration", () => {
     expect(messages.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("Worker registers with role accepter", async () => {
+    const registry = new InstanceRegistry(zk);
+    const instance = await registry.register("Eve", "accepter");
+    expect(instance.role).toBe("accepter");
+    const instances = await registry.listAll();
+    expect(instances.some((i: Record<string, unknown>) => i.name === "Eve" && i.role === "accepter")).toBe(true);
+  });
+
+  it("Task lifecycle: push -> claim -> complete with accept link", async () => {
+    const registry = new InstanceRegistry(zk);
+    const taskQueue = new TaskQueue(zk);
+
+    // Register an accepter instance so claim can match role
+    const instance = await registry.register("Eve-Accept", "accepter");
+
+    const task = await taskQueue.push("Accept task", "Final validation", 1, instance.id, undefined, undefined, undefined, "accept", "chain-001");
+    expect(task.link).toBe("accept");
+    expect(task.status).toBe("pending");
+
+    const claimed = await taskQueue.claim(instance.id);
+    expect(claimed).not.toBeNull();
+    expect(claimed!.link).toBe("accept");
+    expect(claimed!.status).toBe("claimed");
+
+    const completed = await taskQueue.complete(instance.id, claimed!.id, "Accepted: all criteria met");
+    expect(completed.status).toBe("completed");
+  });
+
+  it("Role-weight sorting favors accept tasks for accepter worker", async () => {
+    const registry = new InstanceRegistry(zk);
+    const taskQueue = new TaskQueue(zk);
+
+    // Register accepter worker first
+    const instance = await registry.register("Eve-Accepter", "accepter");
+
+    // Push a build task first, then an accept task
+    const task1 = await taskQueue.push("Build task", "", 1, instance.id, undefined, undefined, undefined, "build", null);
+    const task2 = await taskQueue.push("Accept task", "", 1, instance.id, undefined, undefined, undefined, "accept", null);
+
+    // Claim: should prefer the accept task due to role-weight matching
+    const claimed = await taskQueue.claim(instance.id);
+    expect(claimed).not.toBeNull();
+    // Accept task should be claimed first
+    expect(claimed!.id).toBe(task2.id);
+    expect(claimed!.link).toBe("accept");
+  });
+
   it("Workers can send messages to each other", async () => {
     const registry = new InstanceRegistry(zk);
     const router = new MessageRouter(zk);
 
-    const alice = await registry.register("Alice", "developer");
-    const bob = await registry.register("Bob", "tester");
+    const alice = await registry.register("Alice", "builder");
+    const bob = await registry.register("Bob", "verifier");
 
     await router.send(alice.id, "Alice", "Hello Bob!", bob.id);
     const msgs = await router.poll(bob.id);
@@ -134,7 +181,7 @@ describe("LeaderState", () => {
       type: "worker_joined",
       instanceId: "w1",
       name: "Jerry",
-      instance: { id: "w1", name: "Jerry", role: "developer", status: "idle", current_task_id: null },
+      instance: { id: "w1", name: "Jerry", role: "builder", status: "idle", current_task_id: null },
     });
     expect(state.workers).toHaveLength(1);
     expect(state.events).toHaveLength(1);

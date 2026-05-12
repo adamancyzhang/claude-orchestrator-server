@@ -1,9 +1,21 @@
 import type { LeaderEvent } from "./event-bus.js";
 
+function taskLinkToRole(link: string): string {
+  const map: Record<string, string> = {
+    plan: "planner",
+    build: "builder",
+    verify: "verifier",
+    review: "reviewer",
+    accept: "accepter",
+  };
+  return map[link] ?? link;
+}
+
 export interface WorkerInfo {
   id: string;
   name: string;
-  role: string;
+  presetRole: string;
+  currentRole: string | null;
   status: string;
   currentTaskId: string | null;
 }
@@ -32,7 +44,8 @@ export class LeaderState {
         this.workers.push({
           id: (event.instanceId as string) ?? (inst.id as string),
           name: inst.name as string,
-          role: inst.role as string,
+          presetRole: inst.role as string,
+          currentRole: null,
           status: inst.status as string,
           currentTaskId: (inst.current_task_id as string) ?? null,
         });
@@ -48,6 +61,7 @@ export class LeaderState {
         if (w) {
           w.status = event.status as string;
           w.currentTaskId = (event.currentTaskId as string) ?? null;
+          if (!w.currentTaskId) w.currentRole = null;
         }
         this.events.push({ timestamp: time, message: `${event.name}: ${event.status}` });
         break;
@@ -65,19 +79,39 @@ export class LeaderState {
           this.claimedTasks.push(t);
           this.pendingTasks = this.pendingTasks.filter(t => t.id !== event.taskId);
         }
+        // Derive currentRole from the task's link
+        const w = this.workers.find(w => w.id === event.instanceId);
+        if (w) {
+          const taskLink = (t?.link as string) ?? (event.link as string) ?? null;
+          w.currentRole = taskLink ? taskLinkToRole(taskLink) : null;
+          w.currentTaskId = event.taskId as string ?? null;
+          w.status = "busy";
+        }
         this.events.push({ timestamp: time, message: `Task ${event.taskId} claimed by ${event.instanceId}` });
         break;
       }
-      case "task_completed":
+      case "task_completed": {
         this.claimedTasks = this.claimedTasks.filter(t => t.id !== event.taskId);
         if (event.task) this.completedTasks.push(event.task as Record<string, unknown>);
+        // Clear currentRole for the worker
+        const w = this.workers.find(w => w.id === event.instanceId);
+        if (w) {
+          w.currentRole = null;
+          w.status = "idle";
+          w.currentTaskId = null;
+        }
         this.events.push({ timestamp: time, message: `Task ${event.taskId} completed` });
         break;
+      }
       case "task_blocked":
         this.events.push({ timestamp: time, message: `Task ${event.taskId} blocked: ${event.reason}` });
         break;
       case "task_failed":
         this.claimedTasks = this.claimedTasks.filter(t => t.id !== event.taskId);
+        {
+          const w = this.workers.find(w => w.id === event.instanceId);
+          if (w) { w.currentRole = null; w.status = "idle"; w.currentTaskId = null; }
+        }
         this.events.push({ timestamp: time, message: `Task ${event.taskId} failed: ${event.reason}` });
         break;
       case "task_recovered":

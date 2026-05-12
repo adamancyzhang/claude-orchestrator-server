@@ -20,6 +20,8 @@ export class TaskQueue {
     assignedTo?: string,
     createdByName?: string,
     assignedToName?: string | null,
+    link?: string | null,
+    chainId?: string | null,
   ): Promise<Task> {
     const task = createTask({
       title,
@@ -29,6 +31,8 @@ export class TaskQueue {
       assigned_to: assignedTo ?? null,
       created_by_name: createdByName,
       assigned_to_name: assignedToName ?? null,
+      link,
+      chain_id: chainId,
     });
     const taskId = await this.zk.createPendingTask(
       task as unknown as Record<string, unknown>
@@ -40,12 +44,31 @@ export class TaskQueue {
   async claim(instanceId: string): Promise<Task | null> {
     const pending = await this.zk.listPendingTasks();
 
+    // Read instance role for weight matching
+    let instanceRole = "";
+    try {
+      const instData = await this.zk.getInstance(instanceId);
+      instanceRole = (instData?.role as string) ?? "";
+    } catch {
+      // proceed without role-weight sorting
+    }
+
+    const roleToLink: Record<string, string> = {
+      planner: "plan",
+      builder: "build",
+      verifier: "verify",
+      reviewer: "review",
+      accepter: "accept",
+    };
+
     const sortKey = (item: [string, Record<string, unknown>]) => {
       const [, data] = item;
       const assigned = data.assigned_to as string | null;
       const prio = (data.priority as number) ?? 1;
       const isAssignedToMe = assigned === instanceId ? 0 : 1;
-      return [isAssignedToMe, prio, item[0]];
+      const taskLink = (data.link as string) ?? "";
+      const roleMatch = taskLink && roleToLink[instanceRole] === taskLink ? 0 : 1;
+      return [isAssignedToMe, roleMatch, prio, item[0]];
     };
 
     pending.sort((a, b) => {
@@ -106,6 +129,8 @@ export class TaskQueue {
       completed_at: now,
       completed_by_name: (claimedData.claimed_by_name as string) ?? "",
       result,
+      link: (claimedData.link as string) ?? null,
+      chain_id: (claimedData.chain_id as string) ?? null,
       retry_count: (claimedData.retry_count as number) ?? 0,
       duration_seconds: durationSeconds,
       created_by_name: (claimedData.created_by_name as string) ?? "",
@@ -165,6 +190,8 @@ export class TaskQueue {
       assigned_to_name: (completedData.assigned_to_name as string) ?? null,
       created_by_name: (completedData.created_by_name as string) ?? "",
       created_at: utcNow(),
+      link: (completedData.link as string) ?? null,
+      chain_id: (completedData.chain_id as string) ?? null,
       retry_count: retryCount,
       status: "pending",
       blocked_reason: null,

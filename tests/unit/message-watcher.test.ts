@@ -36,6 +36,8 @@ function makeMockZkClient() {
     watchMessageDir: vi.fn(),
     getMessage: vi.fn(),
     updateMessage: vi.fn().mockResolvedValue(undefined),
+    getInstance: vi.fn().mockResolvedValue({ name: "test-worker", role: "builder" }),
+    createMessage: vi.fn().mockResolvedValue("msg-new-1"),
   } as any;
 }
 

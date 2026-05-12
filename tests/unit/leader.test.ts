@@ -48,11 +48,11 @@ describe("LeaderState", () => {
       type: "worker_joined",
       instanceId: "abc12345",
       name: "Jerry",
-      instance: { id: "abc12345", name: "Jerry", role: "developer", status: "idle", current_task_id: null },
+      instance: { id: "abc12345", name: "Jerry", role: "builder", status: "idle", current_task_id: null },
     });
     expect(state.workers).toHaveLength(1);
     expect(state.workers[0].name).toBe("Jerry");
-    expect(state.workers[0].role).toBe("developer");
+    expect(state.workers[0].presetRole).toBe("builder");
     expect(state.workers[0].status).toBe("idle");
     expect(state.events).toHaveLength(1);
     expect(state.events[0].message).toContain("Jerry");
@@ -60,7 +60,7 @@ describe("LeaderState", () => {
 
   it("worker_left removes worker and logs event", () => {
     const state = new LeaderState();
-    state.apply({ type: "worker_joined", instanceId: "w1", instance: { id: "w1", name: "Alice", role: "tester", status: "idle" } });
+    state.apply({ type: "worker_joined", instanceId: "w1", instance: { id: "w1", name: "Alice", role: "verifier", status: "idle" } });
     state.apply({ type: "worker_left", instanceId: "w1", name: "Alice" });
     expect(state.workers).toHaveLength(0);
     expect(state.events[1].message).toContain("Alice left");
@@ -80,6 +80,14 @@ describe("LeaderState", () => {
     expect(state.pendingTasks).toHaveLength(0);
     expect(state.claimedTasks).toHaveLength(1);
     expect(state.claimedTasks[0].status).toBe("claimed");
+  });
+
+  it("task_claimed with accept link sets currentRole to accepter", () => {
+    const state = new LeaderState();
+    state.apply({ type: "worker_joined", instanceId: "w1", instance: { id: "w1", name: "Eve", role: "accepter", status: "idle" } });
+    state.apply({ type: "task_created", taskId: "task-005", task: { id: "task-005", title: "Accept task", link: "accept", priority: 1 } });
+    state.apply({ type: "task_claimed", taskId: "task-005", instanceId: "w1", link: "accept" });
+    expect(state.workers[0].currentRole).toBe("accepter");
   });
 
   it("task_completed removes from claimedTasks", () => {

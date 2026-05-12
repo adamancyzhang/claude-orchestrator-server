@@ -57,11 +57,13 @@ export class LeaderTui {
     if (state.workers.length === 0) {
       teamLines.push(` ${DIM}No workers online${RESET}`);
     } else {
-      const header = `${BOLD}${padRight("Name", 16)}${padRight("Role", 14)}${padRight("Status", 10)}Current Task${RESET}`;
+      const header = `${BOLD}${padRight("Name", 14)}${padRight("Preset", 12)}${padRight("Current Role", 16)}${padRight("Status", 8)}Current Task${RESET}`;
       teamLines.push(` ${header}`);
       for (const w of state.workers.slice(0, 8)) {
-        const statusColored = `${workerStatusColor(w.status)}${padRight(w.status, 9)}${RESET}`;
-        const line = ` ${padRight(truncate(w.name, 15), 16)}${padRight(w.role, 14)}${statusColored}${truncate(w.currentTaskId ?? "-", teamWidth - 44)}`;
+        const statusColored = `${workerStatusColor(w.status)}${padRight(w.status, 7)}${RESET}`;
+        const currentRole = w.currentRole ?? `${DIM}(idle)${RESET}`;
+        const cross = w.currentRole && w.currentRole !== w.presetRole ? `${MAGENTA}◀←${RESET} ` : "";
+        const line = ` ${padRight(truncate(w.name, 13), 14)}${padRight(w.presetRole, 12)}${cross}${padRight(currentRole, 16)}${statusColored}${truncate(w.currentTaskId ?? "-", teamWidth - 54)}`;
         teamLines.push(line);
       }
       if (state.workers.length > 8) {
@@ -81,10 +83,11 @@ export class LeaderTui {
       pendLines.push(` ${DIM}No pending tasks${RESET}`);
     } else {
       for (const t of pendTasks) {
-        const title = truncate(t.title as string ?? "", halfW - 10);
+        const title = truncate(t.title as string ?? "", halfW - 16);
         const prio = (t.priority as number) === 0 ? `${RED}HIGH${RESET}` :
                      (t.priority as number) === 1 ? `${YELLOW}MED${RESET}` : `${DIM}LOW${RESET}`;
-        pendLines.push(` ${prio} ${title}`);
+        const link = t.link ? `${CYAN}[${(t.link as string).charAt(0).toUpperCase() + (t.link as string).slice(1)}]${RESET} ` : "";
+        pendLines.push(` ${link}${prio} ${title}`);
       }
     }
 

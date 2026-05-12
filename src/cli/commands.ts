@@ -9,7 +9,7 @@ import { loadConfig, loadInstanceConfig, saveInstanceConfig, saveInstanceId, loa
 import { output } from "../utils/output.js";
 import { WorkerWatcher } from "../worker/watcher.js";
 
-const VALID_ROLES = ["architect", "developer", "tester", "general", "leader"] as const;
+const VALID_ROLES = ["planner", "builder", "verifier", "reviewer", "accepter", "leader"] as const;
 
 async function withZk<T>(
   hosts: string,
@@ -105,11 +105,13 @@ export async function cmdPushTask(
   title: string,
   description: string,
   priority: number,
-  assignee?: string
+  assignee?: string,
+  link?: string,
+  chainId?: string,
 ): Promise<void> {
   await withZk(zkHosts, async ({ taskQueue }) => {
     const instanceId = cliInstanceId ?? "";
-    const task = await taskQueue.push(title, description, priority, instanceId, assignee);
+    const task = await taskQueue.push(title, description, priority, instanceId, assignee, undefined, undefined, link ?? null, chainId ?? null);
     output(task);
   });
 }
@@ -230,7 +232,7 @@ export async function cmdSetup(options: {
 }): Promise<void> {
   const { leader, name, role, cacheDir, command, global: isGlobal } = options;
 
-  const resolvedRole = leader ? "leader" : (role || "general");
+  const resolvedRole = leader ? "leader" : (role || "builder");
   const resolvedName = name || (leader ? "Leader" : undefined);
 
   const defaultCliCommand = "claude --dangerously-skip-permissions --permission-mode dontAsk";
@@ -278,7 +280,14 @@ export async function cmdSetup(options: {
 
   const templates: Record<string, string> = {
     "leader.md": path.join(templateDir, "leader.md"),
+    "leader-decompose.md": path.join(templateDir, "leader-decompose.md"),
+    "leader-decide.md": path.join(templateDir, "leader-decide.md"),
     "worker.md": path.join(templateDir, "worker.md"),
+    "worker-plan.md": path.join(templateDir, "worker-plan.md"),
+    "worker-build.md": path.join(templateDir, "worker-build.md"),
+    "worker-verify.md": path.join(templateDir, "worker-verify.md"),
+    "worker-review.md": path.join(templateDir, "worker-review.md"),
+    "worker-accept.md": path.join(templateDir, "worker-accept.md"),
   };
 
   const written: string[] = [];

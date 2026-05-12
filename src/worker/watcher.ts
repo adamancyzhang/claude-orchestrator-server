@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import path from "node:path";
 import { ZkClient } from "../zk/client.js";
 import * as paths from "../zk/paths.js";
@@ -5,8 +6,13 @@ import { MessageSchema } from "../models/schemas.js";
 import { execWithTee } from "../utils/exec.js";
 import { expandHomeDir } from "../config.js";
 
+const LINK_TEMPLATES = ["plan", "build", "verify", "review", "accept"];
+
 export class WorkerWatcher {
   private inFlight = new Set<string>();
+  private templates: Record<string, string> = {};
+  private instanceName = "";
+  private instanceRole = "";
   stopped = false;
 
   constructor(
@@ -19,6 +25,31 @@ export class WorkerWatcher {
   ) {}
 
   async start(): Promise<void> {
+    // Load instance metadata
+    const instData = await this.zk.getInstance(this.instanceId);
+    this.instanceName = (instData?.name as string) ?? this.instanceId.slice(0, 8);
+    this.instanceRole = (instData?.role as string) ?? "builder";
+
+    // Load link templates from agents dir
+    const agentsDir = path.join(this.workDir, ".claude-orchestrator", "agents");
+    for (const link of LINK_TEMPLATES) {
+      try {
+        this.templates[link] = await fs.promises.readFile(
+          path.join(agentsDir, `worker-${link}.md`), "utf-8",
+        );
+      } catch {
+        // Fall back to generic template
+        try {
+          this.templates[link] = await fs.promises.readFile(
+            path.join(agentsDir, "worker.md"), "utf-8",
+          );
+        } catch {
+          // Minimal inline fallback
+          this.templates[link] = `You are a Worker.\n\n## Task\n\n{{content}}`;
+        }
+      }
+    }
+
     await this.zk.mkdirp(paths.messageDirPath(this.instanceId));
     console.log(`Watching for messages on instance ${this.instanceId.slice(0, 8)}...`);
     console.log(`Work dir: ${this.workDir}`);
@@ -54,16 +85,68 @@ export class WorkerWatcher {
     this.inFlight.add(msgId);
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
     const timestamp = new Date().toLocaleTimeString();
+    const link = (msg.link as string) ?? "_generic";
 
-    const uniqueKey = `${msg.type}-${msgId}-${Date.now().toString(36)}`;
+    const uniqueKey = `task-${msgId}-${Date.now().toString(36)}`;
     const resolvedCacheDir = expandHomeDir(path.join(this.cacheDir, this.leaderInstanceId));
+    const resultPath = path.join(resolvedCacheDir, `${uniqueKey}-result.md`);
     const logPath = path.join(resolvedCacheDir, `${uniqueKey}.log`);
+
+    // Select and render template
+    const template = this.templates[link];
+    let prompt: string;
+    if (template) {
+      prompt = template
+        .replace(/\{\{name\}\}/g, this.instanceName)
+        .replace(/\{\{preset_role\}\}/g, this.instanceRole)
+        .replace(/\{\{task_title\}\}/g, (msg.task_title as string) ?? "")
+        .replace(/\{\{task_description\}\}/g, (msg.task_description as string) ?? msg.content)
+        .replace(/\{\{task_criteria\}\}/g, (msg.task_criteria as string) ?? "")
+        .replace(/\{\{task_doc_path\}\}/g, (msg.task_doc_path as string) ?? "")
+        .replace(/\{\{result_path\}\}/g, resultPath)
+        .replace(/\{\{work_dir\}\}/g, this.workDir)
+        .replace(/\{\{time\}\}/g, new Date().toISOString())
+        .replace(/\{\{content\}\}/g, msg.content);
+    } else {
+      prompt = msg.content;
+    }
 
     console.log(`[${timestamp}] Message from ${fromLabel} (${msg.type}):`);
     console.log(`  ${msg.content.slice(0, 200)}`);
+    if (link !== "_generic") {
+      console.log(`  Link: ${link}`);
+    }
 
     console.log(`[${timestamp}] Processing...`);
-    await execWithTee(this.command, msg.content, logPath, this.workDir);
+    await execWithTee(this.command, prompt, logPath, this.workDir);
+
+    // Send completion report to leader (only for linked task messages)
+    if (link !== "_generic") {
+      try {
+        const report = [
+          `Link: ${link}`,
+          `Status: completed`,
+          `Result Path: ${resultPath}`,
+          `Task completed. Leader, please review and decide next step.`,
+        ].join("\n");
+
+        await this.zk.createMessage(this.leaderInstanceId, {
+          type: "direct",
+          from_instance: this.instanceId,
+          from_name: this.instanceName,
+          from_role: this.instanceRole,
+          to_instance: this.leaderInstanceId,
+          content: report,
+          created_at: new Date().toISOString(),
+          read: false,
+          result_path: resultPath,
+          link,
+        });
+        console.log(`[${timestamp}] Completion report sent to Leader.`);
+      } catch (err) {
+        console.error(`[${timestamp}] Failed to send completion report: ${err}`);
+      }
+    }
 
     try {
       msg.read = true;
