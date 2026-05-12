@@ -22,51 +22,88 @@ Every CLI command talks directly to ZooKeeper. Instance discovery is via ephemer
 ## Setup
 
 ```bash
-pip install -e .
+npm install -g @adamancyzhang/claude-orchestrator
 docker-compose up -d   # start ZooKeeper
 ```
+
+Initialize environment:
+
+```bash
+# Leader (team coordinator):
+claude-orchestrator setup --leader --name Tom
+
+# Worker (the doers):
+claude-orchestrator setup --name Jerry --role builder
+```
+
+This creates:
+- `.claude-orchestrator/agents/` — message templates (7 templates for leader + 5 worker links)
+- `.claude/skills/` — 8 Claude Code skills (responsibility chain + infrastructure)
+- `.claude-orchestrator/config.json` — project config (name, role)
+- `~/.claude-orchestrator/config.json` — global config (ZK hosts, CLI command, cache dir)
 
 Verify:
 
 ```bash
-claude-orchestrator status
-# {"status": "healthy", "zookeeper": "connected", "instances_online": 0}
+claude-orchestrator config
+# Shows current configuration
 ```
 
 ## Global Options
 
 | Option | Env var | Default | Description |
 |--------|---------|---------|-------------|
-| `--zk-hosts` | `ZK_HOSTS` | `127.0.0.1:2181` | ZooKeeper connection string |
-| `--instance-id` | — | auto (from config) | Override stored instance ID |
+| `--zookeeper`, `-z` | `ZK_HOSTS` | `127.0.0.1:2181` | ZooKeeper connection string |
+| `--instance-id`, `-i` | — | auto (from config) | Override stored instance ID |
 
 ## Commands
 
+### Leader
+
+```bash
+claude-orchestrator leader --name Tom
+# Launches read-only TUI: team panel, task board, event log
+```
+
+Only one Leader at a time (ZK ephemeral node). The TUI shows who's online, what tasks are in each state, and a scrolling event log.
+
 ### Registration
 
-**Register** this instance:
+**Setup** — one-time initialization:
 
 ```bash
-claude-orchestrator register --name Jerry-Dev --role developer
-# {"id": "a1b2c3d4...", "name": "Jerry-Dev", "role": "developer", "status": "idle", ...}
+claude-orchestrator setup --leader --name Tom                    # Leader
+claude-orchestrator setup --name Jerry --role builder             # Worker
+claude-orchestrator setup --name Lucy --role verifier \
+  --cache-dir ~/shared/sessions --command "claude -p"             # Custom CLI
 ```
 
-The returned `id` is saved to `~/.claude-orchestrator/config.json`. Pass `--instance-id` on re-registration to reuse the same identity.
+Setup options:
 
-**Heartbeat** — keep registration alive, optionally declare current task:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--leader` | false | Initialize as Leader environment |
+| `--name <name>` | — | Instance display name |
+| `--role <role>` | builder | Role: planner, builder, verifier, reviewer, accepter |
+| `--cache-dir <path>` | `~/.claude-orchestrator/sessions` | Shared cache directory |
+| `--command <cmd>` | `claude --dangerously-skip-permissions --permission-mode dontAsk` | Claude CLI command |
+| `--global` | false | Write only global config, skip project files |
+
+**Register** — join the swarm:
 
 ```bash
-claude-orchestrator heartbeat
-claude-orchestrator heartbeat --current-task "fix-login-bug"
+# Connect and listen for messages (reads name/role from .claude-orchestrator/config.json):
+claude-orchestrator register
+# Worker Watcher starts, listens for messages, processes via claude -p
+# Press Ctrl+C to stop and unregister
 ```
 
-ZK session timeout is 30s. Call heartbeat regularly (every 30-60s) while working.
+Registration creates an ephemeral ZK node. The instance auto-deregisters on disconnect (Ctrl+C or timeout). The Worker Watcher listens for messages on `/messages/{instance_id}` and processes them using the template that matches the message's `link` field.
 
-**List instances:**
+**Unregister:**
 
 ```bash
-claude-orchestrator list-instances
-# [{"id": "...", "name": "Jerry-Dev", "role": "developer", "status": "busy", ...}, ...]
+claude-orchestrator unregister
 ```
 
 ### Tasks
@@ -74,33 +111,66 @@ claude-orchestrator list-instances
 **Push a task** to the queue:
 
 ```bash
-claude-orchestrator push-task --title "Fix login bug" --description "..." --priority 0
-claude-orchestrator push-task --title "Review PR #42" --assignee <instance-id>
+claude-orchestrator push-task --title "Implement login endpoint" --priority 0
+claude-orchestrator push-task --title "Verify auth module" --link verify --priority 1
+claude-orchestrator push-task --title "Review PR #42" --link review --assignee <instance-id>
+claude-orchestrator push-task --title "Part 2" --chain-id chain-001 --depends-on task-0000000001
 ```
 
-Priority: `0` = HIGH, `1` = MEDIUM (default), `2` = LOW.
+Push options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--title <text>` | required | Task title |
+| `--description <text>` | "" | Task description |
+| `--priority <n>` | 1 | 0=HIGH, 1=MEDIUM, 2=LOW |
+| `--assignee <id>` | — | Target instance ID |
+| `--link <link>` | — | Responsibility chain link: plan, build, verify, review, accept |
+| `--chain-id <id>` | — | Group related tasks under one chain |
+| `--depends-on <ids>` | — | Comma-separated task IDs this task depends on |
+| `--blocked-by <ids>` | — | Comma-separated task IDs blocking this task |
 
 **Claim a task** — FIFO, higher priority first, assigned-to-you tasks jump the queue:
 
 ```bash
 claude-orchestrator claim-task
-# {"id": "task-0000000001", "title": "Fix login bug", ...}   ← claimed
-# {"status": "no_tasks", "message": "No pending tasks available."}  ← empty queue
+# → { "id": "task-0000000001", "title": "Implement login endpoint", "status": "claimed", ... }
+# → { "status": "no_tasks", "message": "No pending tasks available." }
 ```
 
 **Complete a task:**
 
 ```bash
-claude-orchestrator complete-task --task-id task-0000000001 --result "Fixed auth middleware, added tests"
+claude-orchestrator complete-task --task-id task-0000000001 --result "PR #42 — login endpoint with tests"
 ```
 
-**List tasks:**
+**Poll tasks:**
 
 ```bash
-claude-orchestrator list-tasks
-claude-orchestrator list-tasks --status pending
-claude-orchestrator list-tasks --status claimed
-claude-orchestrator list-tasks --status completed
+claude-orchestrator poll-task
+claude-orchestrator poll-task --status pending
+claude-orchestrator poll-task --status claimed
+claude-orchestrator poll-task --status completed
+claude-orchestrator poll-task --status blocked
+claude-orchestrator poll-task --status failed
+```
+
+**Task lifecycle commands:**
+
+```bash
+claude-orchestrator task-block --task-id task-0000000001 --reason "Waiting for API key"
+claude-orchestrator task-fail --task-id task-0000000001 --reason "Test environment unavailable"
+claude-orchestrator task-retry --task-id task-0000000001
+# → Re-queued with retry_count + 1 (max 3 retries)
+```
+
+Task state machine:
+
+```
+pending → claimed → in_progress → completed
+                            → blocked → pending (retry)
+                            → failed  → pending (retry, max 3)
+claimed → pending (Worker disconnect, Leader recovers orphan)
 ```
 
 ### Messages
@@ -108,7 +178,7 @@ claude-orchestrator list-tasks --status completed
 **Send a direct message:**
 
 ```bash
-claude-orchestrator send-message --to <instance-id> --content "Can you review my PR?"
+claude-orchestrator send-message --to-name Jerry --content "Can you review my PR?"
 ```
 
 **Broadcast to all:**
@@ -117,64 +187,58 @@ claude-orchestrator send-message --to <instance-id> --content "Can you review my
 claude-orchestrator send-message --broadcast --content "CI is down, don't push"
 ```
 
+**Request help** (broadcasts to all with help flag):
+
+```bash
+claude-orchestrator send-message --request-help --broadcast --content "How do I test the auth flow?"
+```
+
 **Poll messages:**
 
 ```bash
-claude-orchestrator poll-messages
-# [{"id": "msg-...", "type": "direct", "from_name": "Lucy-Test", "content": "...", "read": true}]
+claude-orchestrator poll-message
+# [{ "id": "msg-...", "type": "direct", "from_name": "Tom", "content": "...", "read": true }]
 ```
 
-**Request help** (broadcasts to all):
+**Delete a message:**
 
 ```bash
-claude-orchestrator request-help --question "How do I test the auth flow?" --context "stack trace..."
+claude-orchestrator delete-message --message-id msg-0000000000
 ```
 
-### Shared Context
-
-**Set:**
+### Config
 
 ```bash
-claude-orchestrator set-context --key ci_status --value "failing: auth tests"
+claude-orchestrator config
+# Shows global and project configuration
 ```
 
-**Get:**
+## Roles
 
-```bash
-claude-orchestrator get-context --key ci_status
-# {"key": "ci_status", "value": "failing: auth tests"}
-```
-
-### Status
-
-```bash
-claude-orchestrator status
-# {"status": "healthy", "zookeeper": "connected", "instances_online": 3}
-```
+| Role | Value | Typical behavior |
+|------|-------|-----------------|
+| Leader | `leader` | Runs TUI, monitors team, recovers orphaned tasks |
+| Planner | `planner` | Uses `task-planning` + `task-traceability` skills |
+| Builder | `builder` | Uses `task-execution` + `task-traceability` skills |
+| Verifier | `verifier` | Uses `task-verification` + `task-traceability` skills |
+| Reviewer | `reviewer` | Uses `task-review` + `task-traceability` skills |
+| Accepter | `accepter` | Uses `task-acceptance` + `task-traceability` skills |
 
 ## Workflow
 
 A typical agent session:
 
 ```bash
-# 1. Join the team
-claude-orchestrator register --name Jerry-Dev --role developer
+# 1. Initialize (first time only)
+claude-orchestrator setup --name Jerry --role builder
 
-# 2. Check who's online
-claude-orchestrator list-instances
-
-# 3. Work loop
-while true; do
-  claude-orchestrator poll-messages     # check for messages
-  task=$(claude-orchestrator claim-task)  # grab work
-  if [ "$task" = "no_tasks" ]; then break; fi
-  # ... execute the task ...
-  claude-orchestrator complete-task --task-id <id> --result "Done: ..."
-done
+# 2. Join the team — Worker Watcher auto-processes incoming messages via claude -p
+claude-orchestrator register
+# Press Ctrl+C to stop and unregister
 ```
 
 ## Error recovery
 
 - **ZooKeeper not connected**: check `docker-compose ps`, retry. ZK client auto-reconnects.
-- **"No instance_id found"**: register first, or pass `--instance-id`
-- **Registration expired**: ephemeral nodes cleaned up on disconnect. Re-register with same `--instance-id` to restore identity.
+- **"No instance_id found"**: run `setup` first, or check `.claude-orchestrator/config.json`
+- **Registration expired**: ephemeral nodes cleaned up on disconnect. Re-register to restore identity.
