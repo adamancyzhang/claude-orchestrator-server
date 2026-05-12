@@ -2,14 +2,14 @@
 
 ## 设计原则
 
-v0.3.0 从 v0.2.0 的 25 个 MCP 工具精简为 11 个 CLI 命令，聚焦 Leader-Worker 核心流程：
+v0.3.0 从 v0.2.0 的 25 个 MCP 工具精简为 14 个 CLI 命令，聚焦 Leader-Worker 核心流程：
 
 - **实例配置归属项目** — `instance_id`、`name`、`role` 是项目级配置，不进入全局配置
 - **register 严格校验** — name 必填、role 必须为合法值，不允许回退默认值
 - **register 绑定当前目录** — 不提供 `--work-dir`，始终监听 `cwd`
 - **无共享上下文** — 移除所有 context 相关命令，不维护跨实例 KV 存储
 - **无长轮询/帮助请求** — 移除 `wait-for-message`、`request-help`
-- **任务状态极简化** — 只保留 pending → claimed → completed，移除 blocked/failed/retry
+- **保留完整任务流转** — pending → claimed → completed/blocked/failed，含 retry 路径
 
 ---
 
@@ -91,6 +91,9 @@ v0.3.0 从 v0.2.0 的 25 个 MCP 工具精简为 11 个 CLI 命令，聚焦 Lead
 | 任务 | `poll-task` | 查看任务列表 |
 | 任务 | `claim-task` | 认领任务 |
 | 任务 | `complete-task` | 完成任务 |
+| 任务 | `task-block` | 标记任务阻塞 |
+| 任务 | `task-fail` | 标记任务失败 |
+| 任务 | `task-retry` | 重试失败任务 |
 
 ---
 
@@ -290,7 +293,7 @@ claude-orchestrator poll-task [--status <status>] [options]
 
 | 选项 | 必填 | 说明 |
 |---|---|---|
-| `--status <status>` | 否 | 状态过滤：`pending` / `claimed` / `completed` |
+| `--status <status>` | 否 | 状态过滤：`pending` / `claimed` / `completed` / `blocked` / `failed` |
 | `-z, --zookeeper <hosts>` | 否 | ZK 连接地址 |
 
 ---
@@ -325,27 +328,83 @@ claude-orchestrator complete-task --task-id <id> --result <text> [options]
 
 ---
 
+### task-block — 标记任务阻塞
+
+将 claimed 任务标记为 blocked。
+
+```
+claude-orchestrator task-block --task-id <id> --reason <text> [options]
+```
+
+| 选项 | 必填 | 说明 |
+|---|---|---|
+| `--task-id <id>` | **是** | 任务 ID |
+| `--reason <text>` | **是** | 阻塞原因 |
+| `--instance-id <id>` | 否 | 实例 ID（默认从当前目录项目配置读取） |
+| `-z, --zookeeper <hosts>` | 否 | ZK 连接地址 |
+
+---
+
+### task-fail — 标记任务失败
+
+将 claimed 任务标记为 failed。
+
+```
+claude-orchestrator task-fail --task-id <id> --reason <text> [options]
+```
+
+| 选项 | 必填 | 说明 |
+|---|---|---|
+| `--task-id <id>` | **是** | 任务 ID |
+| `--reason <text>` | **是** | 失败原因 |
+| `--instance-id <id>` | 否 | 实例 ID（默认从当前目录项目配置读取） |
+| `-z, --zookeeper <hosts>` | 否 | ZK 连接地址 |
+
+---
+
+### task-retry — 重试失败任务
+
+将 failed 任务重新放入 pending 队列。
+
+```
+claude-orchestrator task-retry --task-id <id> [options]
+```
+
+| 选项 | 必填 | 说明 |
+|---|---|---|
+| `--task-id <id>` | **是** | 要重试的任务 ID |
+| `-z, --zookeeper <hosts>` | 否 | ZK 连接地址 |
+
+---
+
 ## 任务状态流转
 
-v0.3.0 极简状态模型：只有 3 个状态。
-
 ```
-   ┌─────────┐
-   │ pending │
-   └────┬────┘
-        │ claim-task
-   ┌────▼────┐
-   │ claimed │
-   └────┬────┘
-        │ complete-task
-   ┌────▼──────┐
-   │ completed │
-   └───────────┘
+                   ┌─────────┐
+                   │ pending │
+                   └────┬────┘
+                        │ claim-task
+                   ┌────▼────┐
+              ┌────│ claimed │────┐
+              │    └─────────┘    │
+              │ task-block        │ task-fail
+         ┌────▼─────┐       ┌────▼─────┐
+         │ blocked  │       │  failed  │
+         └──────────┘       └────┬─────┘
+                                 │ task-retry
+                                 ▼
+                            pending (retry)
+
+              │
+              │ complete-task
+         ┌────▼──────┐
+         │ completed │
+         └───────────┘
 ```
 
-- 不再有 `blocked`、`failed`、`in_progress` 状态
-- 不再有 `task-block`、`task-fail`、`task-retry` 命令
 - `claimed` 即表示执行中，无需额外的 `in_progress`
+- `blocked` 任务需外部介入解除后重新流转
+- `failed` 任务可通过 `task-retry` 重新入队
 
 ---
 
@@ -376,7 +435,7 @@ v0.3.0 极简状态模型：只有 3 个状态。
 | `unregister` | **保留** |
 | `config` | **保留** |
 | `setup` | **保留** |
-| `task-block` | **移除**（无 blocked 状态） |
-| `task-fail` | **移除**（无 failed 状态） |
-| `task-retry` | **移除** |
+| `task-block` | **保留** |
+| `task-fail` | **保留** |
+| `task-retry` | **保留** |
 | `leader` | **保留** |
