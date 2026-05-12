@@ -47,7 +47,7 @@ v0.3.0 从 v0.2.0 的 25 个 MCP 工具精简为 14 个 CLI 命令，聚焦 Lead
 
 #### 角色枚举
 
-`role` 合法值：`architect` | `developer` | `tester` | `general` | `leader`
+`role` 合法值：`planner` | `builder` | `verifier` | `reviewer` | `accepter` | `leader`
 
 ### 示例
 
@@ -68,7 +68,7 @@ v0.3.0 从 v0.2.0 的 25 个 MCP 工具精简为 14 个 CLI 命令，聚焦 Lead
 ```json
 {
   "name": "Bob",
-  "role": "developer",
+  "role": "builder",
   "instance_id": "ddd2fba51af04c0ca434ed07bf7c9e28"
 }
 ```
@@ -146,7 +146,7 @@ claude-orchestrator register [options]
 
 **错误场景:**
 - 项目配置缺失 `name` → `{ "error": "name is required in .claude-orchestrator/config.json" }`
-- 项目配置 `role` 非法 → `{ "error": "invalid role 'xxx', must be one of: architect, developer, tester, general, leader" }`
+- 项目配置 `role` 非法 → `{ "error": "invalid role 'xxx', must be one of: planner, builder, verifier, reviewer, accepter, leader" }`
 
 ---
 
@@ -189,7 +189,7 @@ claude-orchestrator config [options]
   },
   "project": {
     "name": "Bob",
-    "role": "developer",
+    "role": "builder",
     "instance_id": "ddd2fba51af04c0ca434ed07bf7c9e28"
   }
 }
@@ -209,7 +209,7 @@ claude-orchestrator setup [options]
 |---|---|---|---|
 | `--leader` | 否 | `false` | 初始化为 Leader 环境 |
 | `--name <name>` | 否 | `"Leader"`（仅当 `--leader`） | 实例显示名称 |
-| `--role <role>` | 否 | `"leader"`（仅当 `--leader`），否则 `"general"` | 实例角色 |
+| `--role <role>` | 否 | `"leader"`（仅当 `--leader`），否则 `"builder"` | 实例角色 |
 | `--cache-dir <path>` | 否 | `~/.claude-orchestrator/sessions` | 共享缓存目录 |
 | `--command <cmd>` | 否 | `claude --dangerously-skip-permissions -v` | Claude CLI 命令 |
 | `--global` | 否 | `false` | 仅写入全局配置（不写项目配置） |
@@ -280,6 +280,8 @@ claude-orchestrator push-task --title <title> [options]
 | `--description <text>` | 否 | `""` | 任务描述 |
 | `--priority <n>` | 否 | `"1"` | 优先级：0=HIGH, 1=MEDIUM, 2=LOW |
 | `--assignee <id>` | 否 | — | 指定分配给某实例 ID |
+| `--link <link>` | 否 | — | 责任链环节：plan, build, verify, review, accept |
+| `--chain-id <id>` | 否 | — | 链标识符，用于关联同一需求的任务 |
 | `--instance-id <id>` | 否 | 当前项目配置 | 创建者实例 ID |
 | `-z, --zookeeper <hosts>` | 否 | 全局配置 | ZK 连接地址 |
 

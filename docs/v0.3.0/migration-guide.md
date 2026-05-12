@@ -89,10 +89,10 @@ Leader TUI 启动，提供 `msg`, `status`, `exit` 三个命令。
 
 ```bash
 # 在工作目录中初始化
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
 
 # 注册并启动消息监听
-claude-orchestrator register --name Jerry --role developer --work-dir /path/to/project
+claude-orchestrator register --name Jerry --role builder --work-dir /path/to/project
 ```
 
 Leader TUI 将显示 Worker 上线。
@@ -157,7 +157,7 @@ v0.3.0 的新增字段都有合理的默认值，无需手动迁移已有的 ZK 
 npm install -g @adamancyzhang/claude-orchestrator@0.2.8
 
 # 3. 恢复 MCP 配置
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
 
 # 4. 重启 MCP Server
 claude-orchestrator server

@@ -494,10 +494,10 @@ claude-orchestrator setup --leader --name Tom
   → 写入 ~/.claude-orchestrator/config.json: {"command":"...","cache_dir":"..."}
   → exit
 
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
   → 创建 .claude-orchestrator/agents/leader.md
   → 创建 .claude-orchestrator/agents/worker.md
-  → 写入 .claude-orchestrator/config.json: {"name":"Jerry","role":"developer"}
+  → 写入 .claude-orchestrator/config.json: {"name":"Jerry","role":"builder"}
   → exit
 ```
 

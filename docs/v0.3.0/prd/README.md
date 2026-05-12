@@ -70,7 +70,7 @@ v0.3.0 严格区分两种身份：
 | 身份 | Role | 注册方式 | 启动命令 | 能力 |
 |------|------|---------|---------|------|
 | **Leader** | `leader` | 自动 (启动时创建 `/leader` 节点) | `claude-orchestrator leader` | TUI 只读监控、watcher 接收 Worker 消息、孤儿回收 |
-| **Worker** | `developer` / `tester` / `architect` / `general` | 显式注册 (`register --work-dir`) | `claude-orchestrator register --work-dir <dir>` | 认领任务、消息处理、本地 `$COMMAND -p` 执行 |
+| **Worker** | `planner` / `builder` / `verifier` / `reviewer` / `accepter` | 显式注册 (`register`) | `claude-orchestrator register` | 认领任务、消息处理、本地 `$COMMAND -p` 执行 |
 
 Leader 和 Worker 都通过 `setup` 命令初始化各自的工作环境。两者都运行 watcher 监听消息 — Leader watcher 接收 Worker 的完成报告，Worker watcher 接收 Leader 的任务指令。
 
@@ -202,8 +202,8 @@ Leader TUI 使用终端 ANSI 控制字符实现，**仅用于可视化，不接�
 ┌─ Team: 3 members ───────────────────────────────────────────────────┐
 │ Identity  Name    Role        Status    Current Task                 │
 │ Leader    Tom     leader      idle      -                            │
-│ Worker    Jerry   developer   busy      task-0000000003              │
-│ Worker    Lucy    tester      idle      -                            │
+│ Worker    Jerry   builder     busy      task-0000000003              │
+│ Worker    Lucy    verifier    idle      -                            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -219,7 +219,7 @@ Leader TUI 使用终端 ANSI 控制字符实现，**仅用于可视化，不接�
 **C. 事件日志 (Event Log)** — 中部，滚动显示实时事件（包括 watcher 收到的消息）：
 
 ```
-[10:30:01] ✓ Jerry joined (developer)
+[10:30:01] ✓ Jerry joined (builder)
 [10:30:15] 📋 Task task-0000000003 created
 [10:30:20] 🔒 Jerry claimed task-0000000003
 [10:35:00] 📨 Jerry (via CLI) → Leader: 任务 task-0000000003 已完成，结果路径...
@@ -284,12 +284,12 @@ Leader (watcher) 接收 Worker 完成报告:
 
 ```bash
 # 推荐先初始化 Worker 环境
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
 
 # 启动 Worker
 claude-orchestrator register \
   --name Jerry \
-  --role developer \
+  --role builder \
   --work-dir /path/to/project
 ```
 
@@ -297,7 +297,7 @@ claude-orchestrator register \
 
 ```
 1. 连接 ZooKeeper
-2. 创建 /instances/{uuid} EPHEMERAL 节点 (role=developer/tester/architect/general)
+2. 创建 /instances/{uuid} EPHEMERAL 节点 (role=planner/builder/verifier/reviewer/accepter)
 3. 保存 instance_id 到 ~/.claude-orchestrator/config.json
 4. 创建 /messages/{uuid} 目录
 5. 确保 CACHE_DIR (~/.claude-orchestrator/sessions/{leader_instance_id}/) 可访问
@@ -444,7 +444,7 @@ and assign the next task.
 {
   "instance_id": "a1b2c3d4...",
   "name": "Jerry",
-  "role": "developer",
+  "role": "builder",
   "command": "claude --dangerously-skip-permissions -v",
   "cache_dir": "~/.claude-orchestrator/sessions",
   "port": "3100",
@@ -542,13 +542,13 @@ claude-orchestrator setup --leader --name Tom
 ### 8.2 Worker 环境初始化
 
 ```bash
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
 ```
 
 执行操作：
 1. 在项目根目录创建 `.claude-orchestrator/` 目录
 2. 写入 `agents/leader.md` 和 `agents/worker.md` 模板
-3. 在 `.claude-orchestrator/config.json` 写入: `{"name": "Jerry", "role": "developer"}`
+3. 在 `.claude-orchestrator/config.json` 写入: `{"name": "Jerry", "role": "builder"}`
 4. 在 `~/.claude-orchestrator/config.json` 写入全局配置（同 Leader）
 
 ### 8.3 setup 参数
@@ -557,7 +557,7 @@ claude-orchestrator setup --name Jerry --role developer
 |------|------|------|
 | `--leader` | 否 | 指定为 Leader 环境（与 `--name` / `--role` 互斥用于身份） |
 | `--name <name>` | 是 | 实例显示名称 |
-| `--role <role>` | 否 | 实例角色，Leader 自动设为 `leader`，Worker 默认 `general` |
+| `--role <role>` | 否 | 实例角色，Leader 自动设为 `leader`，Worker 默认 `builder` |
 | `--cache-dir <path>` | 否 | 自定义共享缓存目录（默认 `~/.claude-orchestrator/sessions`） |
 | `--command <cmd>` | 否 | 自定义 Claude CLI 命令（默认 `claude --dangerously-skip-permissions -v`） |
 | `--global` | 否 | 仅写入全局配置 `~/.claude-orchestrator/config.json`，不创建项目目录 |
@@ -718,7 +718,7 @@ v0.3.0 扩展了任务状态机：
 │
 ├── /instances/
 │   └── /{instance_id}                   [EPHEMERAL]  成员实例
-│       data: {"id":"...", "name":"Jerry", "role":"developer",
+│       data: {"id":"...", "name":"Jerry", "role":"builder",
 │              "status":"busy", "current_task_id":"task-003",
 │              "connected_since":"..."}
 │
@@ -821,7 +821,7 @@ claude-orchestrator task-retry --task-id task-0000000003
 claude-orchestrator setup --leader --name Tom
 
 # Worker 环境初始化
-claude-orchestrator setup --name Jerry --role developer
+claude-orchestrator setup --name Jerry --role builder
 
 # 自定义 cache_dir 和 command
 claude-orchestrator setup --leader --name Tom \
@@ -838,7 +838,7 @@ claude-orchestrator setup --leader --name Tom \
 interface Instance {
   id: string;
   name: string;
-  role: "architect" | "developer" | "tester" | "general" | "leader";
+  role: "planner" | "builder" | "verifier" | "reviewer" | "accepter" | "leader";
   status: "idle" | "busy";  // blocked 移到 Task 级别
   current_task_id: string | null;
   connected_since: string;
@@ -1007,23 +1007,23 @@ claude-orchestrator-server/            ← npm 包根目录
   [10:00:00] 🟢 Leader started (instance: a1b2c3...)
 
 终端 2 (Jerry, 开发者):
-  $ claude-orchestrator setup --name Jerry --role developer
-  $ claude-orchestrator register --name Jerry --role developer --work-dir ~/project
+  $ claude-orchestrator setup --name Jerry --role builder
+  $ claude-orchestrator register --name Jerry --role builder --work-dir ~/project
   Instance registered:
-    {"id":"a1b2c3...", "name":"Jerry", "role":"developer", "status":"idle"}
+    {"id":"a1b2c3...", "name":"Jerry", "role":"builder", "status":"idle"}
   Watching for messages...
   Press Ctrl+C to stop.
 
 Leader TUI:
-  [10:00:05] ✓ Jerry joined (developer)
+  [10:00:05] ✓ Jerry joined (builder)
 
-终端 3 (Lucy, 测试):
-  $ claude-orchestrator register --name Lucy --role tester --work-dir ~/project
+终端 3 (Lucy, 验证):
+  $ claude-orchestrator register --name Lucy --role verifier --work-dir ~/project
   Instance registered...
   Watching for messages...
 
 Leader TUI:
-  [10:00:10] ✓ Lucy joined (tester)
+  [10:00:10] ✓ Lucy joined (verifier)
 
 Leader (TUI 命令):
   > msg Jerry "请实现 POST /api/items 接口，参考 OpenAPI 契约。完成后将结果路径发给我。"
@@ -1047,8 +1047,8 @@ Leader TUI:
   > status
   ┌─ Team: 2 workers ─────────────────────────────────────────┐
   │ Name   Role       Status   Current Task                    │
-  │ Jerry  developer idle     -                                │
-  │ Lucy   tester     idle     -                                │
+  │ Jerry  builder   idle     -                                │
+  │ Lucy   verifier   idle     -                                │
   └────────────────────────────────────────────────────────────┘
   > exit
 ```

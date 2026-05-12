@@ -59,7 +59,7 @@
 {
   "id": "a1b2c3d4-...",
   "name": "Jerry-Dev",
-  "role": "developer",
+  "role": "builder",
   "status": "busy",
   "current_task_id": "task-0000000003",
   "connected_since": "2026-05-11T10:00:00Z",
@@ -67,7 +67,7 @@
 }
 ```
 
-- **role 枚举**: `leader`, `architect`, `developer`, `tester`, `general`
+- **role 枚举**: `leader`, `planner`, `builder`, `verifier`, `reviewer`, `accepter`
   - `leader` = Leader 节点
   - 其他 = Worker 节点
 - **status 枚举**: `idle`, `busy`
@@ -183,7 +183,7 @@
 ```
 
 - **type**: `direct` (点对点), `broadcast` (广播), `help` (求助)
-- **from_role**: v0.3.0 新增 — 发送者角色 (`leader` / `developer` / `tester` 等)
+- **from_role**: v0.3.0 新增 — 发送者角色 (`leader` / `planner` / `builder` / `verifier` / `reviewer` / `accepter` 等)
 - **task_doc_path**: v0.3.0 新增 — Leader 消息中附带的相对路径任务文档
 - **result_path**: v0.3.0 新增 — 消息关联的 CACHE_DIR 日志/结果路径
 - **reply_to**: v0.3.0 新增 — 引用回复的消息 ID，支持消息线程
