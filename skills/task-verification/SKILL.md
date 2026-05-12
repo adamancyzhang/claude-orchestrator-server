@@ -1,11 +1,11 @@
 ---
 name: task-verification
-description: Independent verification of Builder output for the Verifier role. Use when the Verifier needs to verify that a Builder's output matches the Planner's blueprint — running tests, checking deliverables, identifying deviations, and producing a verification report. Triggers on keywords like "验证任务", "verify", "check", "测试验证", "排查问题", "验证产出", or when a Builder reports completion and the task enters the Verify stage of the responsibility chain.
+description: Independent verification of Builder output for the Verifier role. Use when the Verifier needs to verify that a Builder's output matches the Planner's blueprint — running tests, checking deliverables, identifying deviations, and producing a verification report with full traceability from every finding back to acceptance criteria. Triggers on keywords like "验证任务", "verify", "check", "测试验证", "排查问题", "验证产出", or when a Builder reports completion and the task enters the Verify stage of the responsibility chain.
 ---
 
 # Task Verification
 
-> 验证不是跑一遍测试就完了，是对照蓝图逐项核实 Builder 的产出与计划的一致性。本技能确保每次验证独立、客观、可复现。
+> 验证不是跑一遍测试就完了，是对照蓝图逐项核实 Builder 的产出与计划的一致性。本技能与 [[task-traceability]] 协作，确保每次验证独立、客观、可复现、可追溯——每个验证结果都可追溯到具体的验收标准。
 
 ---
 
@@ -179,10 +179,10 @@ claude-orchestrator set-context \
 
 ## 与其他技能的协作
 
+- **[[task-traceability]]**：基础层。Verifier 严格遵循追溯 → 执行 → 映射 → 举证 → 记录的五步法。每个验证结果必须追溯到蓝图的验收标准（Trace），逐项独立验证（Execute），映射验证结果到标准（Map），记录命令输出作为证据（Evidence），产出验证报告并存入共享上下文（Record）。
 - **[[task-planning]]**：Verifier 以 Planner 的蓝图为标准。蓝图中的验收标准是唯一的判断依据。
 - **[[task-execution]]**：Verifier 验证 Builder 的产出。Builder 的自测报告仅供参考，Verifier 独立验证。
 - **[[task-review]]**：Reviewer 读取 Verifier 的验证报告来判断是否进入下一环节。Verifier 发现的问题直接进入 Reviewer 的审查视野。
-- **[[task-traceability]]**：Verifier 如果发现需要修改代码，修改和提交遵循可追溯工作流。
 
 ---
 

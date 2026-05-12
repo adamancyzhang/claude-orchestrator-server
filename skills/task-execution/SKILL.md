@@ -1,11 +1,11 @@
 ---
 name: task-execution
-description: Guided task execution for the Builder role. Use when the Builder claims a task from the orchestrator queue and needs to execute it — reading the blueprint, making code changes, running verification, and reporting results. Triggers on keywords like "执行任务", "开始构建", "claim task", "build", "implement", "开发", "写代码", or when a Builder has claimed a task and is ready to work. Complements task-traceability for the commit-to-document audit chain.
+description: Guided task execution for the Builder role. Use when the Builder claims a task from the orchestrator queue and needs to execute it — reading the blueprint, making code changes, running verification, and reporting results with full traceability from every code change back to the Plan. Triggers on keywords like "执行任务", "开始构建", "claim task", "build", "implement", "开发", "写代码", or when a Builder has claimed a task and is ready to work. Complements task-traceability as the foundational traceability layer.
 ---
 
 # Task Execution
 
-> 执行不是凭感觉写代码，是理解蓝图 → 精准实现 → 自证正确 → 记录可追溯的完整闭环。本技能确保 Builder 的每次执行产出可被 Verifier 独立验证。
+> 执行不是凭感觉写代码，是理解蓝图 → 精准实现 → 自证正确 → 记录可追溯的完整闭环。本技能与 [[task-traceability]] 协作，确保 Builder 的每次执行产出可被 Verifier 独立验证，每个代码变更都可追溯到具体的 Plan 要求。
 
 ---
 
@@ -127,9 +127,9 @@ claude-orchestrator complete-task \
 
 ## 与其他技能的协作
 
-- **[[task-traceability]]**：代码提交和文档记录的标准化工作流。Builder 在执行过程中严格遵循其五步法。
-- **[[task-planning]]**：Builder 依赖 Planner 的蓝图来理解执行范围。如果蓝图有歧义，反馈给 Planner 澄清。
-- **[[task-verification]]**：Verifier 将独立验证 Builder 的产出。Builder 的自测（Step 4）降低了 Verifier 发现基础问题的概率。
+- **[[task-traceability]]**：基础层。Builder 严格遵循追溯 → 执行 → 映射 → 举证 → 记录的五步法。每个代码变更必须追溯至 Plan 的具体要求，映射到实现，附带测试证据，并通过 commit hash 记录回任务文档。
+- **[[task-planning]]**：Builder 依赖 Planner 的蓝图和追溯链来理解执行范围。如果蓝图有歧义，反馈给 Planner 澄清。
+- **[[task-verification]]**：Verifier 将独立验证 Builder 的产出。Builder 的自测和可追溯记录降低了 Verifier 发现基础问题的概率。
 
 ---
 

@@ -138,8 +138,8 @@ Worker 根据 message 中的 `link` 字段选择对应模板，按标准流程�
 
 | 标准流程 | 适用 link | 核心思想 |
 |---------|----------|---------|
-| `task-acceptance` | Plan, Accept | 产出 → 自检 → 提交验收。规划者定义蓝图并确保其完整可执行；验收者逐项核实交付物并签署 Go/No-Go |
-| `task-traceability` | Build, Verify, Review | 追溯 → 执行 → 映射 → 举证。执行者的每一步都追溯到上游要求，产出需附带追溯证据 |
+| `task-traceability` | **所有 link (Plan, Build, Verify, Review, Accept)** | 追溯 → 执行 → 映射 → 举证 → 记录。责任链可审计、可交接、可签收的基础。每个环节的执行者必须追溯到上游要求，将产出映射回要求，为映射提供证据，并持久化追溯记录 |
+| `task-acceptance` | Plan, Accept | 分析/设计 → 自检 → 提交验收。用于产出定义性文档（蓝图、验收报告）的环节，强调产出自身的完整性和可执行性 |
 
 **Phase 3 — 报告结果**
 
@@ -147,103 +147,136 @@ Worker 按照对应模板的报告格式，通过 send_message 向 Leader 汇报
 
 ## 3. 标准执行流程
 
-### 3.1 task-acceptance（Plan 专用）
+所有环节的执行都建立在 `task-traceability` 基础层之上。`task-traceability` 定义了通用的五步法（追溯 → 执行 → 映射 → 举证 → 记录），每个环节按自身职责具体应用。`task-acceptance` 流程用于需要产出定义性文档的环节（Plan 和 Accept），强调产出自身的完整性和可执行性，与 `task-traceability` 协作使用。
 
-Plan 是责任链的起点，其核心问题是"要做什么、为什么做、怎么做"。Plan 的交付物是蓝图——它必须是完整的、可执行的，后续的 Builder 才能依照执行。
+### 3.1 task-traceability（所有 link 的基础层）
 
-task-acceptance 流程确保 Plan 产出经过充分验证后才交付：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    task-acceptance                            │
-│                                                             │
-│  1. 分析需求                                                 │
-│     理解目标、范围、约束                                      │
-│         │                                                   │
-│         ▼                                                   │
-│  2. 设计蓝图                                                 │
-│     定义架构、接口、数据流                                    │
-│     拆解 Build 步骤、定义完成标准                             │
-│         │                                                   │
-│         ▼                                                   │
-│  3. 自检                                                     │
-│     验证蓝图的完整性和可执行性:                                │
-│     - 每个 Build 步骤是否有清晰的输入输出？                    │
-│     - Builder 能否仅凭此蓝图开始实施？                         │
-│     - 异常路径和边界条件是否覆盖？                              │
-│     - 完成标准是否可被 Verify 验证？                            │
-│         │                                                   │
-│         ▼                                                   │
-│  4. 提交验收                                                 │
-│     产出 → 随完成报告提交给 Leader                            │
-│     Leader/Reviewer 判断蓝图是否验收通过                      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 3.2 task-traceability（Build / Verify / Review 专用）
-
-Build、Verify、Review 是责任链的执行和验证环节，每一项工作都基于上游的产出。task-traceability 流程确保每一步都可以追溯到上游要求：
+task-traceability 是责任链可审计、可交接、可签收的基石。任何一个环节的追溯断裂，整条链就断了——下游找不到锚点，上游无法被审计，签收没有依据。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                   task-traceability                           │
+│                   task-traceability (基础层)                  │
 │                                                             │
-│  1. 追溯                                                     │
+│  1. 追溯 (Trace)                                             │
 │     读取上游产出，提取所有要求项:                               │
+│     - Plan: 追溯原始需求                                     │
 │     - Build: 追溯 Planner 蓝图中的每条实现要求                 │
 │     - Verify: 追溯 Planner 蓝图 + Builder 产出的每条验证点     │
 │     - Review: 追溯整条链的意图、实现、验证结果                  │
+│     - Accept: 追溯全链产出 + 业务验收标准                      │
 │         │                                                   │
 │         ▼                                                   │
-│  2. 执行                                                     │
+│  2. 执行 (Execute)                                           │
 │     按追溯到的要求逐项执行:                                    │
+│     - Plan: 设计蓝图、拆解任务                                │
 │     - Build: 逐项实现                                        │
-│     - Verify: 逐项验证                                        │
-│     - Review: 逐项审查                                        │
+│     - Verify: 逐项验证                                       │
+│     - Review: 逐项判定                                       │
+│     - Accept: 逐项核实验收标准                                │
 │         │                                                   │
 │         ▼                                                   │
-│  3. 映射                                                     │
+│  3. 映射 (Map)                                               │
 │     将执行结果与上游要求建立一一映射:                           │
 │     - 要求 X → 执行结果 Y → 状态: 完成/偏离/遗漏              │
 │     - 记录所有偏离和遗漏，附原因                               │
 │         │                                                   │
 │         ▼                                                   │
-│  4. 举证                                                     │
-│     提供执行证据，让下游或 Reviewer 无需重做即可验证:           │
+│  4. 举证 (Evidence)                                          │
+│     提供执行证据，让下游或审计者无需重做即可验证:                │
 │     - 关键决策的理由                                          │
 │     - 测试结果或验证数据                                      │
 │     - 结果路径（可被复查的产出文件）                            │
+│         │                                                   │
+│         ▼                                                   │
+│  5. 记录 (Record)                                            │
+│     持久化追溯记录，让下游环节可以接续:                          │
+│     - Plan: 蓝图 + 任务队列 + 共享上下文                      │
+│     - Build: commit hash → 任务文档 → 文档 commit             │
+│     - Verify: 验证报告 → 共享上下文                           │
+│     - Review: 审查报告 → 共享上下文 → Pass/Revise 决策         │
+│     - Accept: 验收报告 → 共享上下文 → Go/No-Go 签署            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 3.3 task-acceptance（Accept 专用）
+### 3.2 task-acceptance（Plan 专用 — 与 task-traceability 协作）
 
-Accept 是责任链的终点，其核心问题是"能不能交付"。Accepter 不重新执行验证或审查，而是从业务需求角度对照验收标准，逐项核实交付物是否满足要求，做出最终的 Go/No-Go 决策。
+Plan 是责任链的起点，其核心问题是"要做什么、为什么做、怎么做"。Plan 的交付物是蓝图——它必须是完整的、可执行的，后续的 Builder 才能依照执行。
+
+task-acceptance 流程确保 Plan 产出经过充分验证后才交付。Plan 同时遵循 task-traceability 的五步法来建立可追溯链：需求 → 蓝图 → 任务 → 共享上下文。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    task-acceptance (Accept)                   │
+│              task-acceptance + task-traceability              │
 │                                                             │
-│  1. 读取全链产出                                             │
-│     读取 Planner 蓝图、Builder 产出、                         │
-│     Verifier 验证报告、Reviewer 审查结论                      │
+│  1. 追溯需求 (Trace)                                         │
+│     读取原始需求，提取业务目标、约束、成功标准                  │
 │         │                                                   │
 │         ▼                                                   │
-│  2. 对照验收标准逐项核实                                      │
+│  2. 设计蓝图 (Execute)                                       │
+│     定义架构、接口、数据流                                    │
+│     拆解 Build 步骤、定义完成标准                             │
+│     每个 Build 步骤追溯回具体需求                             │
+│         │                                                   │
+│         ▼                                                   │
+│  3. 自检 (Map)                                               │
+│     验证蓝图的完整性和可执行性:                                │
+│     - 每个 Build 步骤是否有清晰的输入输出？                    │
+│     - Builder 能否仅凭此蓝图开始实施？                         │
+│     - 异常路径和边界条件是否覆盖？                              │
+│     - 完成标准是否可被 Verify 验证？                            │
+│     将检查项映射回设计决策                                    │
+│         │                                                   │
+│         ▼                                                   │
+│  4. 举证 (Evidence)                                          │
+│     为每个映射提供证据:                                        │
+│     - 设计决策的理由                                          │
+│     - 自检清单的逐项通过记录                                   │
+│         │                                                   │
+│         ▼                                                   │
+│  5. 记录 (Record)                                            │
+│     蓝图文档 → 任务推入队列 → 共享上下文                      │
+│     send_message 通知 Leader 蓝图就绪                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 3.3 task-acceptance（Accept 专用 — 与 task-traceability 协作）
+
+Accept 是责任链的终点，其核心问题是"能不能交付"。Accepter 不重新执行验证或审查，而是从业务需求角度对照验收标准，逐项核实交付物是否满足要求，做出最终的 Go/No-Go 决策。Accept 同时遵循 task-traceability 的五步法来建立签收的可追溯链：验收标准 → 交付物核实 → Go/No-Go → 验收报告。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              task-acceptance + task-traceability              │
+│                                                             │
+│  1. 追溯全链 (Trace)                                         │
+│     读取 Planner 蓝图、Builder 产出、                         │
+│     Verifier 验证报告、Reviewer 审查结论                      │
+│     提取所有业务验收标准                                      │
+│         │                                                   │
+│         ▼                                                   │
+│  2. 逐项核实 (Execute)                                       │
 │     以原始需求的验收标准为基准:                                │
 │     - 每项验收标准是否有对应的交付物？                          │
 │     - 交付物是否真实存在（代码、测试、文档）？                  │
 │     - 上游各环节的未解决问题是否影响交付？                      │
 │         │                                                   │
 │         ▼                                                   │
-│  3. 做出 Go/No-Go 决策                                       │
-│     Go: 所有验收标准满足，签署通过                             │
-│     No-Go: 存在问题，反馈至对应环节                            │
+│  3. 映射交付 (Map)                                            │
+│     验收标准 → 交付物 → 核实结果 → 判定                       │
+│     记录每个标准的通过/失败和具体原因                           │
 │         │                                                   │
 │         ▼                                                   │
-│  4. 签署验收报告                                             │
+│  4. 举证 (Evidence)                                          │
+│     为每个核实提供独立证据:                                    │
+│     - 代码存在: grep 验证                                    │
+│     - commit 存在: git log 验证                              │
+│     - 测试通过: 实际运行验证                                  │
+│     - 报告自洽: 交叉验证数据                                  │
+│         │                                                   │
+│         ▼                                                   │
+│  5. 签署 (Record)                                            │
 │     产出验收报告，记录逐项核实结果和最终决策                    │
 │     零问题才能签 Go，不做"条件通过"                            │
+│     验收报告存入共享上下文                                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -255,11 +288,11 @@ Accept 是责任链的终点，其核心问题是"能不能交付"。Accepter �
 
 | 模板文件 | link | 标准流程 | 核心关注点 |
 |---------|------|---------|-----------|
-| `worker-plan.md` | `plan` | task-acceptance | 分析→设计→自检→提交验收 |
-| `worker-build.md` | `build` | task-traceability | 追溯要求→逐项实现→映射→举证 |
-| `worker-verify.md` | `verify` | task-traceability | 追溯蓝图→逐项验证→映射→举证 |
-| `worker-review.md` | `review` | task-traceability | 追溯全链→逐项审查→映射→举证 |
-| `worker-accept.md` | `accept` | task-acceptance | 读取全链产出→逐项核实验收标准→签署 Go/No-Go |
+| `worker-plan.md` | `plan` | task-traceability + task-acceptance | 追溯需求→设计蓝图→映射任务→举证完整性→记录蓝图 |
+| `worker-build.md` | `build` | task-traceability | 追溯蓝图→逐项实现→映射实现→举证测试→记录 commit |
+| `worker-verify.md` | `verify` | task-traceability | 追溯蓝图+产出→逐项验证→映射验证→举证结果→记录报告 |
+| `worker-review.md` | `review` | task-traceability | 追溯全链→逐项判定→映射判定→举据理据→记录审查→签发 Pass/Revise |
+| `worker-accept.md` | `accept` | task-traceability + task-acceptance | 追溯全链产出→逐项核实验收标准→映射交付→举证核实→签署 Go/No-Go |
 
 ### 4.2 模板变量
 
@@ -299,18 +332,21 @@ Build, Verify, and Review will follow.
 
 Read the full task specification at: {{task_doc_path}}
 
-## Execution Standard: task-acceptance
+## Execution Standard: task-acceptance + task-traceability
 
-You follow the **task-acceptance** process. Your deliverable must pass
-acceptance before the chain can proceed to Build.
+You follow the **task-acceptance** process grounded on the **task-traceability**
+foundation. Every design decision must be traceable to a requirement.
+Your deliverable must pass acceptance before the chain can proceed to Build.
 
-### Step 1: Analyze
+### Step 1: Trace
 
-Analyze the requirement thoroughly:
+Read the original requirement thoroughly:
 - What is the goal? What problem does this solve?
 - What are the scope and boundaries?
 - What constraints exist?
 - What does "success" look like for the end user?
+
+Extract every requirement that must be addressed in the blueprint.
 
 ### Step 2: Design
 
@@ -325,7 +361,20 @@ Your blueprint must be a self-contained document. The Builder must be
 able to implement from it without asking "what should I do next?" or
 "how should this work?"
 
-### Step 3: Self-Check
+### Step 3: Map
+
+Map every Build step back to the original requirements:
+
+```
+Requirement → Design Decision → Build Step → Completion Criteria
+  "user auth" → JWT + refresh token → Step 1: auth module → npm test -- auth passes
+  "rate limit" → token bucket → Step 2: rate limiter → ab -n 1000, p95 < 200ms
+```
+
+If a requirement has no corresponding Build step, it's a gap. If a Build step
+has no corresponding requirement, it may be out of scope.
+
+### Step 4: Self-Check + Evidence
 
 Before submitting, validate your blueprint against these questions:
 - [ ] Does each Build step have clear inputs and expected outputs?
@@ -337,17 +386,17 @@ Before submitting, validate your blueprint against these questions:
 
 If any answer is "no", fix the blueprint before proceeding.
 
-### Step 4: Submit for Acceptance
+### Step 5: Record
 
-Write your blueprint document to {{result_path}}.
+Persist the traceability record:
+- Write the blueprint document
+- Push tasks to the orchestrator queue (`push-task --link plan/build/verify/review/accept`)
+- Store the blueprint in shared context (`set-context --key plan-<slug>`)
+- Notify Leader that blueprint is ready (`send_message`)
 
-Then prepare a completion report. Your report must include:
-- **Blueprint Summary**: one paragraph describing the design
-- **Build Steps**: the ordered list of Build tasks you defined
-- **Self-Check Results**: confirmation that all checklist items passed
-- **Open Questions**: anything you could not resolve (if any)
+Write your blueprint, traceability map, and self-check results to {{result_path}}.
 
-Format:
+## Completion Report
 
 ```
 Link: plan
@@ -430,7 +479,14 @@ For each mapped item, provide evidence that it was implemented correctly:
 - Manual verification results
 - Key implementation decisions and their rationale
 
-Write your traceability map and evidence to {{result_path}}.
+### Step 5: Record
+
+Persist the traceability record so downstream roles can pick up the chain:
+- Commit code signed with your own name
+- Record the commit hash next to each completed item in the task document
+- Commit the document update
+
+Write your full traceability map, evidence, and record to {{result_path}}.
 
 ## Completion Report
 
@@ -512,7 +568,14 @@ For each finding, provide evidence:
 - Test results or inspection notes
 - Specific references to the Plan and Builder output for each finding
 
-Write your verification map and evidence to {{result_path}}.
+### Step 5: Record
+
+Persist the traceability record so Reviewer can pick up the chain:
+- Write the verification report with full traceability map and evidence
+- Store in shared context (`set-context --key verify-<slug>`)
+- Flag gaps and failures to Builder and Reviewer via `send_message`
+
+Write your verification map, evidence, and record to {{result_path}}.
 
 ## Completion Report
 
@@ -598,7 +661,16 @@ For each judgment (especially CONCERN and REJECT), provide:
 - Reference to the Builder output and Verifier finding
 - Clear rationale for your judgment
 
-Write your review map and evidence to {{result_path}}.
+### Step 5: Record
+
+Persist the traceability record and issue your decision:
+- Write the review report with full judgment map and evidence
+- Store in shared context (`set-context --key review-<slug>`)
+- Issue Pass/Revise decision
+- If Revise: notify responsible roles with specific issues
+- If Pass: notify Leader and Accepter, chain proceeds to Accept
+
+Write your review map, evidence, and record to {{result_path}}.
 
 ## Completion Report
 
@@ -639,14 +711,15 @@ Read the full task specification at: {{task_doc_path}}
 This document includes the entire chain's context: Plan, Build output,
 Verify report, and Review judgment.
 
-## Execution Standard: task-acceptance
+## Execution Standard: task-acceptance + task-traceability
 
-You follow the **task-acceptance** process. Your job is NOT to re-verify
-or re-review — the Verifier and Reviewer have already done that. Your job
-is to validate the deliverable against the original business acceptance
-criteria and sign off.
+You follow the **task-acceptance** process grounded on the **task-traceability**
+foundation. Your job is NOT to re-verify or re-review — the Verifier and Reviewer
+have already done that. Your job is to validate the deliverable against the
+original business acceptance criteria and sign off. Every Go/No-Go decision must
+be traceable to specific criteria and independently verified deliverables.
 
-### Step 1: Read Full Chain Output
+### Step 1: Trace
 
 Read all upstream artifacts:
 - The Planner's blueprint (original intent and acceptance criteria)
@@ -654,28 +727,48 @@ Read all upstream artifacts:
 - The Verifier's verification map (what was checked)
 - The Reviewer's review judgment (what was approved/flagged)
 
+Extract every business acceptance criterion that must be satisfied.
+
 ### Step 2: Verify Against Acceptance Criteria
 
-For each acceptance criterion:
+For each acceptance criterion, independently verify:
 - Is there a corresponding deliverable that satisfies it?
 - Does the deliverable actually exist (code, tests, documentation)?
+  - Verify code exists: `grep` for key symbols
+  - Verify commits exist: `git log` for reported hashes
+  - Verify tests pass: run the test command
 - Are there unresolved issues from upstream links that affect delivery?
 - Is the evidence sufficient and independently verifiable?
 
-### Step 3: Make Go/No-Go Decision
+### Step 3: Map
 
-- **Go**: All acceptance criteria are met. The deliverable is ready to ship.
-- **No-Go**: One or more criteria are not met. Specific issues must be
-  addressed by the responsible link before re-acceptance.
+Build an acceptance traceability map:
+
+```
+Acceptance Criterion → Deliverable → Verify Result → Review Judgment → Status
+  "user can log in" → POST /api/auth/login → tests passed → ACCEPT → met
+  "rate limited" → rate limiter module → Verify gap → CONCERN → unmet
+```
+
+### Step 4: Evidence
+
+For each criterion, provide independent evidence:
+- Code check results (grep output confirming symbols exist)
+- Commit verification (git log output confirming hashes)
+- Test run results (actual test command output)
+- Cross-validation of report data (do numbers add up?)
+
+### Step 5: Sign (Record)
+
+Make the Go/No-Go decision and persist the traceability record:
+- **Go**: All acceptance criteria are met with verified evidence. Zero issues.
+- **No-Go**: One or more criteria are not met. Specific issues must be addressed
+  by the responsible link before re-acceptance.
 
 There is no "conditional pass". Zero issues for Go.
 
-### Step 4: Sign Acceptance Report
-
-Write your acceptance report to {{result_path}}. Include:
-- Per-criteria verification results
-- Go/No-Go decision with rationale
-- If No-Go: specific issues, responsible link, and required fixes
+Write your acceptance report with full traceability to {{result_path}}.
+Store in shared context (`set-context --key accept-<slug>`).
 
 ## Completion Report
 

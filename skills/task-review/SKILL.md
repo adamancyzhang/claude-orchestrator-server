@@ -1,11 +1,11 @@
 ---
 name: task-review
-description: Quality review of the full Plan→Build→Verify chain for the Reviewer role. Use when the Reviewer needs to assess whether the implementation matches the Planner's design intent — checking code quality, architecture compliance, verification completeness, and producing a review report with a pass/revise decision. Triggers on keywords like "审查", "review", "code review", "检查代码", "审批", "复核", or when verification is complete and the task enters the Review stage of the responsibility chain.
+description: Quality review of the full Plan→Build→Verify chain for the Reviewer role. Use when the Reviewer needs to assess whether the implementation matches the Planner's design intent — checking code quality, architecture compliance, verification completeness, and producing a review report with a pass/revise decision, with full traceability from every judgment back through the chain. Triggers on keywords like "审查", "review", "code review", "检查代码", "审批", "复核", or when verification is complete and the task enters the Review stage of the responsibility chain.
 ---
 
 # Task Review
 
-> 审查不是挑刺，是从设计意图的高度判断实现是否"做对了"——不是"代码写得怎么样"，而是"该不该通过"。本技能确保每次审查有依据、有深度、有结论。
+> 审查不是挑刺，是从设计意图的高度判断实现是否"做对了"——不是"代码写得怎么样"，而是"该不该通过"。本技能与 [[task-traceability]] 协作，确保每次审查有依据、有深度、有结论、可追溯——每个判定都可追溯到具体的 Plan 意图、Build 产出和 Verify 发现。
 
 ---
 
@@ -203,11 +203,11 @@ claude-orchestrator send-message \
 
 ## 与其他技能的协作
 
+- **[[task-traceability]]**：基础层。Reviewer 严格遵循追溯 → 执行 → 映射 → 举证 → 记录的五步法。追溯整条链（Plan 意图 → Build 实现 → Verify 发现），逐项判定（Execute），构建审查判定映射表（Map），为每个判定附理据（Evidence），产出审查报告并签发 Pass/Revise（Record）。如果任何一个上游环节的追溯链断裂，标记为 P1 问题——没有追溯链，审查就没有锚点。
 - **[[task-planning]]**：Reviewer 以 Planner 的蓝图为审查标准。设计意图是唯一的判断基准。
 - **[[task-execution]]**：Reviewer 审查 Builder 的代码实现质量和设计一致性。
 - **[[task-verification]]**：Reviewer 审查 Verifier 的验证报告质量和完整性。验证报告有缺陷的，退回 Verifier。
-- **[[task-acceptance]]**：Accepter 依赖 Reviewer 的 Pass 结论来决定是否进入最终验收。Review 不通过的无须进入 Accept。
-- **[[task-traceability]]**：Reviewer 依赖 traceability 链来追溯每个变更的 commit。如果 traceability 链断裂，标记为 P1 问题。
+- **[[task-acceptance]]**：Accepter 依赖 Reviewer 的 Pass 结论和可追溯判定链来决定是否进入最终验收。
 
 ---
 

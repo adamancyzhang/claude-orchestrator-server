@@ -1,11 +1,11 @@
 ---
 name: task-acceptance
-description: PM task-level acceptance verification. Use when the PM needs to verify completed work from team members, run acceptance on daily work assignments, or confirm deliverables before signing off. Triggers on keywords like "确认并验收", "验收一下", "verify and accept", "检查完成情况", "task acceptance", "任务验收". Covers per-task-assignment verification workflow with cross-worktree git checks, commit signature validation, and report data cross-validation.
+description: PM task-level acceptance verification with full traceability. Use when the PM needs to verify completed work from team members, run acceptance on daily work assignments, or confirm deliverables before signing off — every acceptance decision must be traceable to specific criteria and verified deliverables. Triggers on keywords like "确认并验收", "验收一下", "verify and accept", "检查完成情况", "task acceptance", "任务验收". Covers per-task-assignment verification workflow with cross-worktree git checks, commit signature validation, and report data cross-validation.
 ---
 
 # Task Acceptance
 
-> 验收不是读报告，是逐项验证代码、测试、git commit 的真实存在。本技能确保每次验收不走形式、不漏步骤。
+> 验收不是读报告，是逐项验证代码、测试、git commit 的真实存在。本技能与 [[task-traceability]] 协作，确保每次验收不走形式、不漏步骤、可追溯——每个 Go/No-Go 决策都可追溯到具体的验收标准和经过验证的交付物。
 
 ---
 
@@ -180,6 +180,16 @@ ls -la docs/{member}/YYYY-MM-DD/*.png
 | P2 | 报告数据错误、表格笔误 | 测试数分项与合计不对应 |
 
 验收标准：**零问题才能签 Go**。不做"条件通过"。
+
+---
+
+## 与其他技能的协作
+
+- **[[task-traceability]]**：基础层。Accepter 严格遵循追溯 → 执行 → 映射 → 举证 → 记录的五步法。追溯全链产出和验收标准（Trace），逐项核实验收标准（Execute），映射交付物到验收标准（Map），提供代码检查、测试运行、git log 等证据（Evidence），签署验收报告并记录 Go/No-Go（Record）。零问题才能签 Go——不做条件通过。
+- **[[task-planning]]**：Accepter 以 Planner 蓝图中的验收标准为核实基准。
+- **[[task-execution]]**：Accepter 核验 Builder 的代码变更和 commit hash 是否真实存在。
+- **[[task-verification]]**：Accepter 引用 Verifier 的报告，但不替代自己的独立核实。
+- **[[task-review]]**：Accepter 依赖 Reviewer 的 Pass 结论。Review 不通过无须进入 Accept。
 
 ---
 

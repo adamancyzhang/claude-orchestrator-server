@@ -1,11 +1,11 @@
 ---
 name: task-planning
-description: Requirement analysis and task breakdown for the Planner role. Use when the Planner needs to analyze requirements, define task blueprints, break down work into executable tasks with acceptance criteria, establish responsibility chain ordering, and push tasks to the orchestrator queue. Triggers on keywords like "分析需求", "拆解任务", "制定计划", "task planning", "blueprint", "break down", "define tasks", "规划", or when starting a new work cycle that needs tasks created.
+description: Requirement analysis and task breakdown for the Planner role. Use when the Planner needs to analyze requirements, define task blueprints, break down work into executable tasks with acceptance criteria, establish responsibility chain ordering, and push tasks to the orchestrator queue — all with full traceability from requirements to tasks. Triggers on keywords like "分析需求", "拆解任务", "制定计划", "task planning", "blueprint", "break down", "define tasks", "规划", or when starting a new work cycle that needs tasks created.
 ---
 
 # Task Planning
 
-> 规划不是猜测，是分析需求 → 定义蓝图 → 拆解可执行任务 → 建立可验证的验收标准。本技能确保每次规划产出清晰、可执行、可追溯。
+> 规划不是猜测，是分析需求 → 定义蓝图 → 拆解可执行任务 → 建立可验证的验收标准。本技能与 [[task-traceability]] 协作，确保每次规划产出清晰、可执行、可追溯——每个任务都可追溯到具体需求。
 
 ---
 
@@ -168,6 +168,15 @@ claude-orchestrator send-message --broadcast --content "蓝图 <目标slug> 已�
 □ 蓝图文档已存入共享上下文
 □ Leader 已收到蓝图就绪通知
 ```
+
+---
+
+## 与其他技能的协作
+
+- **[[task-traceability]]**：基础层。Planner 的每一步都需要可追溯：需求 → 蓝图 → 任务清单 → 验收标准。Plan 是责任链的起点，如果 Plan 的追溯链断裂，Builder 不知道做什么，Verifier 不知道验什么，Reviewer 不知道审什么。
+- **[[task-execution]]**：Builder 依赖 Planner 的蓝图和追溯链来理解执行范围。
+- **[[task-verification]]**：Verifier 以 Planner 蓝图的验收标准为验证基准。
+- **[[task-review]]**：Reviewer 以 Planner 蓝图为审查标准。
 
 ---
 
