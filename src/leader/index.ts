@@ -14,6 +14,7 @@ import { DecisionEngine } from "./decision-engine.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { expandHomeDir, loadGlobalConfig, loadInstanceConfig, saveInstanceId } from "../config.js";
+import { HookEngine } from "../hooks/engine.js";
 import { LeaderTui } from "./tui.js";
 
 export async function startLeader(config: {
@@ -31,6 +32,14 @@ export async function startLeader(config: {
   const leaderName = config.name || instanceConfig.name || "Leader";
   const command = config.command || globalConfig.commands?.["claude-cli"] || "claude --dangerously-skip-permissions --permission-mode dontAsk";
   const cacheDir = config.cacheDir || globalConfig.cache_dir || "~/.claude-orchestrator/sessions";
+
+  // Load hooks from config
+  const hooks = new HookEngine();
+  const hooksConfig = {
+    ...globalConfig.hooks,
+    ...instanceConfig.hooks,
+  };
+  hooks.load(hooksConfig);
 
   // Create /leader EPHEMERAL node
   const leaderId = crypto.randomUUID().replace(/-/g, "");
@@ -79,7 +88,7 @@ export async function startLeader(config: {
   const decisionEngine = new DecisionEngine(zk, taskQueue, messageRouter, command, resolvedCache, instance.id);
 
   // Start subsystems
-  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, command, resolvedCache, decisionEngine, taskGenerator);
+  const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, command, resolvedCache, hooks, decisionEngine, taskGenerator);
   await leaderWatcher.start();
 
   const monitor = new WorkerMonitor(zk, eventBus);

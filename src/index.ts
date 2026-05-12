@@ -101,7 +101,7 @@ program
       global: {
         cache_dir: config.cacheDir,
         "commands.claude-cli": config.cliCommand,
-        "commands.leader-sync": config.leaderSync,
+        hooks: config.hooks,
       },
       project: {
         name: projectConfig.name || "(not set)",

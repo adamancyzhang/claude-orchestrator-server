@@ -7,6 +7,7 @@ import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { loadConfig, loadInstanceConfig, saveInstanceConfig, saveInstanceId, loadInstanceId, loadGlobalConfig, resolveInstanceId, expandHomeDir } from "../config.js";
 import { output } from "../utils/output.js";
+import { HookEngine } from "../hooks/engine.js";
 import { WorkerWatcher } from "../worker/watcher.js";
 
 const VALID_ROLES = ["planner", "builder", "verifier", "reviewer", "accepter", "leader"] as const;
@@ -67,6 +68,9 @@ export async function cmdRegister(zkHosts: string): Promise<void> {
   const leaderData = await zk.getLeader();
   const leaderInstanceId = (leaderData?.instance_id as string) ?? instance.id;
 
+  const hooks = new HookEngine();
+  hooks.load(resolvedConfig.hooks);
+
   const watcher = new WorkerWatcher(
     zk,
     instance.id,
@@ -74,6 +78,7 @@ export async function cmdRegister(zkHosts: string): Promise<void> {
     resolvedConfig.cliCommand,
     resolvedConfig.cacheDir,
     leaderInstanceId,
+    hooks,
   );
 
   const onSigint = () => {
@@ -250,11 +255,17 @@ export async function cmdSetup(options: {
   const existingGlobal = loadGlobalConfig();
   const globalZk = existingGlobal.zookeeper || { url: "127.0.0.1:2181", root_path: "/claude-orchestrator", auth: null };
   const prevCommands = existingGlobal.commands;
+  const prevHooks = existingGlobal.hooks;
   saveInstanceConfig(
     {
       commands: {
         "claude-cli": command || prevCommands?.["claude-cli"] || defaultCliCommand,
-        "leader-sync": prevCommands?.["leader-sync"] ?? null,
+      },
+      hooks: prevHooks || {
+        leader_message_start: null,
+        leader_message_end: null,
+        worker_message_start: null,
+        worker_message_end: null,
       },
       cache_dir: cacheDir || existingGlobal.cache_dir || defaultCacheDir,
       zookeeper: {

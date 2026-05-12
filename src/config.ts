@@ -13,7 +13,13 @@ export interface ZkConfig {
 
 export interface CommandsConfig {
   "claude-cli"?: string;
-  "leader-sync"?: string | null;
+}
+
+export interface HooksConfig {
+  leader_message_start?: string | null;
+  leader_message_end?: string | null;
+  worker_message_start?: string | null;
+  worker_message_end?: string | null;
 }
 
 export interface InstanceConfig {
@@ -21,6 +27,7 @@ export interface InstanceConfig {
   name?: string;
   role?: string;
   commands?: CommandsConfig;
+  hooks?: HooksConfig;
   cache_dir?: string;
   zookeeper?: ZkConfig;
 }
@@ -29,7 +36,7 @@ export interface ResolvedConfig {
   zk: ZkConfig;
   cacheDir: string;
   cliCommand: string;
-  leaderSync: string | null;
+  hooks: HooksConfig;
   instanceId?: string;
   name?: string;
   role?: string;
@@ -77,13 +84,18 @@ export function loadConfig(cliOpts: {
   // Command: project overrides global
   const mergedCommands = project.commands || global.commands;
   const cliCommand = mergedCommands?.["claude-cli"] || defaultCliCommand();
-  const leaderSync = mergedCommands?.["leader-sync"] ?? null;
+
+  // Hooks: project overrides global
+  const hooks: HooksConfig = {
+    ...global.hooks,
+    ...project.hooks,
+  };
 
   const instanceId = project.instance_id;
   const name = project.name;
   const role = project.role;
 
-  return { zk, cacheDir, cliCommand, leaderSync, instanceId, name, role };
+  return { zk, cacheDir, cliCommand, hooks, instanceId, name, role };
 }
 
 function readConfigFile(filePath: string): InstanceConfig {

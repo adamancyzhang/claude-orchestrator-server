@@ -5,6 +5,7 @@ import * as paths from "../zk/paths.js";
 import { MessageSchema } from "../models/schemas.js";
 import { execWithTee } from "../utils/exec.js";
 import { expandHomeDir } from "../config.js";
+import { HookEngine } from "../hooks/engine.js";
 
 const LINK_TEMPLATES = ["plan", "build", "verify", "review", "accept"];
 
@@ -22,6 +23,7 @@ export class WorkerWatcher {
     private command: string,
     private cacheDir: string,
     private leaderInstanceId: string,
+    private hooks: HookEngine,
   ) {}
 
   async start(): Promise<void> {
@@ -110,7 +112,26 @@ export class WorkerWatcher {
     }
 
     console.log(`[Watcher] [${timestamp}] Processing...`);
-    await execWithTee(this.command, prompt, logPath, this.workDir);
+
+    const hookCtx = {
+      instanceId: this.instanceId,
+      instanceName: this.instanceName,
+      instanceRole: this.instanceRole,
+      messageId: msgId,
+      messageType: msg.type,
+      messageContent: msg.content,
+      fromInstance: msg.from_instance,
+      fromName: msg.from_name,
+      toInstance: msg.to_instance ?? "",
+      workDir: this.workDir,
+      link: link !== "_generic" ? link : null,
+    };
+
+    this.hooks.fire("worker_message_start", hookCtx);
+
+    const result = await execWithTee(this.command, prompt, logPath, this.workDir);
+
+    this.hooks.fire("worker_message_end", { ...hookCtx, logPath, exitCode: result.code });
 
     // Send completion report to leader (only for linked task messages)
     if (link !== "_generic") {

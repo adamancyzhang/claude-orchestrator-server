@@ -4,6 +4,7 @@ import { EventEmitter } from "events";
 const { mockSpawn } = vi.hoisted(() => ({ mockSpawn: vi.fn() }));
 vi.mock("child_process", () => ({ spawn: mockSpawn }));
 
+import { HookEngine } from "../../src/hooks/engine.js";
 import { WorkerWatcher } from "../../src/worker/watcher.js";
 
 class MockChildProcess extends EventEmitter {
@@ -47,7 +48,7 @@ describe("WorkerWatcher", () => {
 
   beforeEach(() => {
     zk = makeMockZkClient();
-    watcher = new WorkerWatcher(zk, "worker-inst-1", "/test/workdir", "claude", "~/.cache/test", "leader-1");
+    watcher = new WorkerWatcher(zk, "worker-inst-1", "/test/workdir", "claude", "~/.cache/test", "leader-1", new HookEngine());
     mockSpawn.mockClear();
   });
 
