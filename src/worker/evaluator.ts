@@ -2,8 +2,10 @@ import * as fs from "node:fs";
 import { TemplateEngine } from "../executor/template.js";
 import { ClaudeRunner } from "../executor/runner.js";
 import { Logger } from "../utils/logger.js";
+import { EvalDecisionSchema } from "../models/schemas.js";
 
 const CHAIN_LINKS = ["plan", "build", "verify", "review", "accept"];
+const MAX_RETRIES = 3;
 
 const NEXT_LINKS: Record<string, string | null> = {
   plan: "build", build: "verify", verify: "review",
@@ -51,42 +53,75 @@ export class SelfEvaluator {
       ].join("\n");
     }
 
-    const evalResultPath = this.runner.evalResultPath(uniqueKey);
-    const evalLogPath = this.runner.evalLogPath(uniqueKey);
-
-    const evalPrompt = this.templateEngine.render(evalTemplate, {
+    const baseVars = {
       name: this.instanceName,
       preset_role: this.instanceRole,
       link,
       task_result_path: taskResultPath,
-      result_path: evalResultPath,
       work_dir: "",
       time: new Date().toISOString(),
       ...msgVars,
-    });
+    };
 
-    this.logger.info("Running self-evaluation...");
-    await this.runner.run(evalPrompt, evalLogPath);
+    const formatHint = [
+      ``,
+      `## IMPORTANT: Format Correction`,
+      `Your previous output was invalid JSON or did not match the required schema.`,
+      `You MUST output ONLY valid JSON with exactly these fields:`,
+      `\`\`\`json`,
+      `{"decision": "activate_next"|"feedback"|"close_chain", "reason": "<string>", "nextLink": "<string>", "feedback": "<string>"}`,
+      `\`\`\``,
+      `No markdown fences, no extra text, no trailing commas. Pure JSON only.`,
+    ].join("\n");
 
-    try {
-      const content = await fs.promises.readFile(evalResultPath, "utf-8");
-      if (content.trim()) {
-        try {
-          JSON.parse(content.trim());
-          return content.trim();
-        } catch {
-          // Not valid JSON
-        }
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const attemptKey = `${uniqueKey}-${attempt}`;
+      const evalResultPath = this.runner.evalResultPath(attemptKey);
+      const evalLogPath = this.runner.evalLogPath(attemptKey);
+
+      let prompt = this.templateEngine.render(evalTemplate, {
+        ...baseVars,
+        result_path: evalResultPath,
+      });
+
+      if (attempt > 0) {
+        prompt += formatHint;
       }
-    } catch {
-      // Evaluation result file not found or empty
+
+      this.logger.info(`Self-evaluation attempt ${attempt + 1}/${MAX_RETRIES}...`);
+      await this.runner.run(prompt, evalLogPath);
+
+      try {
+        const content = await fs.promises.readFile(evalResultPath, "utf-8");
+        if (!content.trim()) continue;
+
+        const cleaned = content.trim()
+          .replace(/```json\s*/g, "")
+          .replace(/```\s*/g, "")
+          .trim();
+
+        const parsed = JSON.parse(cleaned);
+        const validated = EvalDecisionSchema.parse(parsed);
+        return JSON.stringify(validated);
+      } catch (err) {
+        this.logger.error(`Attempt ${attempt + 1} invalid`, err);
+      }
     }
+
+    this.logger.error(`All ${MAX_RETRIES} evaluation attempts failed, using fallback`);
 
     const nextLink = NEXT_LINKS[link];
     if (nextLink) {
-      return JSON.stringify({ decision: "activate_next", reason: `Auto-advance from ${link}`, nextLink });
+      return JSON.stringify({
+        decision: "activate_next",
+        reason: `Auto-advance from ${link} (after ${MAX_RETRIES} eval failures)`,
+        nextLink,
+      });
     }
-    return JSON.stringify({ decision: "close_chain", reason: "Accept link completed" });
+    return JSON.stringify({
+      decision: "close_chain",
+      reason: `Accept link completed (after ${MAX_RETRIES} eval failures)`,
+    });
   }
 }
 
