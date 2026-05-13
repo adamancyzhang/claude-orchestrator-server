@@ -369,6 +369,8 @@ export class ChainRouter {
       from_role: "leader",
       to_instance: worker.id,
       content: def.description,
+      created_at: new Date().toISOString(),
+      read: false,
       link,
       task_title: def.title,
       task_description: def.description,
