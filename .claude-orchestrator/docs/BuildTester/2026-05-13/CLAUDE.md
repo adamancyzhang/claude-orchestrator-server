@@ -6,7 +6,7 @@
 
 ## Activity
 - chain-1: email-validator — Implemented `isValidEmail` in `src/email-validator.ts`
-- Commit: (see git log)
+- Commit: 0eb0566fa1105307abc0433e332ed8dc329b32e8
 
 ## Completion Report
 
