@@ -2,6 +2,7 @@
 
 相关文档：
 - [`resume-session.md`](./resume-session.md) — `--resume` 优化方案：保持对话上下文传递
+- [`init-checker.md`](./init-checker.md) — 交互式初始化检查器：步骤确认 + 危险操作拦截 + `-y` 记忆
 
 ## Scope
 
