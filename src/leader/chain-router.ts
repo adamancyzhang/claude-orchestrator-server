@@ -88,7 +88,28 @@ export class ChainRouter {
       });
 
       this.logger.info(`Leader self-processing decompose: "${msg.content.slice(0, 80)}"`);
-      await this.runner.run(prompt, logPath);
+
+      this.eventBus.emit({
+        type: "stream_start",
+        instanceId: this.leaderInstanceId,
+        logPath,
+        taskId: msg.id,
+      });
+
+      await this.runner.run(prompt, logPath, (line: string) => {
+        this.eventBus.emit({
+          type: "stream_chunk",
+          instanceId: this.leaderInstanceId,
+          line,
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      });
+
+      this.eventBus.emit({
+        type: "stream_end",
+        instanceId: this.leaderInstanceId,
+        logPath,
+      });
 
       try {
         const resultContent = await fs.promises.readFile(resultPath, "utf-8");
@@ -201,7 +222,7 @@ export class ChainRouter {
       const worker = await this.findWorkerByRole(role);
       if (worker) {
         const { docPath, def } = createdTasks.get(firstLink)!;
-        await this.sendTaskToWorker(worker, firstLink, def!, docPath, chainDef.chain_id);
+        await this.sendTaskToWorker(worker, firstLink, def!, docPath, chainDef.chain_id, createdTasks.get(firstLink)!.taskId);
       } else {
         this.logger.error(`No ${role} worker available. Chain ${chainDef.chain_id} waiting for worker.`);
       }
@@ -284,7 +305,7 @@ export class ChainRouter {
             const def = pending
               ? { title: pending.title as string, description: (pending.description as string) || "", criteria: "", priority: (pending.priority as number) ?? 1 }
               : { title: task.title, description: task.description, criteria: "", priority: 1 };
-            await this.sendTaskToWorker(worker, nextLink, def, docPath, chainId ?? "");
+            await this.sendTaskToWorker(worker, nextLink, def, docPath, chainId ?? "", task.id);
           } else {
             this.logger.info(`No ${role} worker available for ${nextLink}, task queued`);
           }
@@ -339,6 +360,7 @@ export class ChainRouter {
     def: { title: string; description: string; criteria: string; priority: number },
     docPath: string,
     chainId: string,
+    taskId?: string,
   ): Promise<void> {
     await this.zk.createMessage(worker.id, {
       type: "direct",
@@ -353,6 +375,7 @@ export class ChainRouter {
       task_criteria: def.criteria,
       task_doc_path: docPath,
       chain_id: chainId,
+      task_id: taskId ?? null,
     } as unknown as Record<string, unknown>);
     this.logger.info(`Sent ${link} task to ${worker.name} (${worker.id.slice(0, 8)})`);
   }

@@ -60,7 +60,7 @@ function defaultCacheDir(): string {
 }
 
 function defaultCliCommand(): string {
-  return "claude --dangerously-skip-permissions --permission-mode dontAsk";
+  return "claude --dangerously-skip-permissions --permission-mode dontAsk --output-format stream-json";
 }
 
 export function loadConfig(cliOpts: {

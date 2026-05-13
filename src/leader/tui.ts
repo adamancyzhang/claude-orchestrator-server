@@ -57,6 +57,21 @@ function box(width: number, ...lines: string[]): string {
   return top + body + bottom;
 }
 
+function stripJsonChunk(line: string): string {
+  try {
+    const parsed = JSON.parse(line);
+    if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+      return parsed.delta.text;
+    }
+    if (parsed.type === "content_block_start" && parsed.content_block?.text) {
+      return parsed.content_block.text;
+    }
+    return "";
+  } catch {
+    return line;
+  }
+}
+
 function workerStatusColor(status: string): string {
   if (status === "idle") return GREEN;
   if (status === "busy") return YELLOW;
@@ -121,6 +136,8 @@ export class LeaderTui {
   private rawMode = false;
   private state: LeaderState | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private renderQueued = false;
+  private renderDebounceMs = 50;
 
   constructor() {
     this.setupInput();
@@ -150,6 +167,15 @@ export class LeaderTui {
 
   private rerender(): void {
     if (this.state) this.render(this.state);
+  }
+
+  requestRender(): void {
+    if (this.renderQueued) return;
+    this.renderQueued = true;
+    setTimeout(() => {
+      this.renderQueued = false;
+      this.rerender();
+    }, this.renderDebounceMs);
   }
 
   private setupResizeHandler(): void {
@@ -325,20 +351,53 @@ export class LeaderTui {
       out += leftBox[i] + " " + rightBox[i] + "\n";
     }
 
-    // ── Worker Messages Panel ──
+    // ── Live Stream / Worker Messages Panel ──
     const msgWidth = cols - 2;
     const msgLines: string[] = [];
     const selected = state.workers[state.selectedWorkerIndex];
     if (selected) {
-      const title = `WORKER MESSAGES — ${selected.name} (${selected.presetRole})`;
-      msgLines.push(` ${title}`);
-      msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
-
-      const msgContent = renderWorkerMessages(selected, msgWidth);
-      for (const line of msgContent.slice(0, 10)) {
-        msgLines.push(line);
+      if (selected.streamActive) {
+        const title = `LIVE STREAM — ${selected.name} (${selected.presetRole})`;
+        msgLines.push(` ${title}`);
+        msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
+        msgLines.push(` ${GREEN}${BOLD}═══ Streaming... ═══${RESET}`);
+        const displayLines = selected.streamBuffer.slice(-20);
+        for (const l of displayLines) {
+          const plain = stripJsonChunk(l);
+          if (!plain) continue;
+          const wrapped = wrapText(plain, msgWidth - 4);
+          for (const wl of wrapped) {
+            msgLines.push(` ${CYAN}${wl}${RESET}`);
+          }
+        }
+        if (selected.streamBuffer.length > 20) {
+          msgLines.push(` ${DIM}... (${selected.streamBuffer.length - 20} more lines)${RESET}`);
+        }
+        while (msgLines.length < 14) msgLines.push("");
+      } else if (selected.streamBuffer.length > 0) {
+        const title = `LAST OUTPUT — ${selected.name} (${selected.presetRole})`;
+        msgLines.push(` ${title}`);
+        msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
+        const displayLines = selected.streamBuffer.slice(-5);
+        for (const l of displayLines) {
+          const plain = stripJsonChunk(l);
+          if (!plain) continue;
+          const wrapped = wrapText(plain, msgWidth - 4);
+          for (const wl of wrapped) {
+            msgLines.push(` ${DIM}${wl}${RESET}`);
+          }
+        }
+        while (msgLines.length < 12) msgLines.push("");
+      } else {
+        const title = `WORKER MESSAGES — ${selected.name} (${selected.presetRole})`;
+        msgLines.push(` ${title}`);
+        msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
+        const msgContent = renderWorkerMessages(selected, msgWidth);
+        for (const line of msgContent.slice(0, 10)) {
+          msgLines.push(line);
+        }
+        while (msgLines.length < 12) msgLines.push("");
       }
-      while (msgLines.length < 12) msgLines.push("");
     } else {
       msgLines.push(` ${DIM}No workers${RESET}`);
       while (msgLines.length < 12) msgLines.push("");

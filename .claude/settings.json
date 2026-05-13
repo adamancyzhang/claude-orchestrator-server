@@ -1,0 +1,27 @@
+{
+  "allowedTools": [
+    "Read",
+    "Edit",
+    "Write",
+    "Bash(git *)",
+    "Bash(npm *)",
+    "Bash(npx *)",
+    "Bash(node *)",
+    "Bash(docker *)",
+    "Bash(ls *)",
+    "Bash(find *)",
+    "Bash(grep *)",
+    "Bash(mkdir *)",
+    "Bash(cp *)",
+    "Bash(mv *)"
+  ],
+  "disallowedTools": [
+    "Bash(curl *)",
+    "Bash(wget *)",
+    "Bash(rm -rf *)",
+    "Bash(sudo *)",
+    "Bash(chmod *)",
+    "Bash(chown *)"
+  ],
+  "skipDangerousModePermissionPrompt": true
+}

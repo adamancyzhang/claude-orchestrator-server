@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import path from "node:path";
-import { execWithTee } from "../utils/exec.js";
+import { execWithTee, execWithStreaming } from "../utils/exec.js";
 import { expandHomeDir } from "../config.js";
 import { Logger } from "../utils/logger.js";
 
@@ -56,10 +56,13 @@ export class ClaudeRunner {
     return path.join(dir, `${uniqueKey}-eval-result.md`);
   }
 
-  async run(prompt: string, logPath: string): Promise<{ code: number }> {
+  async run(prompt: string, logPath: string, onStreamChunk?: (line: string) => void): Promise<{ code: number }> {
     if (Logger.isDebug()) {
       this.logger.debug(`Prompt (${prompt.length} chars):\n${prompt.slice(0, 1000)}${prompt.length > 1000 ? "\n... (truncated)" : ""}`);
       this.logger.debug(`Log: ${logPath}`);
+    }
+    if (onStreamChunk) {
+      return execWithStreaming(this.command, prompt, logPath, onStreamChunk, this.workDir, this.quiet);
     }
     return execWithTee(this.command, prompt, logPath, this.workDir, this.quiet);
   }

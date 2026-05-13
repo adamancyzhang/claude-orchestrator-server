@@ -35,6 +35,9 @@ export interface WorkerInfo {
   currentMessageTime: string | null;
   messageHistory: WorkerMessageEntry[];
   lastCompletedTask: string | null;
+  streamBuffer: string[];
+  streamActive: boolean;
+  streamLogPath: string | null;
 }
 
 export interface EventLogEntry {
@@ -75,6 +78,9 @@ export class LeaderState {
           currentMessageTime: null,
           messageHistory: [],
           lastCompletedTask: null,
+          streamBuffer: [],
+          streamActive: false,
+          streamLogPath: null,
         });
         this.events.push({ timestamp: time, message: `${inst.name} joined (${inst.role})` });
         break;
@@ -193,6 +199,32 @@ export class LeaderState {
       case "debug_info":
         this.events.push({ timestamp: time, message: `[DEBUG] ${event.message}` });
         break;
+      case "stream_start": {
+        const w = this.workers.find(w => w.id === event.instanceId);
+        if (w) {
+          w.streamBuffer = [];
+          w.streamActive = true;
+          w.streamLogPath = (event.logPath as string) ?? null;
+        }
+        break;
+      }
+      case "stream_chunk": {
+        const w = this.workers.find(w => w.id === event.instanceId);
+        if (w && w.streamActive) {
+          w.streamBuffer.push(event.line as string);
+          if (w.streamBuffer.length > 200) {
+            w.streamBuffer = w.streamBuffer.slice(-200);
+          }
+        }
+        break;
+      }
+      case "stream_end": {
+        const w = this.workers.find(w => w.id === event.instanceId);
+        if (w) {
+          w.streamActive = false;
+        }
+        break;
+      }
     }
     // Keep event log to last 100 entries
     if (this.events.length > 100) this.events.shift();

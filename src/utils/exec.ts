@@ -37,6 +37,53 @@ export async function execWithTee(
   });
 }
 
+export async function execWithStreaming(
+  command: string,
+  message: string,
+  logPath: string,
+  onChunk: (line: string) => void,
+  cwd?: string,
+  quiet?: boolean,
+): Promise<{ code: number }> {
+  await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
+
+  const escapedMsg = message.replace(/'/g, "'\\''");
+  const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
+
+  if (!quiet) {
+    const msgPreview = message.length > 100 ? message.slice(0, 100) + "..." : message;
+    console.log(`\n[Exec] ${command} -p '${msgPreview}' | tee -a '${logPath}'`);
+  }
+
+  return new Promise((resolve) => {
+    const child = spawn("sh", ["-c", shellCmd], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+    });
+
+    let partial = "";
+    child.stdout?.on("data", (d: Buffer) => {
+      const text = d.toString();
+      if (!quiet) process.stdout.write(text);
+      partial += text;
+      const lines = partial.split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.length > 0) onChunk(line);
+      }
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      if (!quiet) process.stderr.write(d);
+    });
+    child.on("exit", (code) => {
+      if (partial.length > 0) onChunk(partial);
+      resolve({ code: code ?? -1 });
+    });
+    child.on("error", () => resolve({ code: -1 }));
+  });
+}
+
 export async function execAndCapture(
   command: string,
   message: string,

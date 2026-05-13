@@ -68,7 +68,8 @@ export class WorkerWatcher {
     this.inFlight.add(msgId);
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
     const link = (msg.link as string) ?? "_generic";
-    const uniqueKey = `task-${msgId}-${Date.now().toString(36)}`;
+    const taskId = (msg as Record<string, unknown>).task_id as string | undefined;
+    const uniqueKey = taskId || `task-${msgId}-${Date.now().toString(36)}`;
 
     const logPath = this.runner.logPath(uniqueKey);
     const resultPath = this.runner.resultPath(uniqueKey);

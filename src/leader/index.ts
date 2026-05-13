@@ -19,6 +19,7 @@ import { loadInstanceConfig, saveInstanceId, loadConfig } from "../config.js";
 import { Logger } from "../utils/logger.js";
 import { captureConsoleToFile, restoreConsole } from "../utils/console-capture.js";
 import { LeaderTui } from "./tui.js";
+import { StreamTailer } from "./stream-tailer.js";
 
 export async function startLeader(config: {
   zkHosts: string;
@@ -92,6 +93,45 @@ export async function startLeader(config: {
 
   eventBus.onAll((event) => state.apply(event));
 
+  // StreamTailer for cross-process file-based streaming
+  const streamTailer = new StreamTailer();
+
+  // When a worker claims a task, start tailing its log file
+  eventBus.on("task_claimed", (event) => {
+    const workerId = event.instanceId as string;
+    const taskId = event.taskId as string;
+    if (!workerId || !taskId) return;
+
+    const logPath = cacheRunner.logPath(taskId);
+    eventBus.emit({
+      type: "stream_start",
+      instanceId: workerId,
+      logPath,
+      taskId,
+    });
+    streamTailer.start(logPath, (line) => {
+      eventBus.emit({
+        type: "stream_chunk",
+        instanceId: workerId,
+        line,
+        timestamp: new Date().toLocaleTimeString(),
+      });
+    });
+  });
+
+  // When a task completes, stop tailing
+  eventBus.on("task_completed", (event) => {
+    const workerId = event.instanceId as string;
+    if (workerId && streamTailer.isActive) {
+      streamTailer.stop();
+      eventBus.emit({
+        type: "stream_end",
+        instanceId: workerId,
+        logPath: "",
+      });
+    }
+  });
+
   // Initialize TaskQueue, MessageRouter, and ChainRouter
   const taskQueue = new TaskQueue(zk);
   const messageRouter = new MessageRouter(zk);
@@ -115,9 +155,28 @@ export async function startLeader(config: {
   recovery.start();
   await recovery.scanOrphans();
 
+  // Add leader as visible worker for in-process streaming display
+  eventBus.emit({
+    type: "worker_joined",
+    instance: {
+      id: instance.id,
+      name: leaderName,
+      role: "leader",
+      status: "idle",
+    },
+    instanceId: instance.id,
+    name: leaderName,
+  });
+
   // Initialize TUI
   const tui = new LeaderTui();
-  eventBus.onAll(() => tui.render(state));
+  eventBus.onAll((event) => {
+    if (event.type === "stream_chunk") {
+      tui.requestRender();
+    } else {
+      tui.render(state);
+    }
+  });
   tui.render(state);
 
   // Wire TUI input to send messages to leader's own queue for processing

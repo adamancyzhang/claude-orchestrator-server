@@ -94,6 +94,7 @@ export const MessageSchema = z.object({
   result_path: z.string().nullable().default(null),
   reply_to: z.string().nullable().default(null),
   chain_id: z.string().nullable().default(null),
+  task_id: z.string().nullable().default(null),
 });
 export type Message = z.infer<typeof MessageSchema>;
 
