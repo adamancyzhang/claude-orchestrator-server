@@ -124,11 +124,13 @@ const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
 
 对于 Leader（cwd = projectRoot），`--add-dir .claude-orchestrator` 直接指向项目根下的目录。
 
-对于 Worker（cwd = worktreePath），`--add-dir` 的值需要调整为指向项目根目录。有两种方式：
-- **方式 1**：用绝对路径 `--add-dir /abs/path/to/project/.claude-orchestrator`
-- **方式 2**：在 worktree 内创建 `.claude-orchestrator/agents/` 软链接指向项目根
+对于 Worker（cwd = worktreePath），`--add-dir` 必须使用项目根的**绝对路径**：
 
-推荐方式 1，因为 `--add-dir` 接受绝对路径。
+```
+--add-dir /abs/path/to/project/.claude-orchestrator
+```
+
+**禁止使用软链接**。`.claude-orchestrator/docs/` 中的 Worker 工件需要被 git 跟踪和 commit，软链接会导致 git 无法正确追踪实际内容。
 
 **Worker 命令构建变更** (`src/worker/child-runner.ts:68-74`)：
 
@@ -143,6 +145,29 @@ const runner = new ClaudeRunner(fullCommand, ...);
 ```
 
 类似地，skill 目录也用 `--add-dir` 指向 `{projectRoot}/.claude/skills`。
+
+---
+
+### 约束: `.gitignore` 不得忽略 `.claude-orchestrator/`
+
+**问题**：当前 `.gitignore` 包含 `.claude-orchestrator/` 全局忽略规则。Worker 在 `.claude-orchestrator/docs/{name}/YYYY-MM-DD/` 下生成的工作产物（chain-def.json、blueprint.md、traceability-map.md、verification-map.md、review-judgment.md、acceptance-report.md 等）会被 `git add -A` 跳过，`CommitChecker` 无法提交。
+
+**要求**：`.gitignore` 移除 `.claude-orchestrator/` 全局忽略，改为仅忽略运行时临时子目录：
+
+```diff
+- .claude-orchestrator/
++ .claude-orchestrator/sessions/
++ .claude-orchestrator/worktree/
+```
+
+| 路径 | 是否忽略 | 原因 |
+|------|----------|------|
+| `.claude-orchestrator/config.json` | 不忽略 | 项目级配置，需要版本控制 |
+| `.claude-orchestrator/docs/` | 不忽略 | Worker 工作产物，需要 commit |
+| `.claude-orchestrator/sessions/` | 忽略 | Leader 运行时日志，临时数据 |
+| `.claude-orchestrator/worktree/` | 忽略 | git worktree 各自独立仓库，主仓库不应跟踪 |
+
+注意：git worktree 共享主仓库的 `.gitignore`，因此主仓库的一次修改对所有 worktree 生效。
 
 ---
 
@@ -273,13 +298,15 @@ You are **${vars.name}**, a **${vars.role}** in the multi-agent orchestration sy
    // --add-dir 通过 ChildConfig 按需注入，不放在全局默认中
    ```
 
-2. **修改 worktree 初始化** (`src/worker/worktree-initializer.ts`)
+2. **修改 `.gitignore`**：移除 `.claude-orchestrator/` 全局忽略，改为仅忽略 `sessions/` 和 `worktree/` 子目录
+
+3. **修改 worktree 初始化** (`src/worker/worktree-initializer.ts`)
    - 删除 `ensureWorktreeEnvironment` 中 agent 模板拷贝 (`lines 139-151`)
    - 删除 skill 拷贝 (`lines 153-183`)
    - 保留 team CLAUDE.md 拷贝 (`lines 185-190`)
    - 保留 personal CLAUDE.md 生成 (`lines 192-208`)
 
-3. **修改 `agentsDir` 指向** (`src/worker/child-runner.ts:67`)
+4. **修改 `agentsDir` 指向** (`src/worker/child-runner.ts:67`)
    ```typescript
    // 当前
    const agentsDir = path.join(config.worktreePath, ".claude-orchestrator", "agents");
@@ -287,7 +314,7 @@ You are **${vars.name}**, a **${vars.role}** in the multi-agent orchestration sy
    const agentsDir = path.join(projectRoot, ".claude-orchestrator", "agents");
    ```
 
-4. **确认 Leader 同样受益**
+5. **确认 Leader 同样受益**
    - Leader 的 cwd 是 projectRoot，`--add-dir .claude-orchestrator` 直接生效
    - Leader 的 `TemplateEngine` 同样从共享目录加载模板
 
