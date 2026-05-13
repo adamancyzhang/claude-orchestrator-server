@@ -1,6 +1,6 @@
 {
   "name": "@adamancyzhang/claude-orchestrator",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Multi-agent orchestration CLI backed by ZooKeeper — register, assign tasks, communicate, share context",
   "repository": "github:adamancyzhang/claude-orchestrator-server",
   "license": "MIT",

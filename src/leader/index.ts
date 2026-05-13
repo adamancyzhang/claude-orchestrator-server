@@ -46,7 +46,7 @@ export async function startLeader(config: {
       started_at: new Date().toISOString(),
       host: os.hostname(),
       pid: process.pid,
-      version: "0.4.0",
+      version: "0.4.1",
     });
   } catch (err) {
     if (isNodeExists(err)) {
