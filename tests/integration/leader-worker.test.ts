@@ -120,7 +120,16 @@ describe("v0.3.0 Leader-Worker Integration", () => {
     const registry = new InstanceRegistry(zk);
     const taskQueue = new TaskQueue(zk);
 
-    // Register accepter worker first
+    // Drain stale pending tasks and unregister test workers from previous tests
+    const drainer = await registry.register("EveAccepterDrainer", "builder");
+    let d = await taskQueue.claim(drainer.id);
+    while (d) {
+      try { await taskQueue.complete(drainer.id, d.id, "drained"); } catch {}
+      d = await taskQueue.claim(drainer.id);
+    }
+    try { await registry.unregister(drainer.id); } catch {}
+
+    // Register accepter worker
     const instance = await registry.register("Eve-Accepter", "accepter");
 
     // Push a build task first, then an accept task
