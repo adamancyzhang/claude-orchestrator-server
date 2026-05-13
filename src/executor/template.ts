@@ -2,6 +2,19 @@ import * as fs from "node:fs";
 import path from "node:path";
 import { Logger } from "../utils/logger.js";
 
+const BUSINESS_CARD = `## Worker Identity
+
+You are **{{name}}**, a **{{preset_role}}** in the multi-agent orchestration system.
+
+- Name: {{name}}
+- Role: {{preset_role}}
+- Worktree: {{worktree_path}}
+- Branch: {{worktree_branch}}
+- Instance: {{instance_id}}
+
+---
+`;
+
 const LINK_TEMPLATES = ["plan", "build", "verify", "review", "accept", "decompose"];
 
 export class TemplateEngine {
@@ -37,11 +50,19 @@ export class TemplateEngine {
   }
 
   render(template: string, vars: Record<string, string>): string {
-    let result = template;
+    let body = template;
     for (const [key, value] of Object.entries(vars)) {
-      result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+      body = body.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
     }
-    return result;
+
+    const card = BUSINESS_CARD
+      .replace(/\{\{name\}\}/g, vars.name ?? "unknown")
+      .replace(/\{\{preset_role\}\}/g, vars.preset_role ?? "unknown")
+      .replace(/\{\{worktree_path\}\}/g, vars.worktree_path ?? "")
+      .replace(/\{\{worktree_branch\}\}/g, vars.worktree_branch ?? "")
+      .replace(/\{\{instance_id\}\}/g, vars.instance_id ?? "");
+
+    return card + body;
   }
 }
 

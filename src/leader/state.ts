@@ -11,6 +11,14 @@ function taskLinkToRole(link: string): string {
   return map[link] ?? link;
 }
 
+export interface WorkerMessageEntry {
+  timestamp: string;
+  content: string;
+  contentFull: string;
+  link: string | null;
+  messageId: string;
+}
+
 export interface WorkerInfo {
   id: string;
   name: string;
@@ -18,6 +26,15 @@ export interface WorkerInfo {
   currentRole: string | null;
   status: string;
   currentTaskId: string | null;
+  worktreeName: string | null;
+  worktreePath: string | null;
+  worktreeBranch: string | null;
+  pid: number | null;
+  currentMessage: string | null;
+  currentMessageLink: string | null;
+  currentMessageTime: string | null;
+  messageHistory: WorkerMessageEntry[];
+  lastCompletedTask: string | null;
 }
 
 export interface EventLogEntry {
@@ -34,6 +51,7 @@ export class LeaderState {
   leaderName = "";
   leaderInstanceId = "";
   cacheDir = "";
+  selectedWorkerIndex = 0;
 
   apply(event: LeaderEvent): void {
     const time = new Date().toLocaleTimeString();
@@ -48,14 +66,54 @@ export class LeaderState {
           currentRole: null,
           status: inst.status as string,
           currentTaskId: (inst.current_task_id as string) ?? null,
+          worktreeName: (inst.worktree_name as string) ?? null,
+          worktreePath: (inst.worktree_path as string) ?? null,
+          worktreeBranch: (inst.worktree_branch as string) ?? null,
+          pid: (inst.pid as number) ?? null,
+          currentMessage: null,
+          currentMessageLink: null,
+          currentMessageTime: null,
+          messageHistory: [],
+          lastCompletedTask: null,
         });
         this.events.push({ timestamp: time, message: `${inst.name} joined (${inst.role})` });
         break;
       }
-      case "worker_left":
+      case "worker_left": {
+        const leftIdx = this.workers.findIndex(w => w.id === event.instanceId);
         this.workers = this.workers.filter(w => w.id !== event.instanceId);
+        if (leftIdx === this.selectedWorkerIndex) {
+          this.selectedWorkerIndex = Math.min(this.selectedWorkerIndex, this.workers.length - 1);
+          if (this.selectedWorkerIndex < 0) this.selectedWorkerIndex = 0;
+        } else if (leftIdx < this.selectedWorkerIndex && this.selectedWorkerIndex > 0) {
+          this.selectedWorkerIndex--;
+        }
         this.events.push({ timestamp: time, message: `${event.name} left` });
         break;
+      }
+      case "worker_message_received": {
+        const w = this.workers.find(w => w.id === event.instanceId);
+        if (w) {
+          const rawContent = (event.content as string) ?? "";
+          const timestamp = (event.timestamp as string) ?? time;
+          w.currentMessage = rawContent;
+          w.currentMessageLink = (event.link as string) ?? null;
+          w.currentMessageTime = timestamp;
+          w.messageHistory.push({
+            timestamp,
+            content: rawContent.slice(0, 200),
+            contentFull: rawContent,
+            link: (event.link as string) ?? null,
+            messageId: (event.messageId as string) ?? "",
+          });
+          if (w.messageHistory.length > 20) {
+            w.messageHistory = w.messageHistory.slice(-20);
+          }
+          w.status = "busy";
+        }
+        this.events.push({ timestamp: time, message: `${event.name} received message: ${(event.content as string)?.slice(0, 60)}...` });
+        break;
+      }
       case "worker_status_changed": {
         const w = this.workers.find(w => w.id === event.instanceId);
         if (w) {
@@ -93,12 +151,15 @@ export class LeaderState {
       case "task_completed": {
         this.claimedTasks = this.claimedTasks.filter(t => t.id !== event.taskId);
         if (event.task) this.completedTasks.push(event.task as Record<string, unknown>);
-        // Clear currentRole for the worker
         const w = this.workers.find(w => w.id === event.instanceId);
         if (w) {
           w.currentRole = null;
           w.status = "idle";
           w.currentTaskId = null;
+          w.lastCompletedTask = (event.task as Record<string, unknown>)?.title as string ?? null;
+          w.currentMessage = null;
+          w.currentMessageLink = null;
+          w.currentMessageTime = null;
         }
         this.events.push({ timestamp: time, message: `Task ${event.taskId} completed` });
         break;

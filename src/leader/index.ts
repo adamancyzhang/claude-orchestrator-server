@@ -8,6 +8,7 @@ import { TaskOrchestrator } from "./orchestrator.js";
 import { TaskRecovery } from "./recovery.js";
 import { LeaderWatcher } from "./watcher.js";
 import { ChainRouter } from "./chain-router.js";
+import { MergeValidator } from "./merge-validator.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { ClaudeRunner } from "../executor/runner.js";
@@ -20,6 +21,7 @@ export async function startLeader(config: {
   name?: string;
   instanceId?: string;
   debug?: boolean;
+  worktreeConfigs?: Array<{ name: string; role: string; worktreePath: string; branch: string; instanceId: string }>;
 }): Promise<void> {
   const logger = new Logger("Leader");
 
@@ -39,7 +41,7 @@ export async function startLeader(config: {
       started_at: new Date().toISOString(),
       host: os.hostname(),
       pid: process.pid,
-      version: "0.3.0",
+      version: "0.4.0",
     });
   } catch (err) {
     if (isNodeExists(err)) {
@@ -75,7 +77,10 @@ export async function startLeader(config: {
   const taskQueue = new TaskQueue(zk);
   const messageRouter = new MessageRouter(zk);
 
-  const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, cacheRunner);
+  // Initialize MergeValidator
+  const mergeValidator = new MergeValidator(process.cwd(), cacheRunner, eventBus);
+
+  const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, cacheRunner, mergeValidator);
 
   // Start subsystems
   const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, chainRouter);

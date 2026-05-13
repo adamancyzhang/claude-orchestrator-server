@@ -40,6 +40,10 @@ export const InstanceSchema = z.object({
   current_task_id: z.string().nullable().default(null),
   connected_since: z.string(),
   work_dir: z.string().nullable().default(null),
+  worktree_name: z.string().nullable().default(null),
+  worktree_path: z.string().nullable().default(null),
+  worktree_branch: z.string().nullable().default(null),
+  pid: z.number().int().nullable().default(null),
 });
 export type Instance = z.infer<typeof InstanceSchema>;
 
@@ -88,6 +92,7 @@ export const MessageSchema = z.object({
   task_doc_path: z.string().nullable().default(null),
   result_path: z.string().nullable().default(null),
   reply_to: z.string().nullable().default(null),
+  chain_id: z.string().nullable().default(null),
 });
 export type Message = z.infer<typeof MessageSchema>;
 

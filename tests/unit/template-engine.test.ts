@@ -51,27 +51,30 @@ describe("TemplateEngine", () => {
   });
 
   describe("render", () => {
-    it("substitutes {{key}} placeholders with values", () => {
+    const card = (name = "unknown", role = "unknown") =>
+      `## Worker Identity\n\nYou are **${name}**, a **${role}** in the multi-agent orchestration system.\n\n- Name: ${name}\n- Role: ${role}\n- Worktree: \n- Branch: \n- Instance: \n\n---\n`;
+
+    it("substitutes {{key}} placeholders with values and prepends business card", () => {
       const result = engine.render("Hello {{name}}, your task is {{task_title}}.", {
         name: "Alice",
         task_title: "Build the thing",
       });
-      expect(result).toBe("Hello Alice, your task is Build the thing.");
+      expect(result).toBe(card("Alice") + "Hello Alice, your task is Build the thing.");
     });
 
     it("replaces multiple occurrences of the same key", () => {
       const result = engine.render("{{x}} {{x}} {{x}}", { x: "y" });
-      expect(result).toBe("y y y");
+      expect(result).toBe(card() + "y y y");
     });
 
     it("leaves unmatched placeholders as-is", () => {
       const result = engine.render("Hello {{name}}, {{missing}}", { name: "Bob" });
-      expect(result).toBe("Hello Bob, {{missing}}");
+      expect(result).toBe(card("Bob") + "Hello Bob, {{missing}}");
     });
 
-    it("returns template unchanged when no placeholders", () => {
+    it("returns business card prepended when no placeholders", () => {
       const result = engine.render("No placeholders here", {});
-      expect(result).toBe("No placeholders here");
+      expect(result).toBe(card() + "No placeholders here");
     });
   });
 

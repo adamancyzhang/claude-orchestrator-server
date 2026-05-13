@@ -30,6 +30,7 @@ export interface InstanceConfig {
   hooks?: HooksConfig;
   cache_dir?: string;
   zookeeper?: ZkConfig;
+  worktree?: Record<string, { name: string; role: string; path: string; branch: string; instance_id: string }>;
 }
 
 export interface ResolvedConfig {
@@ -153,6 +154,40 @@ export function resolveInstanceId(cliInstanceId?: string): string {
     );
   }
   return resolved;
+}
+
+export interface WorktreeEntry {
+  name: string;
+  role: string;
+  path: string;
+  branch: string;
+  instance_id: string;
+}
+
+export function loadProjectWorktreeConfig(): Record<string, WorktreeEntry> {
+  const config = loadProjectConfig();
+  return (config.worktree as Record<string, WorktreeEntry>) ?? {};
+}
+
+export function saveProjectWorktreeConfig(
+  entries: Record<string, WorktreeEntry> | Array<{ name: string; role: string; relativePath: string; branch: string; instanceId: string }>,
+): void {
+  let record: Record<string, WorktreeEntry>;
+  if (Array.isArray(entries)) {
+    record = {};
+    for (const c of entries) {
+      record[c.name] = {
+        name: c.name,
+        role: c.role,
+        path: c.relativePath,
+        branch: c.branch,
+        instance_id: c.instanceId,
+      };
+    }
+  } else {
+    record = entries;
+  }
+  saveInstanceConfig({ worktree: record }, false);
 }
 
 export function expandHomeDir(p: string): string {

@@ -57,6 +57,19 @@ export class LeaderWatcher {
       msgId,
     });
 
+    // Emit worker_message_received for TUI if from a Worker
+    if (msg.from_role && msg.from_role !== "leader") {
+      this.eventBus.emit({
+        type: "worker_message_received",
+        instanceId: msg.from_instance,
+        name: fromLabel,
+        content: msg.content,
+        link: msg.link,
+        timestamp: new Date().toLocaleTimeString(),
+        messageId: msgId,
+      });
+    }
+
     await this.chainRouter.route(msg);
 
     try {

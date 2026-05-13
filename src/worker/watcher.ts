@@ -7,6 +7,7 @@ import { Logger } from "../utils/logger.js";
 import { TemplateEngine, LINK_TEMPLATES } from "../executor/template.js";
 import { ClaudeRunner } from "../executor/runner.js";
 import { SelfEvaluator, CHAIN_LINKS } from "./evaluator.js";
+import { CommitChecker, type CommitResult } from "./commit-checker.js";
 
 export class WorkerWatcher {
   private inFlight = new Set<string>();
@@ -23,6 +24,9 @@ export class WorkerWatcher {
     private templateEngine: TemplateEngine,
     private runner: ClaudeRunner,
     private evaluator: SelfEvaluator,
+    private commitChecker: CommitChecker | null = null,
+    private worktreePath = "",
+    private worktreeBranch = "",
   ) {}
 
   async start(): Promise<void> {
@@ -79,9 +83,12 @@ export class WorkerWatcher {
           task_criteria: (msg.task_criteria as string) ?? "",
           task_doc_path: (msg.task_doc_path as string) ?? "",
           result_path: resultPath,
-          work_dir: "",
+          work_dir: this.worktreePath,
           time: new Date().toISOString(),
           content: msg.content,
+          worktree_path: this.worktreePath,
+          worktree_branch: this.worktreeBranch,
+          instance_id: this.instanceId,
         })
       : msg.content;
 
@@ -107,8 +114,18 @@ export class WorkerWatcher {
     const result = await this.runner.run(prompt, logPath);
     this.hooks.fire("worker_message_end", { ...hookCtx, logPath, exitCode: result.code });
 
+    // Auto-commit changes for chain-link tasks
+    let commitResult: CommitResult | null = null;
+    if (link !== "_generic" && this.commitChecker) {
+      commitResult = await this.commitChecker.check({
+        link,
+        taskTitle: (msg.task_title as string) ?? link,
+        taskDescription: (msg.task_description as string) ?? msg.content,
+      });
+    }
+
     if (link !== "_generic") {
-      await this.sendCompletionReport(link, msg, resultPath, uniqueKey);
+      await this.sendCompletionReport(link, msg, resultPath, uniqueKey, commitResult);
     }
 
     try {
@@ -127,6 +144,7 @@ export class WorkerWatcher {
     msg: Record<string, unknown>,
     resultPath: string,
     uniqueKey: string,
+    commitResult: CommitResult | null = null,
   ): Promise<void> {
     try {
       let reportContent: string;
@@ -150,6 +168,24 @@ export class WorkerWatcher {
         reportContent = await this.evaluator.evaluate(link, msgVars, resultPath, uniqueKey);
       } else {
         reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}\nTask completed.`;
+      }
+
+      // Inject commit info into report content if available
+      if (commitResult) {
+        try {
+          const reportJson = JSON.parse(reportContent);
+          reportJson.commit = {
+            sha: commitResult.sha,
+            message: commitResult.message,
+            branch: this.worktreeBranch,
+            changed_files: commitResult.changedFiles,
+            untracked_files: commitResult.untrackedFiles,
+          };
+          reportContent = JSON.stringify(reportJson);
+        } catch {
+          // Content is not JSON, append commit info
+          reportContent += `\nCommit: ${commitResult.sha.slice(0, 7)} - ${commitResult.message}`;
+        }
       }
 
       await this.zk.createMessage(this.leaderInstanceId, {

@@ -3,7 +3,6 @@ import { Command } from "commander";
 import { loadConfig, loadInstanceConfig } from "./config.js";
 import { Logger } from "./utils/logger.js";
 import {
-  cmdRegister,
   cmdPushTask,
   cmdClaimTask,
   cmdCompleteTask,
@@ -12,7 +11,6 @@ import {
   cmdPollMessage,
   cmdDeleteMessage,
   cmdUnregister,
-  cmdSetup,
   cmdTaskBlock,
   cmdTaskFail,
   cmdTaskRetry,
@@ -56,33 +54,21 @@ function getSubOpts<T>(cmd: Command): T {
 // ── Control Commands ──
 
 program
-  .command("leader")
-  .description("Start Leader node (TUI orchestration console)")
-  .option("--name <name>", "Leader display name")
+  .command("run")
+  .description("One-shot orchestration: setup environment, start TUI, register Workers")
+  .requiredOption("--worker <n>", "Number of Workers", parseInt)
   .action(async function (this: Command) {
-    const { name } = getSubOpts<{ name?: string }>(this);
+    const { worker } = getSubOpts<{ worker: number }>(this);
     const debug = getDebug(this);
     if (debug) Logger.enableDebug();
     const config = loadConfig({ zookeeper: getZkHosts(this) });
-    const { startLeader } = await import("./leader/index.js");
-    await startLeader({
+    const { runOrchestrator } = await import("./orchestrator/run.js");
+    await runOrchestrator({
       zkHosts: config.zk.url,
-      name,
-      instanceId: config.instanceId,
+      workerCount: worker,
+      name: undefined,
       debug,
     });
-  });
-
-program
-  .command("register")
-  .description("Register as Worker and listen for messages (Ctrl+C to stop)")
-  .action(async function (this: Command) {
-    try {
-      const debug = getDebug(this);
-      await cmdRegister(getZkHosts(this), debug);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -117,27 +103,6 @@ program
         instance_id: projectConfig.instance_id || "(not set)",
       },
     });
-  });
-
-program
-  .command("setup")
-  .description("Initialize orchestrator environment and agent templates")
-  .option("--leader", "Initialize as Leader environment", false)
-  .option("--name <name>", "Instance display name")
-  .option("--role <role>", "Instance role (planner/builder/verifier/reviewer/accepter)")
-  .option("--cache-dir <path>", "Shared cache directory (default: ~/.claude-orchestrator/sessions)")
-  .option("--command <cmd>", "Claude CLI command (default: claude --dangerously-skip-permissions -v)")
-  .option("--global", "Write config only to ~/.claude-orchestrator/", false)
-  .action(async function (this: Command) {
-    const { leader, name, role, cacheDir, command, global: isGlobal } = getSubOpts<{
-      leader: boolean;
-      name?: string;
-      role?: string;
-      cacheDir?: string;
-      command?: string;
-      global: boolean;
-    }>(this);
-    await cmdSetup({ leader, name, role, cacheDir, command, global: isGlobal, instanceId: undefined });
   });
 
 // ── Message Commands ──

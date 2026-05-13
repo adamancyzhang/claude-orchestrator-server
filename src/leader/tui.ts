@@ -15,14 +15,36 @@ const BLUE = `${ESC}[34m`;
 const MAGENTA = `${ESC}[35m`;
 const CYAN = `${ESC}[36m`;
 
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 function padRight(s: string, n: number): string {
-  const visible = s.replace(/\x1b\[[0-9;]*m/g, "");
-  return s + " ".repeat(Math.max(0, n - visible.length));
+  const visible = stripAnsi(s).length;
+  return s + " ".repeat(Math.max(0, n - visible));
 }
 
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return s.slice(0, n - 1) + "…";
+}
+
+function wrapText(s: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  let current = "";
+  for (const ch of s) {
+    if (ch === "\n") {
+      lines.push(current);
+      current = "";
+    } else if (current.length >= maxWidth) {
+      lines.push(current);
+      current = ch;
+    } else {
+      current += ch;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
 }
 
 function box(width: number, ...lines: string[]): string {
@@ -39,6 +61,48 @@ function workerStatusColor(status: string): string {
   if (status === "idle") return GREEN;
   if (status === "busy") return YELLOW;
   return DIM;
+}
+
+function renderWorkerMessages(
+  worker: WorkerInfo,
+  maxWidth: number,
+): string[] {
+  const lines: string[] = [];
+  const contentW = maxWidth - 4;
+
+  if (worker.currentMessage) {
+    const linkTag = worker.currentMessageLink
+      ? ` ${CYAN}[${worker.currentMessageLink}]${RESET}`
+      : "";
+    const time = worker.currentMessageTime
+      ? ` ${DIM}(${worker.currentMessageTime})${RESET}`
+      : "";
+    lines.push(` ${GREEN}◆${RESET} ${BOLD}Current task${RESET}${time}${linkTag}`);
+
+    const wrapped = wrapText(worker.currentMessage, contentW - 2);
+    for (const line of wrapped) {
+      lines.push(`   ${line}`);
+    }
+    lines.push("");
+  } else if (worker.lastCompletedTask) {
+    lines.push(` ${DIM}◇ (idle) — last task: ${worker.lastCompletedTask}${RESET}`);
+    lines.push("");
+  } else {
+    lines.push(` ${DIM}◇ (idle)${RESET}`);
+    lines.push("");
+  }
+
+  if (worker.messageHistory.length > 0) {
+    lines.push(` ${BOLD}History:${RESET}`);
+    for (const entry of worker.messageHistory.slice(-5).reverse()) {
+      const time = `${DIM}${entry.timestamp}${RESET}`;
+      const link = entry.link ? ` ${CYAN}[${entry.link}]${RESET}` : "";
+      const summary = truncate(entry.content.replace(/\n/g, " "), contentW - 25);
+      lines.push(`   ${time}${link}  "${summary}"`);
+    }
+  }
+
+  return lines;
 }
 
 export class LeaderTui {
@@ -80,8 +144,35 @@ export class LeaderTui {
       const key = data.toString();
 
       if (key === "\x03") {
-        // Ctrl+C — let SIGINT handler deal with it
         process.kill(process.pid, "SIGINT");
+        return;
+      }
+
+      if (key === "\t") {
+        if (this.state && this.state.workers.length > 0) {
+          this.state.selectedWorkerIndex =
+            (this.state.selectedWorkerIndex + 1) % this.state.workers.length;
+          this.rerender();
+        }
+        return;
+      }
+
+      if (key === "\x1b[Z") {
+        if (this.state && this.state.workers.length > 0) {
+          this.state.selectedWorkerIndex =
+            (this.state.selectedWorkerIndex - 1 + this.state.workers.length) %
+            this.state.workers.length;
+          this.rerender();
+        }
+        return;
+      }
+
+      if (key >= "1" && key <= "9") {
+        const idx = parseInt(key) - 1;
+        if (this.state && idx < this.state.workers.length) {
+          this.state.selectedWorkerIndex = idx;
+          this.rerender();
+        }
         return;
       }
 
@@ -106,7 +197,6 @@ export class LeaderTui {
         return;
       }
 
-      // Printable characters only
       if (key >= " ") {
         this.inputBuffer += key;
         this.rerender();
@@ -127,18 +217,29 @@ export class LeaderTui {
     // ── Team Panel (top) ──
     const teamWidth = cols - 2;
     const teamLines: string[] = [];
-    teamLines.push(` ${BOLD}TEAM${RESET}`);
+    teamLines.push(` ${BOLD}TEAM${RESET}${" ".repeat(Math.max(2, teamWidth - 10))}${DIM}cols-2${RESET}`);
     teamLines.push(` ${DIM}${"─".repeat(teamWidth - 4)}${RESET}`);
     if (state.workers.length === 0) {
       teamLines.push(` ${DIM}No workers online${RESET}`);
     } else {
-      const header = `${BOLD}${padRight("Name", 14)}${padRight("Preset", 12)}${padRight("Current Role", 16)}${padRight("Status", 8)}Current Task${RESET}`;
+      const header = `${BOLD}${padRight("Name", 11)}${padRight("Role", 12)}${padRight("Worktree", 14)}${padRight("Branch", 26)}${padRight("PID", 7)}${padRight("Status", 7)}${RESET}`;
       teamLines.push(` ${header}`);
-      for (const w of state.workers.slice(0, 8)) {
-        const statusColored = `${workerStatusColor(w.status)}${padRight(w.status, 7)}${RESET}`;
-        const currentRole = w.currentRole ?? `${DIM}(idle)${RESET}`;
-        const cross = w.currentRole && w.currentRole !== w.presetRole ? `${MAGENTA}◀←${RESET} ` : "";
-        const line = ` ${padRight(truncate(w.name, 13), 14)}${padRight(w.presetRole, 12)}${cross}${padRight(currentRole, 16)}${statusColored}${truncate(w.currentTaskId ?? "-", teamWidth - 54)}`;
+      const maxWorkers = Math.min(state.workers.length, 8);
+      for (let i = 0; i < maxWorkers; i++) {
+        const w = state.workers[i];
+        const selected = i === state.selectedWorkerIndex;
+        const marker = selected ? `${BOLD}${CYAN}>${RESET}` : " ";
+        const name = selected
+          ? `${BOLD}${CYAN}${padRight(truncate(w.name, 9), 9)}${RESET}`
+          : padRight(truncate(w.name, 9), 9);
+        const role = w.currentRole
+          ? `${MAGENTA}${padRight(w.currentRole, 10)}${RESET}${DIM}◀←${RESET}`
+          : padRight(w.presetRole, 10);
+        const wt = padRight(truncate(w.worktreeName ?? w.name, 12), 12);
+        const branch = padRight(truncate(w.worktreeBranch ?? "-", 24), 24);
+        const pid = padRight(w.pid !== null ? String(w.pid) : "-", 5);
+        const statusColored = `${workerStatusColor(w.status)}${padRight(w.status, 5)}${RESET}`;
+        const line = ` ${marker} ${name} ${role} ${DIM}${wt}${RESET} ${DIM}${branch}${RESET} ${pid} ${statusColored}`;
         teamLines.push(line);
       }
       if (state.workers.length > 8) {
@@ -149,7 +250,6 @@ export class LeaderTui {
     out += box(teamWidth, ...teamLines);
 
     // ── Task Panels (middle, side by side) ──
-    // Left: Pending
     const pendLines: string[] = [];
     pendLines.push(` ${BOLD}PENDING${RESET}`);
     pendLines.push(` ${DIM}${"─".repeat(halfW - 4)}${RESET}`);
@@ -166,7 +266,6 @@ export class LeaderTui {
       }
     }
 
-    // Right: In Progress
     const progLines: string[] = [];
     progLines.push(` ${BOLD}IN PROGRESS${RESET}`);
     progLines.push(` ${DIM}${"─".repeat(halfW - 4)}${RESET}`);
@@ -181,7 +280,6 @@ export class LeaderTui {
       }
     }
 
-    // Pad both to same height
     const taskH = Math.max(pendLines.length, progLines.length) + 2;
     while (pendLines.length < taskH - 2) pendLines.push("");
     while (progLines.length < taskH - 2) progLines.push("");
@@ -192,9 +290,32 @@ export class LeaderTui {
       out += leftBox[i] + " " + rightBox[i] + "\n";
     }
 
+    // ── Worker Messages Panel ──
+    const msgWidth = cols - 2;
+    const msgLines: string[] = [];
+    const selected = state.workers[state.selectedWorkerIndex];
+    if (selected) {
+      const title = `WORKER MESSAGES — ${selected.name} (${selected.presetRole})`;
+      const hint = `${DIM}[Tab/Shift+Tab switch Worker]${RESET}`;
+      const titleSpacer = Math.max(2, msgWidth - 4 - stripAnsi(title).length - stripAnsi(hint).length);
+      msgLines.push(` ${title}${" ".repeat(titleSpacer)}${hint}`);
+      msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
+
+      const msgContent = renderWorkerMessages(selected, msgWidth);
+      for (const line of msgContent.slice(0, 10)) {
+        msgLines.push(line);
+      }
+      while (msgLines.length < 12) msgLines.push("");
+    } else {
+      msgLines.push(` ${DIM}No workers${RESET}`);
+      while (msgLines.length < 12) msgLines.push("");
+    }
+    const msgH = msgLines.length + 2;
+    out += box(msgWidth, ...msgLines);
+
     // ── Event Log ──
-    const inputSectionH = 4; // input box height
-    const remainingH = rows - teamBoxH - (taskH + 2) - 3 - inputSectionH;
+    const inputSectionH = 4;
+    const remainingH = rows - teamBoxH - (taskH + 2) - msgH - inputSectionH - 3;
     const logH = Math.max(remainingH, 3);
     const logLines: string[] = [];
     logLines.push(` ${BOLD}EVENT LOG${RESET}`);

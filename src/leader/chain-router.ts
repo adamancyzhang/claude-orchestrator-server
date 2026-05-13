@@ -3,6 +3,7 @@ import { ZkClient } from "../zk/client.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { LeaderEventBus } from "./event-bus.js";
+import { MergeValidator } from "./merge-validator.js";
 import { Logger } from "../utils/logger.js";
 import type { ClaudeRunner } from "../executor/runner.js";
 import {
@@ -41,6 +42,7 @@ export class ChainRouter {
     private leaderInstanceId: string,
     private leaderName: string,
     private runner: ClaudeRunner,
+    private mergeValidator: MergeValidator | null = null,
   ) {}
 
   async route(msg: Message): Promise<void> {
@@ -155,6 +157,24 @@ export class ChainRouter {
   }
 
   private async handleCompletionReport(msg: Message): Promise<void> {
+    // Try merge validation if commit info is present
+    if (this.mergeValidator) {
+      try {
+        const parsed = JSON.parse(msg.content);
+        if (parsed.commit?.sha) {
+          this.mergeValidator.validate({
+            sha: parsed.commit.sha,
+            message: parsed.commit.message,
+            branch: parsed.commit.branch,
+            taskTitle: (msg.task_title as string) ?? "unknown",
+            taskLink: (msg.link as string) ?? "unknown",
+          }).catch(() => { /* best effort */ });
+        }
+      } catch {
+        // Content is not JSON, skip merge validation
+      }
+    }
+
     let decision: EvalDecision;
     let parsed = true;
     try {
