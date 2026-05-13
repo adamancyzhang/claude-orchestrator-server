@@ -37,7 +37,7 @@ function assignRoles(count: number): string[] {
   return roles;
 }
 
-export function getWorktreeBranch(name: string): string {
+function getWorktreeBranch(name: string): string {
   return `claude-orchestrator/${name}-workspace`;
 }
 

@@ -8,7 +8,6 @@ import { Logger } from "../utils/logger.js";
 import { ClaudeRunner } from "../executor/runner.js";
 import { TemplateEngine } from "../executor/template.js";
 import {
-  MessageSchema,
   createMessage,
   ChainDefSchema,
   EvalDecisionSchema,

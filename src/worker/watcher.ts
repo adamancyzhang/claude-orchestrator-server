@@ -4,7 +4,7 @@ import * as paths from "../zk/paths.js";
 import { MessageSchema, InstanceSchema, type Message } from "../models/schemas.js";
 import { HookEngine } from "../hooks/engine.js";
 import { Logger } from "../utils/logger.js";
-import { TemplateEngine, LINK_TEMPLATES } from "../executor/template.js";
+import { TemplateEngine } from "../executor/template.js";
 import { ClaudeRunner } from "../executor/runner.js";
 import { SelfEvaluator, CHAIN_LINKS } from "./evaluator.js";
 import { CommitChecker, type CommitResult } from "./commit-checker.js";

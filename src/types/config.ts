@@ -7,5 +7,4 @@ export type {
   InitStatus,
   InstanceConfig,
   ResolvedConfig,
-  WorktreeEntry,
 } from "../config.js";

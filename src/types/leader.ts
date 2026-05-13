@@ -1,4 +1,4 @@
-export type { WorkerInfo, WorkerMessageEntry, EventLogEntry } from "../leader/state.js";
+export type { WorkerInfo } from "../leader/state.js";
 export type { MergeDecision } from "../leader/merge-validator.js";
 
 export type LeaderEventType =

@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import { execSync } from "node:child_process";
-import { Logger } from "../utils/logger.js";
 import { extractJson } from "../utils/json.js";
 import type { ClaudeRunner } from "../executor/runner.js";
 import type { LeaderEventBus } from "./event-bus.js";
@@ -11,7 +10,6 @@ export interface MergeDecision {
 }
 
 export class MergeValidator {
-  private logger = new Logger("MergeValidator");
 
   constructor(
     private projectRoot: string,

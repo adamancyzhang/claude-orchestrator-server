@@ -1,4 +1,3 @@
-import * as fs from "node:fs";
 import { ZkClient } from "../zk/client.js";
 import {
   MessageSchema,
@@ -7,10 +6,6 @@ import {
   type Message,
   type MessageType,
 } from "../models/schemas.js";
-
-function utcNow(): string {
-  return new Date().toISOString();
-}
 
 export class MessageRouter {
   constructor(private zk: ZkClient) {}
@@ -127,13 +122,3 @@ export class MessageRouter {
 
 }
 
-export async function renderTemplate(
-  templatePath: string,
-  variables: Record<string, string>,
-): Promise<string> {
-  let content = await fs.promises.readFile(templatePath, "utf-8");
-  for (const [key, value] of Object.entries(variables)) {
-    content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
-  }
-  return content;
-}

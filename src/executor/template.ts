@@ -1,12 +1,10 @@
 import * as fs from "node:fs";
 import path from "node:path";
-import { Logger } from "../utils/logger.js";
 
 const LINK_TEMPLATES = ["plan", "build", "verify", "review", "accept", "decompose"];
 
 export class TemplateEngine {
   private templates: Record<string, string> = {};
-  private logger = new Logger("TemplateEngine");
 
   constructor(
     private agentsDir: string,
@@ -50,4 +48,3 @@ export class TemplateEngine {
   }
 }
 
-export { LINK_TEMPLATES };

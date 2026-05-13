@@ -1,8 +1,8 @@
-export const ROOT = process.env.ZK_ROOT_PATH || "/claude-orchestrator";
+const ROOT = process.env.ZK_ROOT_PATH || "/claude-orchestrator";
 
 export const LEADER = `${ROOT}/leader`;
 export const INSTANCES = `${ROOT}/instances`;
-export const TASKS = `${ROOT}/tasks`;
+const TASKS = `${ROOT}/tasks`;
 export const TASKS_PENDING = `${TASKS}/pending`;
 export const TASKS_CLAIMED = `${TASKS}/claimed`;
 export const TASKS_COMPLETED = `${TASKS}/completed`;
@@ -30,10 +30,6 @@ export function messageDirPath(instanceId: string): string {
 
 export function messagePath(instanceId: string, msgId: string): string {
   return `${MESSAGES}/${instanceId}/${msgId}`;
-}
-
-export function leaderPath(): string {
-  return LEADER;
 }
 
 export const ALL_ENSURE_PATHS = [

@@ -3,7 +3,6 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import { loadInitStatus, saveInitStatusStep, expandHomeDir } from "../config.js";
 import type { StepAction, StepRecord } from "../config.js";
-import { Logger } from "../utils/logger.js";
 
 type DangerLevel = "safe" | "caution" | "danger";
 
@@ -39,7 +38,6 @@ function dangerLabel(level: DangerLevel): string {
 
 export class InitChecker {
   private status = loadInitStatus();
-  private logger = new Logger("InitChecker");
 
   constructor(private opts: { yFlag: boolean }) {}
 
@@ -124,7 +122,7 @@ export class InitChecker {
 
 // Step factory functions
 
-export function createGlobalConfigStep(templateDir: string): InitStep {
+export function createGlobalConfigStep(): InitStep {
   const globalConfigDir = expandHomeDir("~/.claude-orchestrator");
   const globalConfigFile = path.join(globalConfigDir, "config.json");
 

@@ -43,7 +43,7 @@ export async function runOrchestrator(config: {
 
   const checker = new InitChecker({ yFlag: config.yFlag ?? false });
   await checker.runAll([
-    createGlobalConfigStep(templateDir),
+    createGlobalConfigStep(),
     createUserClaudeMdStep(templateDir),
     createTeamClaudeMdStep(templateDir, projectRoot),
     createSkillsStep(skillsDir, projectRoot),
@@ -119,7 +119,7 @@ async function startAllWorkers(opts: {
       { stdio: "inherit" },
     );
 
-    child.on("exit", (code, signal) => {
+    child.on("exit", (code, _signal) => {
       if (shuttingDown) return;
       const retries = restartCount.get(cfg.name) ?? 0;
       if (code !== 0 && code !== null && retries < 3) {

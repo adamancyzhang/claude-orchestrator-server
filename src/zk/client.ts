@@ -17,7 +17,7 @@ function isErrorCode(err: unknown, code: number): boolean {
   );
 }
 
-export function isNoNode(err: unknown): boolean {
+function isNoNode(err: unknown): boolean {
   return isErrorCode(err, NO_NODE);
 }
 

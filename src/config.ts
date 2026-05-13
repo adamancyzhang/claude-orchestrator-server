@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-export const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
-export const GLOBAL_CONFIG_FILE = path.join(GLOBAL_CONFIG_DIR, "config.json");
+const GLOBAL_CONFIG_DIR = path.join(os.homedir(), ".claude-orchestrator");
+const GLOBAL_CONFIG_FILE = path.join(GLOBAL_CONFIG_DIR, "config.json");
 
 export interface ZkConfig {
   url: string;
@@ -130,7 +130,7 @@ function writeConfigFile(filePath: string, config: InstanceConfig): void {
   fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
 }
 
-export function saveInstanceConfig(config: InstanceConfig, global = false): void {
+function saveInstanceConfig(config: InstanceConfig, global = false): void {
   const filePath = global ? GLOBAL_CONFIG_FILE : projectConfigFile();
   const existing = readConfigFile(filePath);
   writeConfigFile(filePath, { ...existing, ...config });
@@ -142,7 +142,7 @@ export function loadInstanceConfig(): InstanceConfig {
   return { ...global, ...project };
 }
 
-export function loadGlobalConfig(): InstanceConfig {
+function loadGlobalConfig(): InstanceConfig {
   return readConfigFile(GLOBAL_CONFIG_FILE);
 }
 
@@ -154,23 +154,7 @@ export function saveInstanceId(instanceId: string): void {
   saveInstanceConfig({ instance_id: instanceId }, false);
 }
 
-export function loadInstanceId(): string | null {
-  const config = loadInstanceConfig();
-  return config.instance_id || null;
-}
-
-export function resolveInstanceId(cliInstanceId?: string): string {
-  const resolved = cliInstanceId || loadInstanceId();
-  if (!resolved) {
-    throw new Error(
-      "No instance_id found. Run 'claude-orchestrator register' first, " +
-        "or pass --instance-id."
-    );
-  }
-  return resolved;
-}
-
-export interface WorktreeEntry {
+interface WorktreeEntry {
   name: string;
   role: string;
   path: string;

@@ -17,12 +17,6 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 export const TaskPriority = z.number().int().min(0).max(2);
 export type TaskPriority = z.infer<typeof TaskPriority>;
 
-export const TaskPriorityName: Record<number, string> = {
-  0: "HIGH",
-  1: "MEDIUM",
-  2: "LOW",
-};
-
 export const MessageType = z.enum(["direct", "broadcast", "help"]);
 export type MessageType = z.infer<typeof MessageType>;
 
@@ -196,66 +190,9 @@ export function createMessage(overrides: {
   });
 }
 
-// ── Tool input schemas ──
-
-export const RegisterInstanceInput = z.object({
-  name: z.string().min(1),
-  role: InstanceRole,
-  instance_id: z.string().optional(),
-});
-
-export const PushTaskInput = z.object({
-  title: z.string().min(1),
-  description: z.string().default(""),
-  priority: TaskPriority.default(1),
-  instance_id: z.string().default(""),
-  assignee: z.string().optional(),
-  link: z.string().optional(),
-  chain_id: z.string().optional(),
-  depends_on: z.array(z.string()).default([]),
-  blocked_by: z.array(z.string()).default([]),
-});
-
-export const ClaimTaskInput = z.object({
-  instance_id: z.string(),
-});
-
-export const CompleteTaskInput = z.object({
-  instance_id: z.string(),
-  task_id: z.string(),
-  result: z.string(),
-});
-
-export const ListTasksInput = z.object({
-  status: z.string().optional(),
-});
-
-export const SendMessageInput = z.object({
-  instance_id: z.string(),
-  content: z.string().min(1),
-  to_instance: z.string().optional(),
-  to_name: z.string().optional(),
-  broadcast: z.boolean().default(false),
-  help: z.boolean().default(false),
-});
-
-export const PollMessagesInput = z.object({
-  instance_id: z.string(),
-});
-
-export const MarkReadInput = z.object({
-  instance_id: z.string(),
-  message_id: z.string(),
-});
-
-export const DismissMessageInput = z.object({
-  instance_id: z.string(),
-  message_id: z.string(),
-});
-
 // ── Chain & Evaluation Schemas ──
 
-export const ChainTaskDefSchema = z.object({
+const ChainTaskDefSchema = z.object({
   title: z.string(),
   description: z.string(),
   criteria: z.string(),

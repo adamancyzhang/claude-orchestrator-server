@@ -8,7 +8,5 @@ export type {
   TaskLink,
   Message,
   MessageType,
-  ChainTaskDef,
-  ChainDef,
   EvalDecision,
 } from "../models/schemas.js";
