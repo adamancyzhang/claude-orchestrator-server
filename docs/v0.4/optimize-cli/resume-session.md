@@ -49,7 +49,12 @@ claude --resume session_abc123 -p "生成 commit"    # 继续追加
 
 ### 1. `src/utils/exec.ts` — 从 stream-json 输出中提取 session_id
 
-由于所有调用都使用 `--output-format stream-json`（`src/config.ts:62-63`），stdout 每行都是 JSON。session_id 出现在启动阶段的某一行中。
+由于 `--output-format stream-json --verbose` 在 `exec.ts` 中强制追加（见 [`README.md`](./README.md) 前置条件），stdout 每一行都是 JSON。实际输出验证，`session_id` 出现在每行 JSON 的顶层字段中，且第一行 `{"type":"system","subtype":"init",...}` 就已经包含。
+
+**真实输出示例**（第一行 `system/init`）：
+```json
+{"type":"system","subtype":"init","cwd":"/path/to/project","session_id":"9f18bea3-9a2e-4048-8273-2e8f1dff20cf","tools":[...],"model":"...","claude_code_version":"2.1.140",...}
+```
 
 **新增共享函数**：
 
@@ -57,14 +62,16 @@ claude --resume session_abc123 -p "生成 commit"    # 继续追加
 function extractSessionId(line: string): string | null {
   try {
     const obj = JSON.parse(line);
-    return obj.session_id || obj.sessionId || null;
+    return obj.session_id || null;
   } catch {
     return null;
   }
 }
 ```
 
-**修改 `execWithTee`**：新增 session ID 提取逻辑，在 `stdout.on("data")` 中解析 JSON 行。
+由于 `session_id` 在第一行 `system/init` 中就出现，提取非常早，不需要遍历大量输出行。
+
+**修改 `execWithTee`**：新增 session ID 提取逻辑，在 `stdout.on("data")` 中解析 JSON 行，拿到后立即停止解析。
 
 **修改 `execWithStreaming`**：已有 line-by-line 解析（`partial` buffer），在现有循环中加入 `extractSessionId`。
 
@@ -204,7 +211,9 @@ Leader 的 decompose 自执行（`handleRequirement`）调用 `runner.run()` 后
 
 ### 1. session_id 提取失败
 
-如果 `--output-format stream-json` 被用户覆盖，或者 Claude Code 输出格式变化导致无法解析 session_id：
+`--output-format stream-json --verbose` 已在 `exec.ts` 中强制追加，正常情况下 stdout 第一行必定是 `system/init` JSON 且包含 `session_id`。
+
+仅在 Claude Code 未来版本改变输出格式时可能提取失败。此时：
 
 - `sessionId` 为 `undefined`
 - `--resume` 不会被追加到命令中

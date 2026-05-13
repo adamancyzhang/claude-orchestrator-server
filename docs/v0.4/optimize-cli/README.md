@@ -5,7 +5,37 @@
 
 ## Scope
 
-优化 Leader 和 Worker 中所有 Claude Code CLI 调用以及 worktree 初始化流程，利用两个原生 CLI flag 替代当前的 Node.js 端模板渲染和文件拷贝。
+优化 Leader 和 Worker 中所有 Claude Code CLI 调用以及 worktree 初始化流程，利用三个原生 CLI flag 替代当前的 Node.js 端模板渲染和文件拷贝。
+
+## 前置条件：`--output-format stream-json --verbose` 强制追加
+
+**当前 `-p` 已经在 `exec.ts` 中强制追加**（`src/utils/exec.ts:15`），但 `--output-format stream-json` 和 `--verbose` 仅存在于默认 `cliCommand` 配置中，用户覆盖 `commands.claude-cli` 时可能丢失，导致 session_id 提取失败等不可控问题。
+
+**改动**：在 `src/utils/exec.ts` 的三个函数（`execWithTee`、`execWithStreaming`、`execAndCapture`）中，将 `--output-format stream-json --verbose` 与 `-p` 一样强制追加到 shell 命令中。
+
+```typescript
+// 当前
+const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
+
+// 优化后
+const shellCmd = `exec ${command} --output-format stream-json --verbose -p '${escapedMsg}' | tee -a '${logPath}'`;
+```
+
+同时将 `src/config.ts` 的默认 `cliCommand` 中移除这两个 flag（它们现在是代码强制追加的）：
+
+```typescript
+// 当前
+function defaultCliCommand(): string {
+  return "claude --dangerously-skip-permissions --permission-mode dontAsk --output-format stream-json";
+}
+
+// 优化后
+function defaultCliCommand(): string {
+  return "claude --dangerously-skip-permissions --permission-mode dontAsk";
+}
+```
+
+这样 `session_id` 提取和 `--resume` 功能具备了可靠的运行基础，不受用户配置覆盖影响。
 
 ## 当前痛点
 
@@ -206,13 +236,19 @@ You are **${vars.name}**, a **${vars.role}** in the multi-agent orchestration sy
 
 ## 实施步骤
 
+### Phase 0: `--output-format stream-json --verbose` 强制追加 (前置)
+
+1. **修改 `exec.ts`**：在三个函数中强制追加 `--output-format stream-json --verbose`
+2. **修改 `config.ts`**：从默认 `cliCommand` 中移除 `--output-format stream-json`
+
 ### Phase 1: `--add-dir` (低风险，纯增量)
 
 1. **修改默认 `cliCommand`** (`src/config.ts:62-63`)
    ```typescript
    function defaultCliCommand(): string {
-     return "claude --dangerously-skip-permissions --permission-mode dontAsk --output-format stream-json --add-dir .claude-orchestrator";
+     return "claude --dangerously-skip-permissions --permission-mode dontAsk";
    }
+   // --add-dir 通过 ChildConfig 按需注入，不放在全局默认中
    ```
 
 2. **修改 worktree 初始化** (`src/worker/worktree-initializer.ts`)
