@@ -56,7 +56,7 @@ function defaultZkConfig(): ZkConfig {
 }
 
 function defaultCacheDir(): string {
-  return "~/.claude-orchestrator/sessions";
+  return ".claude-orchestrator/sessions";
 }
 
 function defaultCliCommand(): string {
@@ -80,7 +80,7 @@ export function loadConfig(cliOpts: {
     zk.url = process.env.ZK_HOSTS;
   }
 
-  const cacheDir = global.cache_dir || defaultCacheDir();
+  const cacheDir = path.resolve(process.cwd(), expandHomeDir(global.cache_dir || defaultCacheDir()));
 
   // Command: project overrides global
   const mergedCommands = project.commands || global.commands;

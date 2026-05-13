@@ -7,6 +7,7 @@ export async function execWithTee(
   message: string,
   logPath: string,
   cwd?: string,
+  quiet?: boolean,
 ): Promise<{ code: number }> {
   await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
 
@@ -14,7 +15,9 @@ export async function execWithTee(
   const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
 
   const msgPreview = message.length > 100 ? message.slice(0, 100) + "..." : message;
-  console.log(`\n[Exec] ${command} -p '${msgPreview}' | tee -a '${logPath}'`);
+  if (!quiet) {
+    console.log(`\n[Exec] ${command} -p '${msgPreview}' | tee -a '${logPath}'`);
+  }
 
   return new Promise((resolve) => {
     const child = spawn("sh", ["-c", shellCmd], {
@@ -23,8 +26,12 @@ export async function execWithTee(
       env: { ...process.env },
     });
 
-    child.stdout?.on("data", (d: Buffer) => process.stdout.write(d));
-    child.stderr?.on("data", (d: Buffer) => process.stderr.write(d));
+    child.stdout?.on("data", (d: Buffer) => {
+      if (!quiet) process.stdout.write(d);
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      if (!quiet) process.stderr.write(d);
+    });
     child.on("exit", (code) => resolve({ code: code ?? -1 }));
     child.on("error", () => resolve({ code: -1 }));
   });
@@ -35,6 +42,7 @@ export async function execAndCapture(
   message: string,
   logPath: string,
   cwd?: string,
+  quiet?: boolean,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
 
@@ -52,12 +60,12 @@ export async function execAndCapture(
     child.stdout?.on("data", (d: Buffer) => {
       const s = d.toString();
       stdout += s;
-      process.stdout.write(s);
+      if (!quiet) process.stdout.write(s);
     });
     child.stderr?.on("data", (d: Buffer) => {
       const s = d.toString();
       stderr += s;
-      process.stderr.write(s);
+      if (!quiet) process.stderr.write(s);
     });
     child.on("exit", (code) => resolve({ code: code ?? -1, stdout, stderr }));
     child.on("error", (err) => resolve({ code: -1, stdout, stderr: err.message }));

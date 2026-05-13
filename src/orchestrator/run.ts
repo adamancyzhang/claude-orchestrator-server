@@ -75,7 +75,7 @@ async function ensureEnvironment(): Promise<void> {
           worker_message_start: null,
           worker_message_end: null,
         },
-        cache_dir: existingGlobal.cache_dir || "~/.claude-orchestrator/sessions",
+        cache_dir: existingGlobal.cache_dir || ".claude-orchestrator/sessions",
         zookeeper: existingGlobal.zookeeper || {
           url: "127.0.0.1:2181",
           root_path: "/claude-orchestrator",

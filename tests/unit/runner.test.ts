@@ -65,7 +65,7 @@ describe("ClaudeRunner", () => {
     it("calls execWithTee with command, prompt, logPath, and workDir", async () => {
       const result = await runner.run("test prompt", "/tmp/test.log");
       expect(result).toEqual({ code: 0 });
-      expect(execWithTee).toHaveBeenCalledWith("claude", "test prompt", "/tmp/test.log", "/tmp/work");
+      expect(execWithTee).toHaveBeenCalledWith("claude", "test prompt", "/tmp/test.log", "/tmp/work", false);
     });
   });
 });

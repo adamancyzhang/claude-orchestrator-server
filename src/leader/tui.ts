@@ -120,9 +120,12 @@ export class LeaderTui {
   private inputCallback: ((text: string) => void) | null = null;
   private rawMode = false;
   private state: LeaderState | null = null;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.setupInput();
+    this.setupResizeHandler();
+    this.startRefreshTimer();
   }
 
   onInput(cb: (text: string) => void): void {
@@ -147,6 +150,18 @@ export class LeaderTui {
 
   private rerender(): void {
     if (this.state) this.render(this.state);
+  }
+
+  private setupResizeHandler(): void {
+    process.stdout.on("resize", () => {
+      this.rerender();
+    });
+  }
+
+  private startRefreshTimer(): void {
+    this.refreshTimer = setInterval(() => {
+      this.rerender();
+    }, 1000);
   }
 
   private setupInput(): void {
@@ -227,12 +242,22 @@ export class LeaderTui {
     // ── Team Panel (top) ──
     const teamWidth = cols - 2;
     const teamLines: string[] = [];
-    teamLines.push(` ${BOLD}TEAM${RESET}${" ".repeat(Math.max(2, teamWidth - 10))}${DIM}cols-2${RESET}`);
+
+    // Responsive column widths
+    const availW = teamWidth - 4;
+    const nameW = Math.max(6, Math.floor(availW * 0.13));
+    const roleW = Math.max(6, Math.floor(availW * 0.12));
+    const wtW = Math.max(8, Math.floor(availW * 0.15));
+    const branchW = Math.max(8, Math.floor(availW * 0.20));
+    const pidW = 6;
+    const statusW = 8;
+
+    teamLines.push(` ${BOLD}TEAM${RESET}`);
     teamLines.push(` ${DIM}${"─".repeat(teamWidth - 4)}${RESET}`);
     if (state.workers.length === 0) {
       teamLines.push(` ${DIM}No workers online${RESET}`);
     } else {
-      const header = `${BOLD}${padRight("Name", 11)}${padRight("Role", 12)}${padRight("Worktree", 14)}${padRight("Branch", 26)}${padRight("PID", 7)}${padRight("Status", 7)}${RESET}`;
+      const header = `${BOLD}${padRight("Name", nameW)}${padRight("Role", roleW)}${padRight("Worktree", wtW)}${padRight("Branch", branchW)}${padRight("PID", pidW)}${padRight("Status", statusW)}${RESET}`;
       teamLines.push(` ${header}`);
       const maxWorkers = Math.min(state.workers.length, 8);
       for (let i = 0; i < maxWorkers; i++) {
@@ -240,15 +265,15 @@ export class LeaderTui {
         const selected = i === state.selectedWorkerIndex;
         const marker = selected ? `${BOLD}${CYAN}>${RESET}` : " ";
         const name = selected
-          ? `${BOLD}${CYAN}${padRight(truncate(w.name, 9), 9)}${RESET}`
-          : padRight(truncate(w.name, 9), 9);
+          ? `${BOLD}${CYAN}${padRight(truncate(w.name, nameW - 1), nameW - 1)}${RESET}`
+          : padRight(truncate(w.name, nameW - 1), nameW - 1);
         const role = w.currentRole
-          ? `${MAGENTA}${padRight(w.currentRole, 10)}${RESET}${DIM}◀←${RESET}`
-          : padRight(w.presetRole, 10);
-        const wt = padRight(truncate(w.worktreeName ?? w.name, 12), 12);
-        const branch = padRight(truncate(w.worktreeBranch ?? "-", 24), 24);
-        const pid = padRight(w.pid !== null ? String(w.pid) : "-", 5);
-        const statusColored = `${workerStatusColor(w.status)}${padRight(w.status, 5)}${RESET}`;
+          ? `${MAGENTA}${padRight(w.currentRole, roleW - 2)}${RESET}${DIM}◀←${RESET}`
+          : padRight(w.presetRole, roleW);
+        const wt = padRight(truncate(w.worktreeName ?? w.name, wtW - 1), wtW - 1);
+        const branch = padRight(truncate(w.worktreeBranch ?? "-", branchW - 1), branchW - 1);
+        const pid = padRight(w.pid !== null ? String(w.pid) : "-", pidW - 1);
+        const statusColored = `${workerStatusColor(w.status)}${padRight(w.status, statusW - 1)}${RESET}`;
         const line = ` ${marker} ${name} ${role} ${DIM}${wt}${RESET} ${DIM}${branch}${RESET} ${pid} ${statusColored}`;
         teamLines.push(line);
       }
@@ -306,9 +331,7 @@ export class LeaderTui {
     const selected = state.workers[state.selectedWorkerIndex];
     if (selected) {
       const title = `WORKER MESSAGES — ${selected.name} (${selected.presetRole})`;
-      const hint = `${DIM}[Tab/Shift+Tab switch Worker]${RESET}`;
-      const titleSpacer = Math.max(2, msgWidth - 4 - stripAnsi(title).length - stripAnsi(hint).length);
-      msgLines.push(` ${title}${" ".repeat(titleSpacer)}${hint}`);
+      msgLines.push(` ${title}`);
       msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
 
       const msgContent = renderWorkerMessages(selected, msgWidth);
@@ -332,7 +355,8 @@ export class LeaderTui {
     logLines.push(` ${DIM}${"─".repeat(cols - 4)}${RESET}`);
     const events = state.events.slice(-(logH - 3));
     for (const e of events) {
-      logLines.push(` ${DIM}${e.timestamp}${RESET} ${e.message}`);
+      const msg = truncate(e.message, cols - 18);
+      logLines.push(` ${DIM}${e.timestamp}${RESET} ${msg}`);
     }
     while (logLines.length < logH - 1) logLines.push("");
     out += box(cols - 2, ...logLines);
@@ -345,13 +369,20 @@ export class LeaderTui {
 
     // ── Footer ──
     const idShort = state.leaderInstanceId.slice(0, 8);
-    const footer = `${DIM}Leader: ${state.leaderName} | Instance: ${idShort} | CACHE_DIR: ${state.cacheDir} | Ctrl+C to stop${RESET}`;
+    const cacheDisplay = state.cacheDir.length > 60
+      ? "..." + state.cacheDir.slice(-57)
+      : state.cacheDir;
+    const footer = `${DIM}Leader: ${state.leaderName} | Instance: ${idShort} | Cache: ${cacheDisplay} | Ctrl+C to stop${RESET}`;
     out += `\n${footer}`;
 
     process.stdout.write(out);
   }
 
   destroy(): void {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
     this.disableRawMode();
     process.stdout.write(SHOW_CURSOR + CLEAR);
   }

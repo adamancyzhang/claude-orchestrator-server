@@ -12,7 +12,7 @@ import { MergeValidator } from "./merge-validator.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { ClaudeRunner } from "../executor/runner.js";
-import { loadInstanceConfig, saveInstanceId } from "../config.js";
+import { loadInstanceConfig, saveInstanceId, loadConfig } from "../config.js";
 import { Logger } from "../utils/logger.js";
 import { LeaderTui } from "./tui.js";
 
@@ -56,10 +56,13 @@ export async function startLeader(config: {
   const instance = await registry.register(leaderName, "leader", leaderId);
   saveInstanceId(instance.id);
 
+  // Resolve cache dir from config (defaults to project-local .claude-orchestrator/sessions)
+  const resolvedConfig = loadConfig({ zookeeper: config.zkHosts });
+
   // Initialize cache runner for path management (leader doesn't call claude-cli)
   const cacheRunner = new ClaudeRunner(
     "", // command unused by leader
-    "~/.claude-orchestrator/sessions",
+    resolvedConfig.cacheDir,
     instance.id,
     process.cwd(),
   );
@@ -69,7 +72,7 @@ export async function startLeader(config: {
   const state = new LeaderState();
   state.leaderName = leaderName;
   state.leaderInstanceId = instance.id;
-  state.cacheDir = "~/.claude-orchestrator/sessions";
+  state.cacheDir = resolvedConfig.cacheDir;
 
   eventBus.onAll((event) => state.apply(event));
 

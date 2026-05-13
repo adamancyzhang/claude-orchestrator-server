@@ -13,6 +13,7 @@ export class ClaudeRunner {
     private cacheDir: string,
     private leaderInstanceId: string,
     private workDir: string,
+    private quiet = false,
   ) {
     this.resolvedCache = expandHomeDir(path.join(this.cacheDir, this.leaderInstanceId));
   }
@@ -60,6 +61,6 @@ export class ClaudeRunner {
       this.logger.debug(`Prompt (${prompt.length} chars):\n${prompt.slice(0, 1000)}${prompt.length > 1000 ? "\n... (truncated)" : ""}`);
       this.logger.debug(`Log: ${logPath}`);
     }
-    return execWithTee(this.command, prompt, logPath, this.workDir);
+    return execWithTee(this.command, prompt, logPath, this.workDir, this.quiet);
   }
 }

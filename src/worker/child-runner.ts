@@ -70,6 +70,7 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
     config.cacheDir,
     leaderInstanceId,
     config.worktreePath,
+    true, // quiet mode — don't corrupt the orchestrator TUI
   );
 
   const templateEngine = new TemplateEngine(agentsDir);
