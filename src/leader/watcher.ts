@@ -43,7 +43,8 @@ export class LeaderWatcher {
     if (this.inFlight.has(msgId) || this.stopped) return;
     const data = await this.zk.getMessage(this.leaderInstanceId, msgId);
     if (!data) return;
-    const msg = MessageSchema.parse({ ...data, id: msgId });
+    const msg = MessageSchema.parse(data);
+    msg.id = msgId;
     if (msg.read) return;
 
     this.inFlight.add(msgId);
@@ -74,7 +75,7 @@ export class LeaderWatcher {
     await this.chainRouter.route(msg);
 
     msg.read = true;
-    await this.zk.updateMessage(this.leaderInstanceId, msgId, msg as unknown as Record<string, unknown>);
+    await this.zk.updateMessage(this.leaderInstanceId, msgId, msg);
 
     this.inFlight.delete(msgId);
     this.eventBus.emit({ type: "message_processed", msgId });

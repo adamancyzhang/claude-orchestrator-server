@@ -40,7 +40,7 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
 
   // Update instance with worktree metadata
   await zk.updateInstance(instance.id, {
-    ...(instance as unknown as Record<string, unknown>),
+    ...instance,
     worktree_name: config.name,
     worktree_path: config.worktreePath,
     worktree_branch: config.branch,
@@ -51,9 +51,12 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
 
   // 4. Resolve leader instance ID for cache path
   let leaderInstanceId = instance.id;
-  const leaderData = await zk.getLeader();
-  if (leaderData?.instance_id) {
-    leaderInstanceId = leaderData.instance_id as string;
+  const leaderRaw = await zk.getLeader();
+  if (leaderRaw && typeof leaderRaw === "object" && leaderRaw !== null) {
+    const leaderData = leaderRaw as { instance_id?: string };
+    if (leaderData.instance_id) {
+      leaderInstanceId = leaderData.instance_id;
+    }
   }
 
   // 5. Initialize modules

@@ -106,7 +106,6 @@ export async function startLeader(config: {
         type: "stream_chunk",
         instanceId: instance.id,
         line,
-        timestamp: new Date().toLocaleTimeString(),
       });
     },
   );
@@ -116,8 +115,9 @@ export async function startLeader(config: {
 
   // When a worker claims a task, start tailing its log file
   eventBus.on("task_claimed", (event) => {
-    const workerId = event.instanceId as string;
-    const taskId = event.taskId as string;
+    if (event.type !== "task_claimed") return;
+    const workerId = event.instanceId;
+    const taskId = event.taskId;
     if (!workerId || !taskId) return;
 
     const logPath = cacheRunner.logPath(taskId);
@@ -132,14 +132,14 @@ export async function startLeader(config: {
         type: "stream_chunk",
         instanceId: workerId,
         line,
-        timestamp: new Date().toLocaleTimeString(),
       });
     });
   });
 
   // When a task completes, stop tailing
   eventBus.on("task_completed", (event) => {
-    const workerId = event.instanceId as string;
+    if (event.type !== "task_completed") return;
+    const workerId = event.instanceId;
     if (workerId && streamTailer.isActive) {
       streamTailer.stop();
       eventBus.emit({

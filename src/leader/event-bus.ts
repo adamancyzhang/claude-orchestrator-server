@@ -1,29 +1,5 @@
 import { EventEmitter } from "node:events";
-
-export type LeaderEventType =
-  | "worker_joined"
-  | "worker_left"
-  | "worker_status_changed"
-  | "worker_message_received"
-  | "task_created"
-  | "task_claimed"
-  | "task_completed"
-  | "task_blocked"
-  | "task_failed"
-  | "task_recovered"
-  | "message_received"
-  | "message_processed"
-  | "chain_activated"
-  | "chain_closed"
-  | "debug_info"
-  | "stream_start"
-  | "stream_chunk"
-  | "stream_end";
-
-export interface LeaderEvent {
-  type: LeaderEventType;
-  [key: string]: unknown;
-}
+import type { LeaderEventType, LeaderEvent } from "../types/leader.js";
 
 const ALL_EVENT_TYPES: LeaderEventType[] = [
   "worker_joined", "worker_left", "worker_status_changed", "worker_message_received",

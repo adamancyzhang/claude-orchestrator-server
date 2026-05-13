@@ -1,6 +1,7 @@
 import { ZkClient } from "../zk/client.js";
 import {
   TaskSchema,
+  InstanceSchema,
   createTask,
   type Task,
 } from "../models/schemas.js";
@@ -38,9 +39,7 @@ export class TaskQueue {
       depends_on: dependsOn ?? [],
       blocked_by: blockedBy ?? [],
     });
-    const taskId = await this.zk.createPendingTask(
-      task as unknown as Record<string, unknown>
-    );
+    const taskId = await this.zk.createPendingTask(task);
     task.id = taskId;
     return task;
   }
@@ -49,9 +48,9 @@ export class TaskQueue {
     const pending = await this.zk.listPendingTasks();
 
     // Read instance role for weight matching
-    let instanceRole = "";
-    const instData = await this.zk.getInstance(instanceId);
-    instanceRole = (instData?.role as string) ?? "";
+    const instRaw = await this.zk.getInstance(instanceId);
+    const instData = instRaw ? InstanceSchema.parse(instRaw) : null;
+    const instanceRole = instData?.role ?? "";
 
     const roleToLink: Record<string, string> = {
       planner: "plan",
@@ -62,12 +61,13 @@ export class TaskQueue {
       leader: "decompose",
     };
 
-    const sortKey = (item: [string, Record<string, unknown>]) => {
-      const [, data] = item;
-      const assigned = data.assigned_to as string | null;
-      const prio = (data.priority as number) ?? 1;
+    const sortKey = (item: [string, unknown]) => {
+      const [, raw] = item;
+      const data = TaskSchema.parse(raw);
+      const assigned = data.assigned_to;
+      const prio = data.priority ?? 1;
       const isAssignedToMe = assigned === instanceId ? 0 : 1;
-      const taskLink = (data.link as string) ?? "";
+      const taskLink = data.link ?? "";
       const roleMatch = taskLink && roleToLink[instanceRole] === taskLink ? 0 : 1;
       return [isAssignedToMe, roleMatch, prio, item[0]];
     };
@@ -82,7 +82,9 @@ export class TaskQueue {
       return 0;
     });
 
-    for (const [taskId, data] of pending) {
+    for (const [taskId, raw] of pending) {
+      const data = TaskSchema.parse(raw);
+
       // Skip leader_only tasks for non-leader instances
       if (data.leader_only === true && instanceRole !== "leader") continue;
 
@@ -97,7 +99,7 @@ export class TaskQueue {
       data.status = "claimed";
       data.claimed_at = now;
       data.claimed_by = instanceId;
-      return TaskSchema.parse(data);
+      return data;
     }
 
     return null;
@@ -108,12 +110,13 @@ export class TaskQueue {
     taskId: string,
     result: string
   ): Promise<Task> {
-    const claimedData = await this.zk.getClaimedTask(instanceId, taskId);
-    if (!claimedData || Object.keys(claimedData).length === 0) {
+    const raw = await this.zk.getClaimedTask(instanceId, taskId);
+    if (!raw || (typeof raw === "object" && Object.keys(raw).length === 0)) {
       throw new Error(`Task ${taskId} is not claimed by ${instanceId}`);
     }
 
-    const claimedAt = claimedData.claimed_at as string;
+    const claimedData = TaskSchema.parse(raw);
+    const claimedAt = claimedData.claimed_at;
     const durationSeconds = claimedAt
       ? Math.round((Date.now() - new Date(claimedAt).getTime()) / 1000)
       : null;
@@ -121,24 +124,24 @@ export class TaskQueue {
     const now = utcNow();
     const data = {
       id: taskId,
-      title: (claimedData.title as string) ?? "",
-      description: (claimedData.description as string) ?? "",
-      priority: (claimedData.priority as number) ?? 1,
-      status: "completed",
-      created_by: (claimedData.created_by as string) ?? "",
-      created_at: (claimedData.created_at as string) ?? now,
-      assigned_to: (claimedData.assigned_to as string) ?? null,
+      title: claimedData.title,
+      description: claimedData.description ?? "",
+      priority: claimedData.priority,
+      status: "completed" as const,
+      created_by: claimedData.created_by,
+      created_at: claimedData.created_at ?? now,
+      assigned_to: claimedData.assigned_to,
       claimed_by: instanceId,
       claimed_at: claimedAt ?? now,
       completed_at: now,
-      completed_by_name: (claimedData.claimed_by_name as string) ?? "",
+      completed_by_name: claimedData.completed_by_name ?? "",
       result,
-      link: (claimedData.link as string) ?? null,
-      chain_id: (claimedData.chain_id as string) ?? null,
-      retry_count: (claimedData.retry_count as number) ?? 0,
+      link: claimedData.link,
+      chain_id: claimedData.chain_id,
+      retry_count: claimedData.retry_count,
       duration_seconds: durationSeconds,
-      created_by_name: (claimedData.created_by_name as string) ?? "",
-      assigned_to_name: (claimedData.assigned_to_name as string) ?? null,
+      created_by_name: claimedData.created_by_name,
+      assigned_to_name: claimedData.assigned_to_name,
       blocked_reason: null,
       fail_reason: null,
     };
@@ -148,28 +151,29 @@ export class TaskQueue {
   }
 
   async block(instanceId: string, taskId: string, reason: string): Promise<Task> {
-    const claimedData = await this.zk.getClaimedTask(instanceId, taskId);
-    if (!claimedData || Object.keys(claimedData).length === 0) {
+    const raw = await this.zk.getClaimedTask(instanceId, taskId);
+    if (!raw || (typeof raw === "object" && Object.keys(raw).length === 0)) {
       throw new Error(`Task ${taskId} is not claimed by ${instanceId}`);
     }
+    const claimedData = TaskSchema.parse(raw);
     claimedData.status = "blocked";
     claimedData.blocked_reason = reason;
     await this.zk.updateClaimedTask(instanceId, taskId, claimedData);
-    return TaskSchema.parse({ ...claimedData, id: taskId });
+    return claimedData;
   }
 
   async fail(instanceId: string, taskId: string, reason: string): Promise<Task> {
-    const claimedData = await this.zk.getClaimedTask(instanceId, taskId);
-    if (!claimedData || Object.keys(claimedData).length === 0) {
+    const raw = await this.zk.getClaimedTask(instanceId, taskId);
+    if (!raw || (typeof raw === "object" && Object.keys(raw).length === 0)) {
       throw new Error(`Task ${taskId} is not claimed by ${instanceId}`);
     }
+    const claimedData = TaskSchema.parse(raw);
     await this.zk.deleteClaimedTask(instanceId, taskId);
 
     const now = utcNow();
     const data = {
       ...claimedData,
-      id: taskId,
-      status: "failed",
+      status: "failed" as const,
       completed_at: now,
       fail_reason: reason,
       result: `Failed: ${reason}`,
@@ -179,25 +183,26 @@ export class TaskQueue {
   }
 
   async retry(taskId: string): Promise<Task> {
-    const completedData = await this.zk.getCompletedTask(taskId);
-    if (!completedData) {
+    const raw = await this.zk.getCompletedTask(taskId);
+    if (!raw) {
       throw new Error(`Task ${taskId} not found in completed tasks`);
     }
 
-    const retryCount = (completedData.retry_count as number ?? 0) + 1;
+    const completedData = TaskSchema.parse(raw);
+    const retryCount = (completedData.retry_count ?? 0) + 1;
     const taskData = {
       title: completedData.title ?? "",
       description: completedData.description ?? "",
       priority: completedData.priority ?? 1,
-      created_by: (completedData.created_by as string) ?? "",
-      assigned_to: (completedData.assigned_to as string) ?? null,
-      assigned_to_name: (completedData.assigned_to_name as string) ?? null,
-      created_by_name: (completedData.created_by_name as string) ?? "",
+      created_by: completedData.created_by ?? "",
+      assigned_to: completedData.assigned_to,
+      assigned_to_name: completedData.assigned_to_name,
+      created_by_name: completedData.created_by_name ?? "",
       created_at: utcNow(),
-      link: (completedData.link as string) ?? null,
-      chain_id: (completedData.chain_id as string) ?? null,
+      link: completedData.link,
+      chain_id: completedData.chain_id,
       retry_count: retryCount,
-      status: "pending",
+      status: "pending" as const,
       blocked_reason: null,
       fail_reason: null,
       claimed_at: null,
@@ -215,25 +220,27 @@ export class TaskQueue {
     const tasks: Task[] = [];
 
     if (!status || status === "pending") {
-      for (const [tid, data] of await this.zk.listPendingTasks()) {
+      for (const [tid, raw] of await this.zk.listPendingTasks()) {
+        const data = TaskSchema.parse(raw);
         data.id = tid;
         data.status = "pending";
-        tasks.push(TaskSchema.parse(data));
+        tasks.push(data);
       }
     }
     if (!status || status === "claimed" || status === "in_progress" || status === "blocked") {
-      for (const [insId, taskId, data] of await this.zk.listClaimedTasks()) {
+      for (const [insId, taskId, raw] of await this.zk.listClaimedTasks()) {
+        const data = TaskSchema.parse(raw);
         data.id = taskId;
         data.claimed_by = insId;
         if (status && data.status !== status) continue;
-        tasks.push(TaskSchema.parse(data));
+        tasks.push(data);
       }
     }
     if (!status || status === "completed" || status === "failed") {
-      for (const data of await this.zk.listCompletedTasks()) {
-        data.title = data.title ?? "";
+      for (const raw of await this.zk.listCompletedTasks()) {
+        const data = TaskSchema.parse(raw);
         if (status && data.status !== status) continue;
-        tasks.push(TaskSchema.parse(data));
+        tasks.push(data);
       }
     }
 

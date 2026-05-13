@@ -1,6 +1,5 @@
 import zookeeper from "node-zookeeper-client";
 import * as paths from "./paths.js";
-import type { Instance, Task, Message } from "../models/schemas.js";
 
 const { CreateMode, Exception, State } = zookeeper;
 
@@ -272,34 +271,34 @@ export class ZkClient {
 
   // ── Leader operations ──
 
-  async createLeader(data: Record<string, unknown>): Promise<void> {
+  async createLeader(data: unknown): Promise<void> {
     await this.create(paths.LEADER, encodeJson(data), CreateMode.EPHEMERAL);
   }
 
-  async getLeader(): Promise<Record<string, unknown> | null> {
+  async getLeader(): Promise<unknown | null> {
     const raw = await this.getData(paths.LEADER);
     return raw ? decodeJson(raw) : null;
   }
 
   // ── Instance operations ──
 
-  async registerInstance(instanceId: string, data: Record<string, unknown>): Promise<void> {
+  async registerInstance(instanceId: string, data: unknown): Promise<void> {
     const p = paths.instancePath(instanceId);
     await this.create(p, encodeJson(data), CreateMode.EPHEMERAL);
   }
 
-  async getInstance(instanceId: string): Promise<Record<string, unknown> | null> {
+  async getInstance(instanceId: string): Promise<unknown | null> {
     const raw = await this.getData(paths.instancePath(instanceId));
     return raw ? decodeJson(raw) : null;
   }
 
-  async updateInstance(instanceId: string, data: Record<string, unknown>): Promise<void> {
+  async updateInstance(instanceId: string, data: unknown): Promise<void> {
     await this.setData(paths.instancePath(instanceId), encodeJson(data));
   }
 
-  async listInstances(): Promise<Record<string, unknown>[]> {
+  async listInstances(): Promise<unknown[]> {
     const children = await this.getChildren(paths.INSTANCES);
-    const results: Record<string, unknown>[] = [];
+    const results: unknown[] = [];
     for (const cid of children) {
       const data = await this.getInstance(cid);
       if (data) results.push(data);
@@ -313,7 +312,7 @@ export class ZkClient {
 
   // ── Task operations ──
 
-  async createPendingTask(data: Record<string, unknown>): Promise<string> {
+  async createPendingTask(data: unknown): Promise<string> {
     const createdPath = await this.create(
       `${paths.TASKS_PENDING}/task-`,
       encodeJson(data),
@@ -322,15 +321,15 @@ export class ZkClient {
     return createdPath.split("/").pop()!;
   }
 
-  async getPendingTask(taskId: string): Promise<Record<string, unknown> | null> {
+  async getPendingTask(taskId: string): Promise<unknown | null> {
     const raw = await this.getData(paths.pendingTaskPath(taskId));
     return raw ? decodeJson(raw) : null;
   }
 
-  async listPendingTasks(): Promise<[string, Record<string, unknown>][]> {
+  async listPendingTasks(): Promise<[string, unknown][]> {
     const children = await this.getChildren(paths.TASKS_PENDING);
     children.sort();
-    const results: [string, Record<string, unknown>][] = [];
+    const results: [string, unknown][] = [];
     for (const cid of children) {
       const data = await this.getPendingTask(cid);
       if (data) results.push([cid, data]);
@@ -363,15 +362,15 @@ export class ZkClient {
   async getClaimedTask(
     instanceId: string,
     taskId: string
-  ): Promise<Record<string, unknown>> {
+  ): Promise<unknown> {
     const raw = await this.getData(paths.claimedTaskPath(instanceId, taskId));
     return raw ? decodeJson(raw) : {};
   }
 
-  async listClaimedTasks(): Promise<[string, string, Record<string, unknown>][]> {
+  async listClaimedTasks(): Promise<[string, string, unknown][]> {
     const children = await this.getChildren(paths.TASKS_CLAIMED);
     children.sort();
-    const results: [string, string, Record<string, unknown>][] = [];
+    const results: [string, string, unknown][] = [];
     for (const name of children) {
       const idx = name.indexOf("-");
       if (idx === -1) continue;
@@ -383,7 +382,7 @@ export class ZkClient {
     return results;
   }
 
-  async updateClaimedTask(instanceId: string, taskId: string, data: Record<string, unknown>): Promise<void> {
+  async updateClaimedTask(instanceId: string, taskId: string, data: unknown): Promise<void> {
     await this.setData(paths.claimedTaskPath(instanceId, taskId), encodeJson(data));
   }
 
@@ -391,7 +390,7 @@ export class ZkClient {
     await this.remove(paths.claimedTaskPath(instanceId, taskId));
   }
 
-  async saveCompletedTask(taskId: string, data: Record<string, unknown>): Promise<void> {
+  async saveCompletedTask(taskId: string, data: unknown): Promise<void> {
     await this.create(
       paths.completedTaskPath(taskId),
       encodeJson(data),
@@ -399,15 +398,15 @@ export class ZkClient {
     );
   }
 
-  async getCompletedTask(taskId: string): Promise<Record<string, unknown> | null> {
+  async getCompletedTask(taskId: string): Promise<unknown | null> {
     const raw = await this.getData(paths.completedTaskPath(taskId));
     return raw ? decodeJson(raw) : null;
   }
 
-  async listCompletedTasks(): Promise<Record<string, unknown>[]> {
+  async listCompletedTasks(): Promise<unknown[]> {
     const children = await this.getChildren(paths.TASKS_COMPLETED);
     children.sort();
-    const results: Record<string, unknown>[] = [];
+    const results: unknown[] = [];
     for (const cid of children) {
       const data = await this.getCompletedTask(cid);
       if (data) results.push(data);
@@ -419,7 +418,7 @@ export class ZkClient {
 
   async createMessage(
     instanceId: string,
-    data: Record<string, unknown>
+    data: unknown
   ): Promise<string> {
     await this.mkdirp(paths.messageDirPath(instanceId));
     const createdPath = await this.create(
@@ -433,7 +432,7 @@ export class ZkClient {
   async getMessage(
     instanceId: string,
     msgId: string
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<unknown | null> {
     const raw = await this.getData(paths.messagePath(instanceId, msgId));
     return raw ? decodeJson(raw) : null;
   }
@@ -441,17 +440,17 @@ export class ZkClient {
   async updateMessage(
     instanceId: string,
     msgId: string,
-    data: Record<string, unknown>
+    data: unknown
   ): Promise<void> {
     await this.setData(paths.messagePath(instanceId, msgId), encodeJson(data));
   }
 
   async listMessages(
     instanceId: string
-  ): Promise<[string, Record<string, unknown>][]> {
+  ): Promise<[string, unknown][]> {
     const children = await this.getChildren(paths.messageDirPath(instanceId));
     children.sort();
-    const results: [string, Record<string, unknown>][] = [];
+    const results: [string, unknown][] = [];
     for (const cid of children) {
       const data = await this.getMessage(instanceId, cid);
       if (data) results.push([cid, data]);
@@ -489,11 +488,11 @@ export class ZkClient {
 
 // ── Helpers ──
 
-function encodeJson(data: Record<string, unknown>): Buffer {
+function encodeJson(data: unknown): Buffer {
   return Buffer.from(JSON.stringify(data), "utf-8");
 }
 
-function decodeJson(raw: Buffer): Record<string, unknown> {
+function decodeJson(raw: Buffer): unknown {
   return JSON.parse(raw.toString("utf-8"));
 }
 

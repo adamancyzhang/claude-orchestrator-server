@@ -1,5 +1,6 @@
 import { ZkClient } from "../zk/client.js";
 import { LeaderEventBus } from "./event-bus.js";
+import { InstanceSchema } from "../models/schemas.js";
 
 export class WorkerMonitor {
   private knownInstances = new Set<string>();
@@ -34,16 +35,19 @@ export class WorkerMonitor {
 
     for (const id of curr) {
       if (!this.knownInstances.has(id)) {
-        const data = await this.zk.getInstance(id);
-        if (data && data.role !== "leader") {
-          const instName = data.name as string;
-          this.eventBus.emit({
-            type: "worker_joined",
-            instance: data,
-            instanceId: id,
-            name: instName,
-          });
-          this.instanceNames.set(id, instName);
+        const raw = await this.zk.getInstance(id);
+        if (raw) {
+          const inst = InstanceSchema.parse(raw);
+          if (inst.role !== "leader") {
+            const instName = inst.name;
+            this.eventBus.emit({
+              type: "worker_joined",
+              instance: inst,
+              instanceId: id,
+              name: instName,
+            });
+            this.instanceNames.set(id, instName);
+          }
         }
       }
     }

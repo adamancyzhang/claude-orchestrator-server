@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { ZkClient } from "../zk/client.js";
 import {
   MessageSchema,
+  InstanceSchema,
   createMessage,
   type Message,
   type MessageType,
@@ -32,21 +33,24 @@ export class MessageRouter {
         broadcast = true;
       } else {
         const instances = await this.zk.listInstances();
-        const match = instances.find((i) => i.name === name);
+        const match = instances
+          .map((raw) => InstanceSchema.parse(raw))
+          .find((i) => i.name === name);
         if (!match) {
           throw new Error(`Instance "${name}" not found`);
         }
-        toInstance = match.id as string;
+        toInstance = match.id;
       }
     }
 
-    let msgType: MessageType = help ? "help" : (broadcast ? "broadcast" : "direct");
+    const msgType: MessageType = help ? "help" : (broadcast ? "broadcast" : "direct");
 
     let targets: string[];
     if (broadcast || help) {
       const instances = await this.zk.listInstances();
       targets = instances
-        .map((i) => i.id as string)
+        .map((raw) => InstanceSchema.parse(raw))
+        .map((i) => i.id)
         .filter((id) => id !== fromInstance);
     } else if (toInstance) {
       targets = [toInstance];
@@ -62,10 +66,7 @@ export class MessageRouter {
         to_instance: targetId,
         content,
       });
-      const msgId = await this.zk.createMessage(
-        targetId,
-        msg as unknown as Record<string, unknown>
-      );
+      const msgId = await this.zk.createMessage(targetId, msg);
       msg.id = msgId;
       messages.push(msg);
     }
@@ -78,15 +79,11 @@ export class MessageRouter {
     const messages: Message[] = [];
 
     for (const [msgId, data] of raw) {
-      data.id = msgId;
       const msg = MessageSchema.parse(data);
+      msg.id = msgId;
       if (!msg.read) {
         msg.read = true;
-        await this.zk.updateMessage(
-          instanceId,
-          msgId,
-          msg as unknown as Record<string, unknown>
-        );
+        await this.zk.updateMessage(instanceId, msgId, msg);
       }
       messages.push(msg);
     }
@@ -114,12 +111,14 @@ export class MessageRouter {
   }
 
   async markRead(instanceId: string, messageId: string): Promise<void> {
-    const data = await this.zk.getMessage(instanceId, messageId);
-    if (!data) {
+    const raw = await this.zk.getMessage(instanceId, messageId);
+    if (!raw) {
       throw new Error(`Message ${messageId} not found for instance ${instanceId}`);
     }
-    data.read = true;
-    await this.zk.updateMessage(instanceId, messageId, data);
+    const msg = MessageSchema.parse(raw);
+    msg.id = messageId;
+    msg.read = true;
+    await this.zk.updateMessage(instanceId, messageId, msg);
   }
 
   async dismissMessage(instanceId: string, messageId: string): Promise<void> {

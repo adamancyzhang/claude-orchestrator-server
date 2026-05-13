@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { ZkClient } from "../zk/client.js";
 import * as paths from "../zk/paths.js";
-import { MessageSchema } from "../models/schemas.js";
+import { MessageSchema, InstanceSchema, type Message } from "../models/schemas.js";
 import { HookEngine } from "../hooks/engine.js";
 import { Logger } from "../utils/logger.js";
 import { TemplateEngine, LINK_TEMPLATES } from "../executor/template.js";
@@ -30,9 +30,15 @@ export class WorkerWatcher {
   ) {}
 
   async start(): Promise<void> {
-    const instData = await this.zk.getInstance(this.instanceId);
-    this.instanceName = (instData?.name as string) ?? this.instanceId.slice(0, 8);
-    this.instanceRole = (instData?.role as string) ?? "builder";
+    const raw = await this.zk.getInstance(this.instanceId);
+    if (raw) {
+      const instData = InstanceSchema.parse(raw);
+      this.instanceName = instData.name ?? this.instanceId.slice(0, 8);
+      this.instanceRole = instData.role ?? "builder";
+    } else {
+      this.instanceName = this.instanceId.slice(0, 8);
+      this.instanceRole = "builder";
+    }
 
     await this.templateEngine.loadAll();
 
@@ -63,13 +69,14 @@ export class WorkerWatcher {
     if (this.inFlight.has(msgId) || this.stopped) return;
     const data = await this.zk.getMessage(this.instanceId, msgId);
     if (!data) return;
-    const msg = MessageSchema.parse({ ...data, id: msgId });
+    const msg = MessageSchema.parse(data);
+    msg.id = msgId;
     if (msg.read) return;
 
     this.inFlight.add(msgId);
     const fromLabel = msg.from_name || msg.from_instance?.slice(0, 8) || "unknown";
-    const link = (msg.link as string) ?? "_generic";
-    const taskId = (msg as Record<string, unknown>).task_id as string | undefined;
+    const link = msg.link ?? "_generic";
+    const taskId = msg.task_id ?? undefined;
     const uniqueKey = taskId || `task-${msgId}-${Date.now().toString(36)}`;
 
     const logPath = this.runner.logPath(uniqueKey);
@@ -78,10 +85,10 @@ export class WorkerWatcher {
     const template = this.templateEngine.get(link);
     const prompt = template
       ? this.templateEngine.render(template, {
-          task_title: (msg.task_title as string) ?? "",
-          task_description: (msg.task_description as string) ?? msg.content,
-          task_criteria: (msg.task_criteria as string) ?? "",
-          task_doc_path: (msg.task_doc_path as string) ?? "",
+          task_title: msg.task_title ?? "",
+          task_description: msg.task_description ?? msg.content,
+          task_criteria: msg.task_criteria ?? "",
+          task_doc_path: msg.task_doc_path ?? "",
           result_path: resultPath,
           work_dir: this.worktreePath,
           time: new Date().toISOString(),
@@ -118,8 +125,8 @@ export class WorkerWatcher {
     if (link !== "_generic" && this.commitChecker) {
       commitResult = await this.commitChecker.check({
         link,
-        taskTitle: (msg.task_title as string) ?? link,
-        taskDescription: (msg.task_description as string) ?? msg.content,
+        taskTitle: msg.task_title ?? link,
+        taskDescription: msg.task_description ?? msg.content,
       }, result.sessionId);
     }
 
@@ -128,7 +135,7 @@ export class WorkerWatcher {
     }
 
     msg.read = true;
-    await this.zk.updateMessage(this.instanceId, msgId, msg as unknown as Record<string, unknown>);
+    await this.zk.updateMessage(this.instanceId, msgId, msg);
 
     this.inFlight.delete(msgId);
     this.logger.info(`Done. Log: ${logPath}`);
@@ -136,7 +143,7 @@ export class WorkerWatcher {
 
   private async sendCompletionReport(
     link: string,
-    msg: Record<string, unknown>,
+    msg: Message,
     resultPath: string,
     uniqueKey: string,
     commitResult: CommitResult | null = null,
@@ -150,11 +157,11 @@ export class WorkerWatcher {
       reportLink = "task_defs";
     } else if (CHAIN_LINKS.includes(link)) {
       const msgVars: Record<string, string> = {
-        task_title: (msg.task_title as string) ?? "",
-        task_description: (msg.task_description as string) ?? "",
-        task_criteria: (msg.task_criteria as string) ?? "",
-        task_doc_path: (msg.task_doc_path as string) ?? "",
-        content: msg.content as string,
+        task_title: msg.task_title ?? "",
+        task_description: msg.task_description ?? "",
+        task_criteria: msg.task_criteria ?? "",
+        task_doc_path: msg.task_doc_path ?? "",
+        content: msg.content,
       };
       reportContent = await this.evaluator.evaluate(link, msgVars, resultPath, uniqueKey, mainSessionId);
     } else {
@@ -189,7 +196,7 @@ export class WorkerWatcher {
       read: false,
       result_path: resultPath,
       link: reportLink,
-      chain_id: msg.chain_id as string ?? null,
+      chain_id: msg.chain_id ?? null,
     });
     this.logger.info("Completion report sent.");
   }

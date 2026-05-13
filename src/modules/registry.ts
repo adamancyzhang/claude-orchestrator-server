@@ -19,14 +19,15 @@ export class InstanceRegistry {
       : "builder";
 
     if (instanceId) {
-      const existing = await this.zk.getInstance(instanceId);
-      if (existing) {
+      const raw = await this.zk.getInstance(instanceId);
+      if (raw) {
+        const existing = InstanceSchema.parse(raw);
         existing.name = name;
         existing.role = validRole;
         existing.status = "idle";
         existing.connected_since = new Date().toISOString();
         await this.zk.updateInstance(instanceId, existing);
-        return InstanceSchema.parse(existing);
+        return existing;
       }
     }
 
@@ -39,7 +40,7 @@ export class InstanceRegistry {
         existing.status = "idle";
         existing.connected_since = new Date().toISOString();
         await this.zk.updateInstance(existing.id, existing);
-        return InstanceSchema.parse(existing);
+        return existing;
       }
     }
 
@@ -48,7 +49,7 @@ export class InstanceRegistry {
       name,
       role: validRole,
     });
-    await this.zk.registerInstance(instance.id, instance as unknown as Record<string, unknown>);
+    await this.zk.registerInstance(instance.id, instance);
     return instance;
   }
 
@@ -56,10 +57,11 @@ export class InstanceRegistry {
     instanceId: string,
     currentTask?: string
   ): Promise<void> {
-    const data = await this.zk.getInstance(instanceId);
-    if (!data) {
+    const raw = await this.zk.getInstance(instanceId);
+    if (!raw) {
       throw new Error(`Instance ${instanceId} not found`);
     }
+    const data = InstanceSchema.parse(raw);
     if (currentTask !== undefined) {
       data.current_task_id = currentTask;
       data.status = currentTask ? "busy" : "idle";

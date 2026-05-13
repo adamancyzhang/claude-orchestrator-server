@@ -4,15 +4,15 @@ import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { loadInstanceId, resolveInstanceId } from "../config.js";
 import { output } from "../utils/output.js";
-async function withZk<T>(
+async function withZk(
   hosts: string,
   fn: (clients: {
     zk: ZkClient;
     registry: InstanceRegistry;
     taskQueue: TaskQueue;
     messageRouter: MessageRouter;
-  }) => Promise<T>
-): Promise<T> {
+  }) => Promise<void>
+): Promise<void> {
   const zk = new ZkClient(hosts);
   await zk.connect();
   const registry = new InstanceRegistry(zk);

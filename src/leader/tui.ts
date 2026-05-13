@@ -57,18 +57,23 @@ function box(width: number, ...lines: string[]): string {
   return top + body + bottom;
 }
 
+const NON_TEXT_TYPES = new Set([
+  "message_start", "message_delta", "message_stop",
+  "content_block_stop", "ping", "system", "result", "assistant", "user",
+]);
+
 function stripJsonChunk(line: string): string {
-  if (line.startsWith("{")) {
-    const parsed = JSON.parse(line);
-    if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-      return parsed.delta.text;
-    }
-    if (parsed.type === "content_block_start" && parsed.content_block?.text) {
-      return parsed.content_block.text;
-    }
+  const parsed = JSON.parse(line);
+  if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+    return parsed.delta.text;
+  }
+  if (parsed.type === "content_block_start" && parsed.content_block?.text) {
+    return parsed.content_block.text;
+  }
+  if (NON_TEXT_TYPES.has(parsed.type)) {
     return "";
   }
-  return line;
+  throw new Error(`Unrecognized stream event type "${parsed.type}": ${line}`);
 }
 
 function workerStatusColor(status: string): string {
@@ -318,10 +323,10 @@ export class LeaderTui {
       pendLines.push(` ${DIM}No pending tasks${RESET}`);
     } else {
       for (const t of pendTasks) {
-        const title = truncate(t.title as string ?? "", halfW - 16);
-        const prio = (t.priority as number) === 0 ? `${RED}HIGH${RESET}` :
-                     (t.priority as number) === 1 ? `${YELLOW}MED${RESET}` : `${DIM}LOW${RESET}`;
-        const link = t.link ? `${CYAN}[${(t.link as string).charAt(0).toUpperCase() + (t.link as string).slice(1)}]${RESET} ` : "";
+        const title = truncate(t.title ?? "", halfW - 16);
+        const prio = t.priority === 0 ? `${RED}HIGH${RESET}` :
+                     t.priority === 1 ? `${YELLOW}MED${RESET}` : `${DIM}LOW${RESET}`;
+        const link = t.link ? `${CYAN}[${t.link.charAt(0).toUpperCase() + t.link.slice(1)}]${RESET} ` : "";
         pendLines.push(` ${link}${prio} ${title}`);
       }
     }
@@ -334,8 +339,8 @@ export class LeaderTui {
       progLines.push(` ${DIM}No tasks in progress${RESET}`);
     } else {
       for (const t of progTasks) {
-        const title = truncate(t.title as string ?? "", halfW - 10);
-        const who = truncate((t.claimed_by as string)?.slice(0, 8) ?? "?", 8);
+        const title = truncate(t.title ?? "", halfW - 10);
+        const who = truncate(t.claimed_by?.slice(0, 8) ?? "?", 8);
         progLines.push(` ${BLUE}${who}${RESET} ${title}`);
       }
     }

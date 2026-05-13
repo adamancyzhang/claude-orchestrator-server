@@ -12,7 +12,9 @@ import {
   createMessage,
   ChainDefSchema,
   EvalDecisionSchema,
+  InstanceSchema,
   type Message,
+  type Task,
   type EvalDecision,
 } from "../models/schemas.js";
 import { extractJson } from "../utils/json.js";
@@ -137,7 +139,7 @@ export class ChainRouter {
       task_description: msg.content,
     });
 
-    await this.zk.createMessage(planner.id, fwd as unknown as Record<string, unknown>);
+    await this.zk.createMessage(planner.id, fwd);
     this.logger.info(`Forwarded requirement to planner ${planner.name} (${planner.id.slice(0, 8)})`);
     if (Logger.isDebug()) {
       this.eventBus.emit({ type: "debug_info", message: `Requirement "${msg.content.slice(0, 80)}" → planner ${planner.name}` });
@@ -224,8 +226,8 @@ export class ChainRouter {
           sha: parsed.commit.sha,
           message: parsed.commit.message,
           branch: parsed.commit.branch,
-          taskTitle: (msg.task_title as string) ?? "unknown",
-          taskLink: (msg.link as string) ?? "unknown",
+          taskTitle: msg.task_title ?? "unknown",
+          taskLink: msg.link ?? "unknown",
         });
       }
     }
@@ -241,7 +243,7 @@ export class ChainRouter {
         const nextLink = decision.nextLink ?? NEXT_LINKS[msg.link!];
         if (!nextLink) break;
 
-        const chainId = (msg as unknown as Record<string, unknown>).chain_id as string ?? null;
+        const chainId = msg.chain_id ?? null;
 
         const task = await this.taskQueue.push(
           `[${msg.reply_to ?? "chain"}] ${nextLink}`,
@@ -270,7 +272,7 @@ export class ChainRouter {
             const pending = await this.findPendingTaskByChainLink(chainId, nextLink);
             const docPath = this.runner.taskDocPath(task.id);
             const def = pending
-              ? { title: pending.title as string, description: (pending.description as string) || "", criteria: "", priority: (pending.priority as number) ?? 1 }
+              ? { title: pending.title, description: pending.description || "", criteria: "", priority: pending.priority ?? 1 }
               : { title: task.title, description: task.description, criteria: "", priority: 1 };
             await this.sendTaskToWorker(worker, nextLink, def, docPath, chainId ?? "", task.id);
           } else {
@@ -291,7 +293,7 @@ export class ChainRouter {
         break;
       }
       case "close_chain": {
-        const chainId = (msg as unknown as Record<string, unknown>).chain_id as string;
+        const chainId = msg.chain_id;
         if (chainId) {
           this.eventBus.emit({ type: "chain_closed", chainId });
         }
@@ -300,22 +302,23 @@ export class ChainRouter {
     }
   }
 
-  private async findPendingTaskByChainLink(chainId: string | null, link: string): Promise<Record<string, unknown> | null> {
+  private async findPendingTaskByChainLink(chainId: string | null, link: string): Promise<Task | null> {
     if (!chainId) return null;
     const pending = await this.taskQueue.listTasks("pending");
     for (const t of pending) {
-      if ((t as Record<string, unknown>).chain_id === chainId && (t as Record<string, unknown>).link === link) {
-        return t as unknown as Record<string, unknown>;
+      if (t.chain_id === chainId && t.link === link) {
+        return t;
       }
     }
     return null;
   }
 
   private async findWorkerByRole(role: string): Promise<{ id: string; name: string } | null> {
-    const instances = await this.zk.listInstances();
-    for (const inst of instances) {
+    const raw = await this.zk.listInstances();
+    for (const r of raw) {
+      const inst = InstanceSchema.parse(r);
       if (inst.role === role && inst.status === "idle") {
-        return { id: inst.id as string, name: inst.name as string };
+        return { id: inst.id, name: inst.name };
       }
     }
     return null;
@@ -345,7 +348,7 @@ export class ChainRouter {
       task_doc_path: docPath,
       chain_id: chainId,
       task_id: taskId ?? null,
-    } as unknown as Record<string, unknown>);
+    });
     this.logger.info(`Sent ${link} task to ${worker.name} (${worker.id.slice(0, 8)})`);
   }
 }

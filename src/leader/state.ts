@@ -1,4 +1,6 @@
-import type { LeaderEvent } from "./event-bus.js";
+import type { LeaderEvent } from "../types/leader.js";
+import { InstanceSchema, TaskSchema } from "../models/schemas.js";
+import type { Task } from "../models/schemas.js";
 
 function taskLinkToRole(link: string): string {
   const map: Record<string, string> = {
@@ -47,9 +49,9 @@ export interface EventLogEntry {
 
 export class LeaderState {
   workers: WorkerInfo[] = [];
-  pendingTasks: Record<string, unknown>[] = [];
-  claimedTasks: Record<string, unknown>[] = [];
-  completedTasks: Record<string, unknown>[] = [];
+  pendingTasks: Task[] = [];
+  claimedTasks: Task[] = [];
+  completedTasks: Task[] = [];
   events: EventLogEntry[] = [];
   leaderName = "";
   leaderInstanceId = "";
@@ -60,19 +62,18 @@ export class LeaderState {
     const time = new Date().toLocaleTimeString();
     switch (event.type) {
       case "worker_joined": {
-        const inst = event.instance as Record<string, unknown>;
-        if (!inst) return;
+        const inst = InstanceSchema.parse(event.instance);
         this.workers.push({
-          id: (event.instanceId as string) ?? (inst.id as string),
-          name: inst.name as string,
-          presetRole: inst.role as string,
+          id: event.instanceId ?? inst.id,
+          name: inst.name,
+          presetRole: inst.role,
           currentRole: null,
-          status: inst.status as string,
-          currentTaskId: (inst.current_task_id as string) ?? null,
-          worktreeName: (inst.worktree_name as string) ?? null,
-          worktreePath: (inst.worktree_path as string) ?? null,
-          worktreeBranch: (inst.worktree_branch as string) ?? null,
-          pid: (inst.pid as number) ?? null,
+          status: inst.status,
+          currentTaskId: inst.current_task_id ?? null,
+          worktreeName: inst.worktree_name ?? null,
+          worktreePath: inst.worktree_path ?? null,
+          worktreeBranch: inst.worktree_branch ?? null,
+          pid: inst.pid ?? null,
           currentMessage: null,
           currentMessageLink: null,
           currentMessageTime: null,
@@ -100,40 +101,40 @@ export class LeaderState {
       case "worker_message_received": {
         const w = this.workers.find(w => w.id === event.instanceId);
         if (w) {
-          const rawContent = (event.content as string) ?? "";
-          const timestamp = (event.timestamp as string) ?? time;
+          const rawContent = event.content ?? "";
+          const timestamp = event.timestamp ?? time;
           w.currentMessage = rawContent;
-          w.currentMessageLink = (event.link as string) ?? null;
+          w.currentMessageLink = event.link ?? null;
           w.currentMessageTime = timestamp;
           w.messageHistory.push({
             timestamp,
             content: rawContent,
             contentFull: rawContent,
-            link: (event.link as string) ?? null,
-            messageId: (event.messageId as string) ?? "",
+            link: event.link ?? null,
+            messageId: event.messageId ?? "",
           });
           if (w.messageHistory.length > 20) {
             w.messageHistory = w.messageHistory.slice(-20);
           }
           w.status = "busy";
         }
-        this.events.push({ timestamp: time, message: `${event.name} received message: ${(event.content as string)?.slice(0, 60)}...` });
+        this.events.push({ timestamp: time, message: `${event.name} received message: ${event.content?.slice(0, 60)}...` });
         break;
       }
       case "worker_status_changed": {
         const w = this.workers.find(w => w.id === event.instanceId);
         if (w) {
-          w.status = event.status as string;
-          w.currentTaskId = (event.currentTaskId as string) ?? null;
+          w.status = event.status;
+          w.currentTaskId = event.currentTaskId ?? null;
           if (!w.currentTaskId) w.currentRole = null;
         }
         this.events.push({ timestamp: time, message: `${event.name}: ${event.status}` });
         break;
       }
       case "task_created": {
-        const task = event.task as Record<string, unknown>;
-        if (task) this.pendingTasks.push(task);
-        this.events.push({ timestamp: time, message: `Task created: ${task?.title ?? event.taskId}` });
+        const task = TaskSchema.parse(event.task);
+        this.pendingTasks.push(task);
+        this.events.push({ timestamp: time, message: `Task created: ${task.title ?? event.taskId}` });
         break;
       }
       case "task_claimed": {
@@ -146,9 +147,9 @@ export class LeaderState {
         // Derive currentRole from the task's link
         const w = this.workers.find(w => w.id === event.instanceId);
         if (w) {
-          const taskLink = (t?.link as string) ?? (event.link as string) ?? null;
+          const taskLink = t?.link ?? event.link ?? null;
           w.currentRole = taskLink ? taskLinkToRole(taskLink) : null;
-          w.currentTaskId = event.taskId as string ?? null;
+          w.currentTaskId = event.taskId ?? null;
           w.status = "busy";
         }
         this.events.push({ timestamp: time, message: `Task ${event.taskId} claimed by ${event.instanceId}` });
@@ -156,13 +157,19 @@ export class LeaderState {
       }
       case "task_completed": {
         this.claimedTasks = this.claimedTasks.filter(t => t.id !== event.taskId);
-        if (event.task) this.completedTasks.push(event.task as Record<string, unknown>);
+        if (event.task) {
+          const completedTask = TaskSchema.parse(event.task);
+          this.completedTasks.push(completedTask);
+        }
         const w = this.workers.find(w => w.id === event.instanceId);
         if (w) {
           w.currentRole = null;
           w.status = "idle";
           w.currentTaskId = null;
-          w.lastCompletedTask = (event.task as Record<string, unknown>)?.title as string ?? null;
+          if (event.task) {
+            const completedTask = TaskSchema.parse(event.task);
+            w.lastCompletedTask = completedTask.title ?? null;
+          }
           w.currentMessage = null;
           w.currentMessageLink = null;
           w.currentMessageTime = null;
@@ -185,7 +192,7 @@ export class LeaderState {
         this.events.push({ timestamp: time, message: `Task ${event.taskId} recovered → ${event.newTaskId} (retry ${event.retryCount})` });
         break;
       case "message_received":
-        this.events.push({ timestamp: time, message: `Message from ${event.from}: ${(event.content as string)?.slice(0, 60)}...` });
+        this.events.push({ timestamp: time, message: `Message from ${event.from}: ${event.content?.slice(0, 60)}...` });
         break;
       case "message_processed":
         this.events.push({ timestamp: time, message: `Message ${event.msgId} processed` });
@@ -204,14 +211,14 @@ export class LeaderState {
         if (w) {
           w.streamBuffer = [];
           w.streamActive = true;
-          w.streamLogPath = (event.logPath as string) ?? null;
+          w.streamLogPath = event.logPath ?? null;
         }
         break;
       }
       case "stream_chunk": {
         const w = this.workers.find(w => w.id === event.instanceId);
         if (w && w.streamActive) {
-          w.streamBuffer.push(event.line as string);
+          w.streamBuffer.push(event.line);
           if (w.streamBuffer.length > 200) {
             w.streamBuffer = w.streamBuffer.slice(-200);
           }

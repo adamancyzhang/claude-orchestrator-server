@@ -2,12 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-function extractSessionId(line: string): string | null {
-  if (line.startsWith("{")) {
-    const obj = JSON.parse(line);
-    return obj.session_id || null;
-  }
-  return null;
+function extractSessionId(line: string): string {
+  const obj = JSON.parse(line);
+  if (obj.session_id) return obj.session_id;
+  throw new Error(`Stream line missing session_id: ${line}`);
 }
 
 function escapeShell(s: string): string {
@@ -57,7 +55,7 @@ export async function execWithStreaming(
       partial = lines.pop() ?? "";
       for (const line of lines) {
         if (line.length > 0) {
-          if (!sessionId) sessionId = extractSessionId(line) ?? undefined;
+          if (!sessionId) sessionId = extractSessionId(line);
           onChunk?.(line);
         }
       }
@@ -67,7 +65,7 @@ export async function execWithStreaming(
     });
     child.on("exit", (code) => {
       if (partial.length > 0) {
-        if (!sessionId) sessionId = extractSessionId(partial) ?? undefined;
+        if (!sessionId) sessionId = extractSessionId(partial);
         onChunk?.(partial);
       }
       resolve({ code: code ?? -1, sessionId });
