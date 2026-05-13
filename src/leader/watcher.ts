@@ -33,7 +33,8 @@ export class LeaderWatcher {
         }
       );
       for (const cid of children) await this.processMessage(cid);
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Watch loop failed, retrying in 1s: ${err instanceof Error ? err.message : String(err)}`);
       if (!this.stopped) setTimeout(() => this.watchLoop(), 1000);
     }
   }
@@ -75,8 +76,8 @@ export class LeaderWatcher {
     try {
       msg.read = true;
       await this.zk.updateMessage(this.leaderInstanceId, msgId, msg as unknown as Record<string, unknown>);
-    } catch {
-      // best effort
+    } catch (err) {
+      this.logger.warn(`Failed to mark message as read: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     this.inFlight.delete(msgId);

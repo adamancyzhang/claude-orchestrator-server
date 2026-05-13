@@ -1,4 +1,5 @@
 import { ZkClient } from "../zk/client.js";
+import { Logger } from "../utils/logger.js";
 import {
   TaskSchema,
   createTask,
@@ -10,6 +11,8 @@ function utcNow(): string {
 }
 
 export class TaskQueue {
+  private logger = new Logger("TaskQueue");
+
   constructor(private zk: ZkClient) {}
 
   async push(
@@ -53,8 +56,8 @@ export class TaskQueue {
     try {
       const instData = await this.zk.getInstance(instanceId);
       instanceRole = (instData?.role as string) ?? "";
-    } catch {
-      // proceed without role-weight sorting
+    } catch (err) {
+      this.logger.warn(`Failed to get instance role, proceeding without role-weight sorting: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const roleToLink: Record<string, string> = {

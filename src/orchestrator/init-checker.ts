@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { loadInitStatus, saveInitStatusStep, expandHomeDir } from "../config.js";
-import type { StepRecord } from "../config.js";
+import type { StepAction, StepRecord } from "../config.js";
 import { Logger } from "../utils/logger.js";
 
 type DangerLevel = "safe" | "caution" | "danger";
@@ -11,6 +11,7 @@ interface StepDetails {
   needsConfirm: boolean;
   message: string;
   diff?: string;
+  action?: StepAction;
 }
 
 interface InitStep {
@@ -75,14 +76,16 @@ export class InitChecker {
 
     try {
       await step.execute();
-      const record = this.buildRecord(step.id, details);
-      console.log(`  ${COLORS.safe}Done${RESET} — ${record.action}`);
-      this.saveStatus(step.id, record);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.log(`  ${COLORS.danger}Failed${RESET}: ${msg}`);
       this.saveStatus(step.id, { action: "failed", timestamp: new Date().toISOString(), reason: msg });
+      return;
     }
+
+    const record = this.buildRecord(step.id, details);
+    console.log(`  ${COLORS.safe}Done${RESET} — ${record.action}`);
+    this.saveStatus(step.id, record);
   }
 
   private autoApprove(stepId: string): boolean {
@@ -91,19 +94,12 @@ export class InitChecker {
     return !["rejected", "skipped"].includes(record.action); // Respect previous rejection/skip
   }
 
-  private buildRecord(stepId: string, details: StepDetails): StepRecord {
-    if (details.needsConfirm) {
-      return { action: "replaced", timestamp: new Date().toISOString() };
-    }
-    return { action: "created", timestamp: new Date().toISOString() };
+  private buildRecord(_stepId: string, details: StepDetails): StepRecord {
+    return { action: details.action ?? "created", timestamp: new Date().toISOString() };
   }
 
   private saveStatus(stepId: string, record: StepRecord): void {
-    try {
-      saveInitStatusStep(stepId, record);
-    } catch {
-      // Non-critical, don't block startup
-    }
+    saveInitStatusStep(stepId, record);
   }
 
   private async promptUser(step: InitStep, details: StepDetails): Promise<boolean> {
@@ -147,9 +143,9 @@ export function createGlobalConfigStep(templateDir: string): InitStep {
     async check() {
       const exists = fs.existsSync(globalConfigFile);
       if (!exists) {
-        return { needsConfirm: false, message: "Create new global config" };
+        return { needsConfirm: true, message: "Create new global config", action: "created" };
       }
-      return { needsConfirm: false, message: "Config exists, adding only missing fields" };
+      return { needsConfirm: true, message: "Config exists, adding only missing fields", action: "updated" };
     },
     async execute() {
       fs.mkdirSync(globalConfigDir, { recursive: true });
@@ -193,7 +189,7 @@ export function createUserClaudeMdStep(templateDir: string): InitStep {
         return { needsConfirm: false, message: "Source template not found, skipping" };
       }
       if (!fs.existsSync(dest)) {
-        return { needsConfirm: false, message: "Create new user CLAUDE.md" };
+        return { needsConfirm: true, message: "Create new user CLAUDE.md", action: "created" };
       }
       const srcContent = fs.readFileSync(src, "utf-8");
       const destContent = fs.readFileSync(dest, "utf-8");
@@ -204,6 +200,7 @@ export function createUserClaudeMdStep(templateDir: string): InitStep {
         needsConfirm: true,
         message: "Target exists and content differs. Overwrite?",
         diff: diffContent(destContent, srcContent),
+        action: "replaced",
       };
     },
     async execute() {
@@ -229,7 +226,7 @@ export function createTeamClaudeMdStep(templateDir: string, projectRoot: string)
         return { needsConfirm: false, message: "Source template not found, skipping" };
       }
       if (!fs.existsSync(dest)) {
-        return { needsConfirm: false, message: "Create new team CLAUDE.md" };
+        return { needsConfirm: true, message: "Create new team CLAUDE.md", action: "created" };
       }
       const srcContent = fs.readFileSync(src, "utf-8");
       const destContent = fs.readFileSync(dest, "utf-8");
@@ -240,6 +237,7 @@ export function createTeamClaudeMdStep(templateDir: string, projectRoot: string)
         needsConfirm: true,
         message: "Target exists and content differs. Overwrite?",
         diff: diffContent(destContent, srcContent),
+        action: "replaced",
       };
     },
     async execute() {
@@ -268,21 +266,34 @@ export function createSkillsStep(skillsDir: string, projectRoot: string): InitSt
         return { needsConfirm: false, message: "Skills source not found, skipping" };
       }
       const conflicts: string[] = [];
+      const newSkills: string[] = [];
+      let unchanged = 0;
       for (const name of SKILLS) {
         const srcSkill = path.join(skillsDir, name, "SKILL.md");
         const dstSkill = path.join(destBase, name, "SKILL.md");
-        if (fs.existsSync(srcSkill) && fs.existsSync(dstSkill)) {
+        if (!fs.existsSync(srcSkill)) continue;
+        if (!fs.existsSync(dstSkill)) {
+          newSkills.push(name);
+        } else {
           const srcContent = fs.readFileSync(srcSkill, "utf-8");
           const dstContent = fs.readFileSync(dstSkill, "utf-8");
-          if (srcContent !== dstContent) conflicts.push(name);
+          if (srcContent !== dstContent) {
+            conflicts.push(name);
+          } else {
+            unchanged++;
+          }
         }
       }
-      if (conflicts.length === 0) {
-        return { needsConfirm: false, message: "All skills up to date or new" };
+      if (conflicts.length === 0 && newSkills.length === 0) {
+        return { needsConfirm: false, message: "All skills already up to date" };
       }
+      const parts: string[] = [];
+      if (newSkills.length > 0) parts.push(`${newSkills.length} new: ${newSkills.join(", ")}`);
+      if (conflicts.length > 0) parts.push(`${conflicts.length} differ: ${conflicts.join(", ")}`);
       return {
         needsConfirm: true,
-        message: `${conflicts.length} skill(s) differ: ${conflicts.join(", ")}. Replace all changed skills?`,
+        message: `Skills to install: ${parts.join("; ")}${unchanged > 0 ? ` (${unchanged} unchanged)` : ""}. Proceed?`,
+        action: newSkills.length > 0 && conflicts.length === 0 ? "created" : "updated",
       };
     },
     async execute() {

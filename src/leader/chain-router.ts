@@ -242,6 +242,7 @@ export class ChainRouter {
         }
       } catch {
         // Content is not JSON, skip merge validation
+        this.logger.debug("Report content is not JSON, skipping merge validation");
       }
     }
 
@@ -249,7 +250,8 @@ export class ChainRouter {
     let parsed = true;
     try {
       decision = EvalDecisionSchema.parse(JSON.parse(extractJson(msg.content)));
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Failed to parse EvalDecision, synthesizing fallback: ${err instanceof Error ? err.message : String(err)}`);
       parsed = false;
       const currentLink = msg.link!;
       const nextLink = NEXT_LINKS[currentLink];

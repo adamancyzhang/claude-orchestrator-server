@@ -18,17 +18,6 @@ const logger = new Logger("Orchestrator");
 
 let shuttingDown = false;
 
-function ensureCleanWorkspace(projectRoot: string): void {
-  const status = execSync("git status --porcelain", { cwd: projectRoot, encoding: "utf-8" }).trim();
-  if (status) {
-    logger.error("Workspace has uncommitted changes. Please commit or stash before running orchestrator:");
-    for (const line of status.split("\n")) {
-      logger.error(`  ${line}`);
-    }
-    process.exit(1);
-  }
-}
-
 export async function runOrchestrator(config: {
   zkHosts: string;
   workerCount: number;
@@ -41,6 +30,17 @@ export async function runOrchestrator(config: {
   const skillsDir = path.join(__dirname, "..", "skills");
   const projectRoot = process.cwd();
 
+  // Ensure workspace is clean before init
+  const wasClean = !execSync("git status --porcelain", { cwd: projectRoot, encoding: "utf-8" }).trim();
+  if (!wasClean) {
+    logger.error("Workspace has uncommitted changes. Please commit or stash before running orchestrator:");
+    const status = execSync("git status --porcelain", { cwd: projectRoot, encoding: "utf-8" }).trim();
+    for (const line of status.split("\n")) {
+      logger.error(`  ${line}`);
+    }
+    process.exit(1);
+  }
+
   const checker = new InitChecker({ yFlag: config.yFlag ?? false });
   await checker.runAll([
     createGlobalConfigStep(templateDir),
@@ -49,8 +49,13 @@ export async function runOrchestrator(config: {
     createSkillsStep(skillsDir, projectRoot),
   ]);
 
-  // Ensure workspace is clean before creating worktrees
-  ensureCleanWorkspace(process.cwd());
+  // Auto-commit any workspace files created by init
+  const initStatus = execSync("git status --porcelain", { cwd: projectRoot, encoding: "utf-8" }).trim();
+  if (initStatus) {
+    execSync("git add -A", { cwd: projectRoot });
+    execSync("git commit -m \"chore: init orchestrator workspace files\"", { cwd: projectRoot });
+    logger.info("Committed init-created workspace files");
+  }
 
   // Phase 2: Role assignment & worktree initialization
   const { initializeWorktrees } = await import("../worker/worktree-initializer.js");

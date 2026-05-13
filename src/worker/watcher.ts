@@ -53,7 +53,8 @@ export class WorkerWatcher {
         }
       );
       for (const cid of children) await this.processMessage(cid);
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Watch loop failed, retrying in 1s: ${err instanceof Error ? err.message : String(err)}`);
       if (!this.stopped) setTimeout(() => this.watchLoop(), 1000);
     }
   }
@@ -129,8 +130,8 @@ export class WorkerWatcher {
     try {
       msg.read = true;
       await this.zk.updateMessage(this.instanceId, msgId, msg as unknown as Record<string, unknown>);
-    } catch {
-      // best effort
+    } catch (err) {
+      this.logger.warn(`Failed to mark message as read: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     this.inFlight.delete(msgId);
@@ -153,7 +154,8 @@ export class WorkerWatcher {
         try {
           reportContent = await fs.promises.readFile(resultPath, "utf-8");
           reportLink = "task_defs";
-        } catch {
+        } catch (err) {
+          this.logger.warn(`Failed to read decompose result, using fallback: ${err instanceof Error ? err.message : String(err)}`);
           reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}`;
         }
       } else if (CHAIN_LINKS.includes(link)) {
@@ -182,7 +184,8 @@ export class WorkerWatcher {
           };
           reportContent = JSON.stringify(reportJson);
         } catch {
-          // Content is not JSON, append commit info
+          // Content is not JSON, append commit info as plain text
+          this.logger.debug("Report content is not JSON, appending commit info as text");
           reportContent += `\nCommit: ${commitResult.sha.slice(0, 7)} - ${commitResult.message}`;
         }
       }

@@ -46,15 +46,21 @@ export class MergeValidator {
             message: `Merged: ${commitInfo.branch} -> ${mainBranch}`,
           });
           // Switch back
-          try { this.execGit(`checkout ${currentBranch}`); } catch { /* ok */ }
-        } catch {
-          try { this.execGit("merge --abort"); } catch { /* ok */ }
+          try { this.execGit(`checkout ${currentBranch}`); } catch (err) {
+            this.logger.debug(`Failed to switch back to original branch after merge: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        } catch (err) {
+          this.logger.warn(`Merge failed, aborting: ${err instanceof Error ? err.message : String(err)}`);
+          try { this.execGit("merge --abort"); } catch (err2) {
+            this.logger.warn(`Failed to abort merge: ${err2 instanceof Error ? err2.message : String(err2)}`);
+          }
           return { decision: "review_first", reason: "Merge conflict, manual review needed" };
         }
       }
 
       return decision;
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Merge decision failed, falling back to manual review: ${err instanceof Error ? err.message : String(err)}`);
       return { decision: "review_first", reason: "Merge decision failed, manual review needed" };
     }
   }
@@ -62,7 +68,8 @@ export class MergeValidator {
   private getMainBranch(): string {
     try {
       return this.execGit("rev-parse --abbrev-ref HEAD");
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Failed to get main branch, defaulting to main: ${err instanceof Error ? err.message : String(err)}`);
       return "main";
     }
   }
@@ -71,7 +78,8 @@ export class MergeValidator {
     try {
       const result = this.execGit(`branch --contains ${sha}`);
       return result.length > 0;
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Failed to check if commit is merged: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }
@@ -96,8 +104,8 @@ export class MergeValidator {
     try {
       const output = await fs.promises.readFile(logPath, "utf-8");
       return JSON.parse(extractJson(output));
-    } catch {
-      // Fallback: merge if no conflict expected
+    } catch (err) {
+      this.logger.warn(`Failed to parse merge decision, falling back to auto-merge: ${err instanceof Error ? err.message : String(err)}`);
       return { decision: "merge", reason: "Auto-merge (no decision available)" };
     }
   }

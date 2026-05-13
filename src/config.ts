@@ -122,8 +122,8 @@ function readConfigFile(filePath: string): InstanceConfig {
     if (fs.existsSync(filePath)) {
       return JSON.parse(fs.readFileSync(filePath, "utf-8"));
     }
-  } catch {
-    // ignore corrupt config
+  } catch (err) {
+    console.error(`Failed to parse config file ${filePath}:`, err instanceof Error ? err.message : String(err));
   }
   return {};
 }

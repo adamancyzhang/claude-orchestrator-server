@@ -47,8 +47,8 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
       worktree_branch: config.branch,
       pid: process.pid,
     });
-  } catch {
-    // Instance may have been deleted or session expired
+  } catch (err) {
+    logger.warn(`Failed to update instance metadata: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   saveInstanceId(instance.id);
@@ -60,8 +60,8 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
     if (leaderData?.instance_id) {
       leaderInstanceId = leaderData.instance_id as string;
     }
-  } catch {
-    // Leader not running yet, use own instance id
+  } catch (err) {
+    logger.warn(`Failed to get leader, using own instance id: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 5. Initialize modules
@@ -134,8 +134,8 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
   // 9. Cleanup
   try {
     await registry.unregister(instance.id);
-  } catch {
-    // Already gone
+  } catch (err) {
+    logger.warn(`Failed to unregister instance on cleanup: ${err instanceof Error ? err.message : String(err)}`);
   }
   await zk.disconnect();
   logger.info("Unregistered. Goodbye.");

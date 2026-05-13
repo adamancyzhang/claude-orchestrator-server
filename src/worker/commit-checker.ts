@@ -101,7 +101,8 @@ export class CommitChecker {
     try {
       const output = await fs.promises.readFile(logPath, "utf-8");
       return output.trim().split("\n")[0].slice(0, 72);
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Failed to read commit message from log, using fallback: ${err instanceof Error ? err.message : String(err)}`);
       return `chore: auto-commit ${ctx.link} task`;
     }
   }

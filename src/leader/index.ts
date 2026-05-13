@@ -210,7 +210,7 @@ export async function startLeader(config: {
         read: false,
       });
     } catch (err) {
-      // Best effort — message will be lost if ZK is down
+      logger.warn(`Failed to send TUI message to ZK: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 

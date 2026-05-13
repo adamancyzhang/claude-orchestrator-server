@@ -44,7 +44,8 @@ export function getWorktreeBranch(name: string): string {
 function execGit(args: string, cwd: string): string {
   try {
     return execSync(`git ${args}`, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-  } catch {
+  } catch (err) {
+    logger.warn(`git ${args} failed in ${cwd}: ${err instanceof Error ? err.message : String(err)}`);
     return "";
   }
 }
