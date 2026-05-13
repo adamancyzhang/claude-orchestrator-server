@@ -1,4 +1,7 @@
-# CLI Optimization Plan: `--add-dir` + `--append-system-prompt`
+# CLI Optimization Plan: `--add-dir` + `--append-system-prompt` + `--resume`
+
+相关文档：
+- [`resume-session.md`](./resume-session.md) — `--resume` 优化方案：保持对话上下文传递
 
 ## Scope
 
