@@ -113,12 +113,13 @@ export class ChainRouter {
 
       try {
         const resultContent = await fs.promises.readFile(resultPath, "utf-8");
+        const cleanedContent = this.extractJson(resultContent);
         const syntheticMsg = createMessage({
           from_instance: this.leaderInstanceId,
           from_name: this.leaderName,
           from_role: "leader",
           to_instance: this.leaderInstanceId,
-          content: resultContent,
+          content: cleanedContent,
           link: "task_defs",
         });
         await this.handleTaskDefinitions(syntheticMsg);
@@ -156,10 +157,18 @@ export class ChainRouter {
     }
   }
 
+  private extractJson(content: string): string {
+    // Strip markdown code fences and extract the first JSON object/array
+    let cleaned = content.trim();
+    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
+    const match = cleaned.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+    return match ? match[0].trim() : cleaned;
+  }
+
   private async handleTaskDefinitions(msg: Message): Promise<void> {
     let chainDef;
     try {
-      chainDef = ChainDefSchema.parse(JSON.parse(msg.content));
+      chainDef = ChainDefSchema.parse(JSON.parse(this.extractJson(msg.content)));
     } catch (err) {
       this.logger.error("Failed to parse task definitions", err);
       return;
@@ -251,7 +260,7 @@ export class ChainRouter {
     let decision: EvalDecision;
     let parsed = true;
     try {
-      decision = EvalDecisionSchema.parse(JSON.parse(msg.content));
+      decision = EvalDecisionSchema.parse(JSON.parse(this.extractJson(msg.content)));
     } catch {
       parsed = false;
       const currentLink = msg.link!;

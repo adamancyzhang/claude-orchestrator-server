@@ -17,11 +17,11 @@ import type { Message } from "../src/models/schemas.js";
 const ZK_HOSTS = process.env.ZK_HOSTS || "127.0.0.1:2181";
 const CLAUDE_CMD = process.env.CLAUDE_CMD || "claude --dangerously-skip-permissions --permission-mode dontAsk";
 const CACHE_DIR = process.env.BENCH_CACHE_DIR || "/tmp/benchmark-real-cache";
-const TEMPLATES_DIR = path.resolve("src/templates");
+const TEMPLATES_DIR = path.resolve("templates/agents");
 const TEST_TIMEOUT = Number(process.env.BENCH_TIMEOUT_SEC || 600) * 1000;
 
 /**
- * End-to-end benchmark that exercises the full Leader → Worker → Leader loop
+ * End-to-end benchmark that exercises the full Leader -> Worker -> Leader loop
  * with real claude-cli invocations for both task execution and self-evaluation.
  *
  * Each Worker:
@@ -41,7 +41,7 @@ function chainId(): string {
   return `real-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-// ── Real Worker simulator ──
+// -- Real Worker simulator --
 
 interface WorkerContext {
   instanceId: string;
@@ -169,14 +169,25 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
     zk = new ZkClient(ZK_HOSTS);
     await zk.connect();
 
-    // Clean up stale state
+    // Clean up stale state from previous runs
     const ROOT = process.env.ZK_ROOT_PATH || "/claude-orchestrator";
     for (const dir of [`${ROOT}/tasks/pending`, `${ROOT}/tasks/claimed`, `${ROOT}/tasks/completed`]) {
       const children = await zk.getChildren(dir);
       for (const child of children) {
-        try { await zk.remove(`${dir}/${child}`); } catch { /* ignore */ }
+        try { await zk.remove(`${dir}/${child}`); } catch { /* ephemeral already gone */ }
       }
     }
+    // Clean up stale messages and message dirs
+    const msgInstances = await zk.getChildren(`${ROOT}/messages`);
+    for (const instId of msgInstances) {
+      const msgs = await zk.getChildren(`${ROOT}/messages/${instId}`);
+      for (const msgId of msgs) {
+        try { await zk.remove(`${ROOT}/messages/${instId}/${msgId}`); } catch { /* ok */ }
+      }
+      try { await zk.remove(`${ROOT}/messages/${instId}`); } catch { /* ok */ }
+    }
+    // Remove stale leader if present
+    try { await zk.remove(`${ROOT}/leader`); } catch { /* ok */ }
 
     taskQueue = new TaskQueue(zk);
     eventBus = new LeaderEventBus();
@@ -196,8 +207,11 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
     const messageRouter = new MessageRouter(zk);
     runner = new ClaudeRunner(CLAUDE_CMD, CACHE_DIR, leaderId, process.cwd());
 
+    const leaderTemplateEngine = new TemplateEngine(TEMPLATES_DIR);
+    await leaderTemplateEngine.loadAll();
+
     chainRouter = new ChainRouter(
-      zk, taskQueue, messageRouter, eventBus, leaderId, "RealBenchLeader", runner,
+      zk, taskQueue, messageRouter, eventBus, leaderId, "RealBenchLeader", runner, leaderTemplateEngine,
     );
 
     // Register all role workers with their own TemplateEngine and SelfEvaluator
@@ -233,16 +247,16 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
   });
 
   it(
-    "real chain: requirement → plan → build → verify → review → accept",
+    "real chain: requirement -> plan -> build -> verify -> review -> accept",
     { timeout: TEST_TIMEOUT },
     async () => {
       const id = chainId();
       const timings: Record<string, number> = {};
       const testStart = Date.now();
 
-      // ═══════════════════════════════════════════════════
-      // Step 1: Leader receives requirement → routes to planner
-      // ═══════════════════════════════════════════════════
+      // ========================================================
+      // Step 1: Leader receives requirement -> self-process or forward
+      // ========================================================
       const requirement = "Write a TypeScript function that returns 'Hello, World!' and a unit test for it.";
 
       const reqMsg = createMessage({
@@ -258,67 +272,77 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
       await chainRouter.route(reqMsg);
       timings.leader_route_requirement = Date.now() - t0;
 
-      // Verify: planner received decompose message
-      const plannerMsgs = await zk.listMessages(workers.planner.instanceId);
-      const decomposeMsg = plannerMsgs.find(([, d]) => d.link === "decompose");
-      expect(decomposeMsg).toBeDefined();
+      // Check if leader self-processed decompose (tasks already created)
+      const allPendingAfter = await taskQueue.listTasks("pending");
+      const tasksFromSelfProcess = allPendingAfter.filter((t) => t.link && t.link !== null);
+      const leaderSelfProcessed = tasksFromSelfProcess.length > 0;
 
-      // ═══════════════════════════════════════════════════
-      // Step 2: Planner processes decompose with claude
-      // ═══════════════════════════════════════════════════
-      const decomposeUniqueKey = `decompose-${id}`;
-      t0 = Date.now();
-      const chainDefRaw = await executeWorkerTask(
-        workers.planner,
-        "decompose",
-        "Decompose requirement",
-        requirement,
-        "Produce a ChainDef JSON",
-        "",
-        decomposeUniqueKey,
-      );
-      timings.planner_decompose = Date.now() - t0;
+      // Extract chain_id from tasks if leader self-processed, otherwise use test id
+      let effectiveChainId = id;
+      if (leaderSelfProcessed) {
+        effectiveChainId = (tasksFromSelfProcess[0] as Record<string, unknown>).chain_id as string ?? id;
+        console.log(`  Leader self-processed decompose, ${tasksFromSelfProcess.length} tasks created, chain_id=${effectiveChainId}`);
+        timings.planner_decompose = 0;
+        timings.leader_task_defs = 0;
+      } else {
+        // ========================================================
+        // Step 2: Fallback — Planner processes decompose with claude
+        // ========================================================
+        const plannerMsgs = await zk.listMessages(workers.planner.instanceId);
+        const decomposeMsg = plannerMsgs.find(([, d]) => d.link === "decompose");
+        expect(decomposeMsg).toBeDefined();
 
-      // Validate ChainDef — must be valid; no silent fallback
-      const chainDef = ChainDefSchema.parse(JSON.parse(chainDefRaw));
-      // Override chain_id to match our test run
-      (chainDef as Record<string, unknown>).chain_id = id;
-      console.log(`  Planner produced ChainDef: ${chainDef.chain_title}`);
+        const decomposeUniqueKey = `decompose-${id}`;
+        t0 = Date.now();
+        const chainDefRaw = await executeWorkerTask(
+          workers.planner,
+          "decompose",
+          "Decompose requirement",
+          requirement,
+          "Produce a ChainDef JSON",
+          "",
+          decomposeUniqueKey,
+        );
+        timings.planner_decompose = Date.now() - t0;
 
-      // Send ChainDef to leader
-      await sendCompletionToLeader(
-        zk, leaderId, workers.planner, JSON.stringify(chainDef), "task_defs", id,
-      );
+        const chainDef = ChainDefSchema.parse(JSON.parse(chainDefRaw));
+        (chainDef as Record<string, unknown>).chain_id = id;
+        console.log(`  Planner produced ChainDef: ${chainDef.chain_title}`);
 
-      // ═══════════════════════════════════════════════════
-      // Step 3: Leader processes ChainDef → creates tasks
-      // ═══════════════════════════════════════════════════
-      const chainDefMsgs = await zk.listMessages(leaderId);
-      const chainDefMsg = chainDefMsgs.find(([, d]) => d.link === "task_defs");
-      expect(chainDefMsg).toBeDefined();
+        await sendCompletionToLeader(
+          zk, leaderId, workers.planner, JSON.stringify(chainDef), "task_defs", id,
+        );
 
-      const chainDefMsgObj = createMessage({
-        from_instance: workers.planner.instanceId,
-        from_name: workers.planner.name,
-        from_role: "planner",
-        content: JSON.stringify(chainDef),
-        link: "task_defs",
-        to_instance: leaderId,
-      });
-      chainDefMsgObj.id = chainDefMsg![0];
+        // ========================================================
+        // Step 3: Leader processes ChainDef -> creates tasks
+        // ========================================================
+        const chainDefMsgs = await zk.listMessages(leaderId);
+        const chainDefMsg = chainDefMsgs.find(([, d]) => d.link === "task_defs");
+        expect(chainDefMsg).toBeDefined();
 
-      t0 = Date.now();
-      await chainRouter.route(chainDefMsgObj);
-      timings.leader_task_defs = Date.now() - t0;
+        const chainDefMsgObj = createMessage({
+          from_instance: workers.planner.instanceId,
+          from_name: workers.planner.name,
+          from_role: "planner",
+          content: JSON.stringify(chainDef),
+          link: "task_defs",
+          to_instance: leaderId,
+        });
+        chainDefMsgObj.id = chainDefMsg![0];
+
+        t0 = Date.now();
+        await chainRouter.route(chainDefMsgObj);
+        timings.leader_task_defs = Date.now() - t0;
+      }
 
       expect(state.events.some((e) => e.message.includes("activated"))).toBe(true);
 
       // Collect tasks created by handleTaskDefinitions (they have task doc files)
       const allPending = await taskQueue.listTasks("pending");
-      const chainTasks = allPending.filter((t) => t.chain_id === id);
+      const chainTasks = allPending.filter((t) => t.chain_id === effectiveChainId);
       expect(chainTasks.length).toBeGreaterThanOrEqual(4);
 
-      // Build a map: link → { task, docPath }
+      // Build a map: link -> { task, docPath }
       const taskMap = new Map<string, { task: typeof chainTasks[0]; docPath: string }>();
       for (const task of chainTasks) {
         if (task.link) {
@@ -326,9 +350,9 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
         }
       }
 
-      // ═══════════════════════════════════════════════════
+      // ========================================================
       // Step 4: Execute each chain link with real claude
-      // ═══════════════════════════════════════════════════
+      // ========================================================
       const chainLinks = [
         { link: "plan", worker: workers.planner },
         { link: "build", worker: workers.builder },
@@ -375,14 +399,14 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
         // EvalDecision must be valid JSON — no silent fallback
         const finalDecision = JSON.parse(evalDecision);
 
-        console.log(`  [${worker.name}] Decision: ${finalDecision.decision}${finalDecision.nextLink ? " → " + finalDecision.nextLink : ""}`);
+        console.log(`  [${worker.name}] Decision: ${finalDecision.decision}${finalDecision.nextLink ? " -> " + finalDecision.nextLink : ""}`);
 
         // Send completion report to leader
         const reportMsgId = await sendCompletionToLeader(
           zk, leaderId, worker,
           JSON.stringify(finalDecision),
           link,
-          id,
+          effectiveChainId,
         );
 
         // Route the completion report through ChainRouter
@@ -392,11 +416,11 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
           from_role: worker.role,
           content: JSON.stringify(finalDecision),
           link,
-          reply_to: id,
+          reply_to: effectiveChainId,
           to_instance: leaderId,
         });
         reportMsg.id = reportMsgId;
-        const enrichedMsg = { ...reportMsg, chain_id: id } as Message & { chain_id: string };
+        const enrichedMsg = { ...reportMsg, chain_id: effectiveChainId } as Message & { chain_id: string };
 
         t0 = Date.now();
         await chainRouter.route(enrichedMsg);
@@ -410,14 +434,14 @@ describeReal("Leader-Worker-Leader Real Chain (claude-cli)", () => {
         }
       }
 
-      // ═══════════════════════════════════════════════════
+      // ========================================================
       // Final assertions
-      // ═══════════════════════════════════════════════════
+      // ========================================================
       expect(state.events.some((e) => e.message.includes("closed"))).toBe(true);
 
       const completed = await taskQueue.listTasks("completed");
-      const chainCompleted = completed.filter((t) => t.chain_id === id);
-      console.log(`\n  Chain ${id}: ${chainCompleted.length} tasks completed, ${state.events.length} events emitted`);
+      const chainCompleted = completed.filter((t) => t.chain_id === effectiveChainId);
+      console.log(`\n  Chain ${effectiveChainId}: ${chainCompleted.length} tasks completed, ${state.events.length} events emitted`);
 
       const totalSec = ((Date.now() - testStart) / 1000).toFixed(1);
       console.log(`  Total wall time: ${totalSec}s\n`);

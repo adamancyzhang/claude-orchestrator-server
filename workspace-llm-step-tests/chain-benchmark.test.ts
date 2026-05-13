@@ -7,6 +7,7 @@ import { LeaderEventBus } from "../src/leader/event-bus.js";
 import { LeaderState } from "../src/leader/state.js";
 import { ChainRouter } from "../src/leader/chain-router.js";
 import { ClaudeRunner } from "../src/executor/runner.js";
+import { TemplateEngine } from "../src/executor/template.js";
 import { createMessage } from "../src/models/schemas.js";
 import type { Message } from "../src/models/schemas.js";
 
@@ -88,9 +89,7 @@ describe("Leader-Worker-Leader Full Chain Benchmark", () => {
     zk = new ZkClient(ZK_HOSTS);
     await zk.connect();
 
-    // Clean up stale state from previous runs so claiming picks up the
-    // tasks created by *this* benchmark run rather than older ones with
-    // lower sequential IDs.
+    // Clean up stale state from previous runs
     const ROOT = process.env.ZK_ROOT_PATH || "/claude-orchestrator";
     for (const dir of [`${ROOT}/tasks/pending`, `${ROOT}/tasks/claimed`, `${ROOT}/tasks/completed`]) {
       const children = await zk.getChildren(dir);
@@ -98,6 +97,17 @@ describe("Leader-Worker-Leader Full Chain Benchmark", () => {
         try { await zk.remove(`${dir}/${child}`); } catch { /* ephemeral already gone */ }
       }
     }
+    // Clean up stale messages and message dirs
+    const msgInstances = await zk.getChildren(`${ROOT}/messages`);
+    for (const instId of msgInstances) {
+      const msgs = await zk.getChildren(`${ROOT}/messages/${instId}`);
+      for (const msgId of msgs) {
+        try { await zk.remove(`${ROOT}/messages/${instId}/${msgId}`); } catch { /* ok */ }
+      }
+      try { await zk.remove(`${ROOT}/messages/${instId}`); } catch { /* ok */ }
+    }
+    // Remove stale leader if present
+    try { await zk.remove(`${ROOT}/leader`); } catch { /* ok */ }
 
     taskQueue = new TaskQueue(zk);
     eventBus = new LeaderEventBus();
@@ -117,8 +127,11 @@ describe("Leader-Worker-Leader Full Chain Benchmark", () => {
     const messageRouter = new MessageRouter(zk);
     const runner = new ClaudeRunner("echo", "/tmp/benchmark-cache", leaderId, "/tmp");
 
+    const templateEngine = new TemplateEngine("/tmp/benchmark-templates");
+    await templateEngine.loadAll();
+
     chainRouter = new ChainRouter(
-      zk, taskQueue, messageRouter, eventBus, leaderId, "BenchLeader", runner,
+      zk, taskQueue, messageRouter, eventBus, leaderId, "BenchLeader", runner, templateEngine,
     );
 
     // Register all role workers upfront
