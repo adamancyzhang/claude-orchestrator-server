@@ -1,141 +1,238 @@
-import { LeaderState, type WorkerInfo } from "./state.js";
+import { LeaderState } from "./state.js";
+import {
+  CLEAR, HIDE_CURSOR, SHOW_CURSOR, RESET, BOLD, DIM,
+  MIN_COLS, MIN_ROWS,
+  box,
+  defaultUiState,
+  renderTeamGrid,
+  renderPendingTasks,
+  renderClaimedTasks,
+  renderWorkerMessages,
+  renderStreamPanel,
+  renderEventLog,
+  renderInputLine,
+  renderFooter,
+  renderTerminalTooSmall,
+  renderHelpOverlay,
+  type TuiUiState,
+} from "./tui-render.js";
 
-const ESC = "\x1b";
-const CLEAR = `${ESC}[2J${ESC}[0;0H`;
-const HIDE_CURSOR = `${ESC}[?25l`;
-const SHOW_CURSOR = `${ESC}[?25h`;
+const SENT_INDICATOR_MS = 2000;
 
-const RESET = `${ESC}[0m`;
-const BOLD = `${ESC}[1m`;
-const DIM = `${ESC}[2m`;
-const RED = `${ESC}[31m`;
-const GREEN = `${ESC}[32m`;
-const YELLOW = `${ESC}[33m`;
-const BLUE = `${ESC}[34m`;
-const MAGENTA = `${ESC}[35m`;
-const CYAN = `${ESC}[36m`;
+/**
+ * Handle a single raw key event. Pure-ish: mutates `ui` and optionally `state`
+ * (the parts of state that are TUI selection — e.g. selectedWorkerIndex), and
+ * may invoke `onSubmit` when Enter is pressed with non-empty buffer.
+ *
+ * Returns true if anything changed and the caller should rerender.
+ */
+export function handleKey(
+  key: string,
+  state: LeaderState,
+  ui: TuiUiState,
+  onSubmit: (text: string) => void,
+  nowMs: number = Date.now(),
+): boolean {
+  // Ctrl+C — propagate signal
+  if (key === "\x03") {
+    process.kill(process.pid, "SIGINT");
+    return false;
+  }
 
-function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;]*m/g, "");
+  // Ctrl+L — force redraw (no state change needed)
+  if (key === "\x0c") {
+    return true;
+  }
+
+  // Help overlay toggle (?)
+  if (key === "?") {
+    ui.showHelp = !ui.showHelp;
+    return true;
+  }
+
+  // If help overlay is showing, only ?/Esc/Ctrl+C reach this point
+  if (ui.showHelp && key === "\x1b") {
+    ui.showHelp = false;
+    return true;
+  }
+
+  // Tab — next worker
+  if (key === "\t") {
+    if (state.workers.length > 0) {
+      state.selectedWorkerIndex = (state.selectedWorkerIndex + 1) % state.workers.length;
+      // Reset stream scroll when changing worker
+      ui.streamScrollOffset = 0;
+      return true;
+    }
+    return false;
+  }
+
+  // Shift+Tab — previous worker
+  if (key === "\x1b[Z") {
+    if (state.workers.length > 0) {
+      state.selectedWorkerIndex =
+        (state.selectedWorkerIndex - 1 + state.workers.length) % state.workers.length;
+      ui.streamScrollOffset = 0;
+      return true;
+    }
+    return false;
+  }
+
+  // Ctrl+P — pause/resume stream
+  if (key === "\x10") {
+    ui.streamPaused = !ui.streamPaused;
+    return true;
+  }
+
+  // Arrow up — scroll stream older
+  if (key === "\x1b[A") {
+    ui.streamScrollOffset += 5;
+    return true;
+  }
+  // Arrow down — scroll stream newer
+  if (key === "\x1b[B") {
+    ui.streamScrollOffset = Math.max(0, ui.streamScrollOffset - 5);
+    return true;
+  }
+  // End — follow (reset scroll)
+  if (key === "\x1b[F" || key === "\x1b[4~") {
+    ui.streamScrollOffset = 0;
+    return true;
+  }
+
+  // f — cycle event filter (only when not actively composing a message)
+  if (key === "f" && ui.inputBuffer.length === 0) {
+    const order: TuiUiState["eventFilter"][] = ["all", "task", "worker", "chain"];
+    const i = order.indexOf(ui.eventFilter);
+    ui.eventFilter = order[(i + 1) % order.length];
+    return true;
+  }
+
+  // Digit jump
+  if (key >= "1" && key <= "9") {
+    const idx = parseInt(key, 10) - 1;
+    if (idx < state.workers.length) {
+      state.selectedWorkerIndex = idx;
+      ui.streamScrollOffset = 0;
+      return true;
+    }
+    return false;
+  }
+
+  // Enter — submit
+  if (key === "\r" || key === "\n") {
+    const text = ui.inputBuffer.trim();
+    if (text) {
+      ui.pendingInput = text;
+      ui.sentAt = nowMs;
+      onSubmit(text);
+    }
+    ui.inputBuffer = "";
+    return true;
+  }
+
+  // Backspace
+  if (key === "\x7f" || key === "\x08") {
+    if (ui.inputBuffer.length > 0) {
+      ui.inputBuffer = ui.inputBuffer.slice(0, -1);
+      return true;
+    }
+    return false;
+  }
+
+  // Esc — clear input
+  if (key === "\x1b") {
+    if (ui.inputBuffer.length > 0) {
+      ui.inputBuffer = "";
+      return true;
+    }
+    return false;
+  }
+
+  // Printable
+  if (key >= " " && key.length < 16) {
+    ui.inputBuffer += key;
+    return true;
+  }
+
+  return false;
 }
 
-function padRight(s: string, n: number): string {
-  const visible = stripAnsi(s).length;
-  return s + " ".repeat(Math.max(0, n - visible));
-}
+/**
+ * Compose the full TUI frame from state + ui. Pure — returns the string to write.
+ */
+export function composeFrame(state: LeaderState, ui: TuiUiState, cols: number, rows: number, nowMs: number): string {
+  if (cols < MIN_COLS || rows < MIN_ROWS) {
+    return CLEAR + HIDE_CURSOR + renderTerminalTooSmall(cols, rows).join("\n");
+  }
 
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return s.slice(0, n - 1) + "…";
-}
+  if (ui.showHelp) {
+    const lines = renderHelpOverlay(cols);
+    while (lines.length < rows - 2) lines.push("");
+    return CLEAR + HIDE_CURSOR + box(cols - 2, ...lines);
+  }
 
-function wrapText(s: string, maxWidth: number): string[] {
-  const lines: string[] = [];
-  let current = "";
-  for (const ch of s) {
-    if (ch === "\n") {
-      lines.push(current);
-      current = "";
-    } else if (current.length >= maxWidth) {
-      lines.push(current);
-      current = ch;
+  let out = CLEAR + HIDE_CURSOR;
+  const halfW = Math.floor((cols - 4) / 2);
+
+  // Team
+  const teamLines = renderTeamGrid(state.workers, state.selectedWorkerIndex, cols - 2);
+  out += box(cols - 2, ...teamLines);
+  const teamBoxH = teamLines.length + 2;
+
+  // Tasks (side by side)
+  const pendLines = renderPendingTasks(state.pendingTasks, halfW);
+  const progLines = renderClaimedTasks(state.claimedTasks, halfW);
+  const taskH = Math.max(pendLines.length, progLines.length) + 2;
+  while (pendLines.length < taskH - 2) pendLines.push("");
+  while (progLines.length < taskH - 2) progLines.push("");
+  const leftBox = box(halfW, ...pendLines).split("\n");
+  const rightBox = box(halfW, ...progLines).split("\n");
+  for (let i = 0; i < leftBox.length; i++) {
+    out += leftBox[i] + " " + rightBox[i] + "\n";
+  }
+
+  // Stream / messages
+  const msgWidth = cols - 2;
+  const selected = state.workers[state.selectedWorkerIndex];
+  let msgLines: string[] = [];
+  if (selected) {
+    if (selected.streamActive || selected.streamBuffer.length > 0) {
+      msgLines = renderStreamPanel(selected, msgWidth, 14, ui);
     } else {
-      current += ch;
+      msgLines = [
+        ` ${BOLD}WORKER MESSAGES${RESET} — ${selected.name} (${selected.presetRole})`,
+        ` ${DIM}${"─".repeat(Math.max(1, msgWidth - 4))}${RESET}`,
+        ...renderWorkerMessages(selected, msgWidth, 10),
+      ];
     }
-  }
-  if (current) lines.push(current);
-  return lines;
-}
-
-function box(width: number, ...lines: string[]): string {
-  const top = `${DIM}┌${"─".repeat(width - 2)}┐${RESET}\n`;
-  const bottom = `${DIM}└${"─".repeat(width - 2)}┘${RESET}`;
-  let body = "";
-  for (const line of lines) {
-    body += `${DIM}│${RESET}${padRight(line, width - 2)}${DIM}│${RESET}\n`;
-  }
-  return top + body + bottom;
-}
-
-const NON_TEXT_TYPES = new Set([
-  "message_start", "message_delta", "message_stop",
-  "content_block_stop", "ping", "system", "result", "assistant", "user",
-]);
-
-function stripJsonChunk(line: string): string {
-  const parsed = JSON.parse(line);
-  if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-    return parsed.delta.text;
-  }
-  if (parsed.type === "content_block_start" && parsed.content_block?.text) {
-    return parsed.content_block.text;
-  }
-  if (NON_TEXT_TYPES.has(parsed.type)) {
-    return "";
-  }
-  throw new Error(`Unrecognized stream event type "${parsed.type}": ${line}`);
-}
-
-function workerStatusColor(status: string): string {
-  if (status === "idle") return GREEN;
-  if (status === "busy") return YELLOW;
-  return DIM;
-}
-
-function renderWorkerMessages(
-  worker: WorkerInfo,
-  maxWidth: number,
-): string[] {
-  const lines: string[] = [];
-  const contentW = maxWidth - 4;
-
-  if (worker.currentMessage) {
-    const linkTag = worker.currentMessageLink
-      ? ` ${CYAN}[${worker.currentMessageLink}]${RESET}`
-      : "";
-    const time = worker.currentMessageTime
-      ? ` ${DIM}(${worker.currentMessageTime})${RESET}`
-      : "";
-    lines.push(` ${GREEN}◆${RESET} ${BOLD}Working${RESET}${time}${linkTag}`);
-
-    const wrapped = wrapText(worker.currentMessage, contentW - 2);
-    for (const line of wrapped) {
-      lines.push(`   ${line}`);
-    }
-    lines.push("");
-  } else if (worker.status === "busy" && worker.currentTaskId) {
-    const roleTag = worker.currentRole
-      ? ` ${MAGENTA}[${worker.currentRole}]${RESET}`
-      : "";
-    lines.push(` ${YELLOW}◆${RESET} ${BOLD}Working${RESET}${roleTag}`);
-    lines.push(`   ${DIM}Task: ${worker.currentTaskId}${RESET}`);
-    lines.push("");
-  } else if (worker.lastCompletedTask) {
-    lines.push(` ${DIM}◇ (idle) — last: ${worker.lastCompletedTask}${RESET}`);
-    lines.push("");
   } else {
-    lines.push(` ${DIM}◇ (idle)${RESET}`);
-    lines.push("");
+    msgLines = [` ${DIM}No workers${RESET}`];
   }
+  while (msgLines.length < 12) msgLines.push("");
+  const msgH = msgLines.length + 2;
+  out += box(msgWidth, ...msgLines);
 
-  if (worker.messageHistory.length > 0) {
-    lines.push(` ${BOLD}History:${RESET}`);
-    for (const entry of worker.messageHistory.slice(-5).reverse()) {
-      const time = `${DIM}${entry.timestamp}${RESET}`;
-      const link = entry.link ? ` ${CYAN}[${entry.link}]${RESET}` : "";
-      lines.push(`   ${time}${link}`);
-      const wrapped = wrapText(entry.content, contentW - 4);
-      for (const line of wrapped) {
-        lines.push(`     ${DIM}${line}${RESET}`);
-      }
-    }
-  }
+  // Event log (fills remaining height)
+  const inputSectionH = 4;
+  const remainingH = rows - teamBoxH - (taskH + 2) - msgH - inputSectionH - 3;
+  const logH = Math.max(remainingH, 3);
+  const logLines = renderEventLog(state.events, logH, cols - 2, ui.eventFilter);
+  while (logLines.length < logH - 1) logLines.push("");
+  out += box(cols - 2, ...logLines);
 
-  return lines;
+  // Input
+  const inputStatus = { pendingInput: ui.pendingInput, sentAt: ui.sentAt, nowMs };
+  const { line, hint } = renderInputLine(ui.inputBuffer, inputStatus);
+  out += box(cols - 2, line, hint);
+
+  // Footer
+  out += `\n${renderFooter(cols, state.leaderName, state.leaderInstanceId, state.cacheDir, nowMs)}`;
+  return out;
 }
 
 export class LeaderTui {
-  private inputBuffer = "";
+  private ui: TuiUiState = defaultUiState();
   private inputCallback: ((text: string) => void) | null = null;
   private rawMode = false;
   private state: LeaderState | null = null;
@@ -183,13 +280,16 @@ export class LeaderTui {
   }
 
   private setupResizeHandler(): void {
-    process.stdout.on("resize", () => {
-      this.rerender();
-    });
+    process.stdout.on("resize", () => this.rerender());
   }
 
   private startRefreshTimer(): void {
     this.refreshTimer = setInterval(() => {
+      // Clear the sent indicator after expiry so the hint reverts naturally.
+      if (this.ui.sentAt && Date.now() - this.ui.sentAt > SENT_INDICATOR_MS) {
+        this.ui.pendingInput = null;
+        this.ui.sentAt = null;
+      }
       this.rerender();
     }, 1000);
   }
@@ -197,247 +297,19 @@ export class LeaderTui {
   private setupInput(): void {
     process.stdin.on("data", (data: Buffer) => {
       const key = data.toString();
-
-      if (key === "\x03") {
-        process.kill(process.pid, "SIGINT");
-        return;
-      }
-
-      if (key === "\t") {
-        if (this.state && this.state.workers.length > 0) {
-          this.state.selectedWorkerIndex =
-            (this.state.selectedWorkerIndex + 1) % this.state.workers.length;
-          this.rerender();
-        }
-        return;
-      }
-
-      if (key === "\x1b[Z") {
-        if (this.state && this.state.workers.length > 0) {
-          this.state.selectedWorkerIndex =
-            (this.state.selectedWorkerIndex - 1 + this.state.workers.length) %
-            this.state.workers.length;
-          this.rerender();
-        }
-        return;
-      }
-
-      if (key >= "1" && key <= "9") {
-        const idx = parseInt(key) - 1;
-        if (this.state && idx < this.state.workers.length) {
-          this.state.selectedWorkerIndex = idx;
-          this.rerender();
-        }
-        return;
-      }
-
-      if (key === "\r" || key === "\n") {
-        if (this.inputBuffer.trim() && this.inputCallback) {
-          this.inputCallback(this.inputBuffer.trim());
-        }
-        this.inputBuffer = "";
-        this.rerender();
-        return;
-      }
-
-      if (key === "\x7f" || key === "\x08") {
-        this.inputBuffer = this.inputBuffer.slice(0, -1);
-        this.rerender();
-        return;
-      }
-
-      if (key === "\x1b") {
-        this.inputBuffer = "";
-        this.rerender();
-        return;
-      }
-
-      if (key >= " ") {
-        this.inputBuffer += key;
-        this.rerender();
-      }
+      const dirty = handleKey(key, this.state ?? new LeaderState(), this.ui, (text) => {
+        if (this.inputCallback) this.inputCallback(text);
+      });
+      if (dirty) this.rerender();
     });
   }
 
   render(state: LeaderState): void {
     this.state = state;
     this.enableRawMode();
-
     const cols = process.stdout.columns || 120;
     const rows = process.stdout.rows || 30;
-    const halfW = Math.floor((cols - 4) / 2);
-
-    let out = CLEAR + HIDE_CURSOR;
-
-    // ── Team Panel (top) ──
-    const teamWidth = cols - 2;
-    const teamLines: string[] = [];
-
-    // Responsive column widths
-    const availW = teamWidth - 4;
-    const nameW = Math.max(6, Math.floor(availW * 0.13));
-    const roleW = Math.max(6, Math.floor(availW * 0.12));
-    const wtW = Math.max(8, Math.floor(availW * 0.15));
-    const branchW = Math.max(8, Math.floor(availW * 0.20));
-    const pidW = 6;
-    const statusW = 8;
-
-    teamLines.push(` ${BOLD}TEAM${RESET}`);
-    teamLines.push(` ${DIM}${"─".repeat(teamWidth - 4)}${RESET}`);
-    if (state.workers.length === 0) {
-      teamLines.push(` ${DIM}No workers online${RESET}`);
-    } else {
-      const header = `${BOLD}${padRight("Name", nameW)}${padRight("Role", roleW)}${padRight("Worktree", wtW)}${padRight("Branch", branchW)}${padRight("PID", pidW)}${padRight("Status", statusW)}${RESET}`;
-      teamLines.push(` ${header}`);
-      const maxWorkers = Math.min(state.workers.length, 8);
-      for (let i = 0; i < maxWorkers; i++) {
-        const w = state.workers[i];
-        const selected = i === state.selectedWorkerIndex;
-        const marker = selected ? `${BOLD}${CYAN}>${RESET}` : " ";
-        const name = selected
-          ? `${BOLD}${CYAN}${padRight(truncate(w.name, nameW - 1), nameW - 1)}${RESET}`
-          : padRight(truncate(w.name, nameW - 1), nameW - 1);
-        const role = w.currentRole
-          ? `${MAGENTA}${padRight(w.currentRole, roleW - 2)}${RESET}${DIM}◀←${RESET}`
-          : padRight(w.presetRole, roleW);
-        const wt = padRight(truncate(w.worktreeName ?? w.name, wtW - 1), wtW - 1);
-        const branch = padRight(truncate(w.worktreeBranch ?? "-", branchW - 1), branchW - 1);
-        const pid = padRight(w.pid !== null ? String(w.pid) : "-", pidW - 1);
-        const statusColored = `${workerStatusColor(w.status)}${padRight(w.status, statusW - 1)}${RESET}`;
-        const line = ` ${marker} ${name} ${role} ${DIM}${wt}${RESET} ${DIM}${branch}${RESET} ${pid} ${statusColored}`;
-        teamLines.push(line);
-      }
-      if (state.workers.length > 8) {
-        teamLines.push(` ${DIM}... and ${state.workers.length - 8} more${RESET}`);
-      }
-    }
-    const teamBoxH = teamLines.length + 2;
-    out += box(teamWidth, ...teamLines);
-
-    // ── Task Panels (middle, side by side) ──
-    const pendLines: string[] = [];
-    pendLines.push(` ${BOLD}PENDING${RESET}`);
-    pendLines.push(` ${DIM}${"─".repeat(halfW - 4)}${RESET}`);
-    const pendTasks = state.pendingTasks.slice(0, 10);
-    if (pendTasks.length === 0) {
-      pendLines.push(` ${DIM}No pending tasks${RESET}`);
-    } else {
-      for (const t of pendTasks) {
-        const title = truncate(t.title ?? "", halfW - 16);
-        const prio = t.priority === 0 ? `${RED}HIGH${RESET}` :
-                     t.priority === 1 ? `${YELLOW}MED${RESET}` : `${DIM}LOW${RESET}`;
-        const link = t.link ? `${CYAN}[${t.link.charAt(0).toUpperCase() + t.link.slice(1)}]${RESET} ` : "";
-        pendLines.push(` ${link}${prio} ${title}`);
-      }
-    }
-
-    const progLines: string[] = [];
-    progLines.push(` ${BOLD}IN PROGRESS${RESET}`);
-    progLines.push(` ${DIM}${"─".repeat(halfW - 4)}${RESET}`);
-    const progTasks = state.claimedTasks.slice(0, 10);
-    if (progTasks.length === 0) {
-      progLines.push(` ${DIM}No tasks in progress${RESET}`);
-    } else {
-      for (const t of progTasks) {
-        const title = truncate(t.title ?? "", halfW - 10);
-        const who = truncate(t.claimed_by?.slice(0, 8) ?? "?", 8);
-        progLines.push(` ${BLUE}${who}${RESET} ${title}`);
-      }
-    }
-
-    const taskH = Math.max(pendLines.length, progLines.length) + 2;
-    while (pendLines.length < taskH - 2) pendLines.push("");
-    while (progLines.length < taskH - 2) progLines.push("");
-
-    const leftBox = box(halfW, ...pendLines).split("\n");
-    const rightBox = box(halfW, ...progLines).split("\n");
-    for (let i = 0; i < leftBox.length; i++) {
-      out += leftBox[i] + " " + rightBox[i] + "\n";
-    }
-
-    // ── Live Stream / Worker Messages Panel ──
-    const msgWidth = cols - 2;
-    const msgLines: string[] = [];
-    const selected = state.workers[state.selectedWorkerIndex];
-    if (selected) {
-      if (selected.streamActive) {
-        const title = `LIVE STREAM — ${selected.name} (${selected.presetRole})`;
-        msgLines.push(` ${title}`);
-        msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
-        msgLines.push(` ${GREEN}${BOLD}═══ Streaming... ═══${RESET}`);
-        const displayLines = selected.streamBuffer.slice(-20);
-        for (const l of displayLines) {
-          const plain = stripJsonChunk(l);
-          if (!plain) continue;
-          const wrapped = wrapText(plain, msgWidth - 4);
-          for (const wl of wrapped) {
-            msgLines.push(` ${CYAN}${wl}${RESET}`);
-          }
-        }
-        if (selected.streamBuffer.length > 20) {
-          msgLines.push(` ${DIM}... (${selected.streamBuffer.length - 20} more lines)${RESET}`);
-        }
-        while (msgLines.length < 14) msgLines.push("");
-      } else if (selected.streamBuffer.length > 0) {
-        const title = `LAST OUTPUT — ${selected.name} (${selected.presetRole})`;
-        msgLines.push(` ${title}`);
-        msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
-        const displayLines = selected.streamBuffer.slice(-5);
-        for (const l of displayLines) {
-          const plain = stripJsonChunk(l);
-          if (!plain) continue;
-          const wrapped = wrapText(plain, msgWidth - 4);
-          for (const wl of wrapped) {
-            msgLines.push(` ${DIM}${wl}${RESET}`);
-          }
-        }
-        while (msgLines.length < 12) msgLines.push("");
-      } else {
-        const title = `WORKER MESSAGES — ${selected.name} (${selected.presetRole})`;
-        msgLines.push(` ${title}`);
-        msgLines.push(` ${DIM}${"─".repeat(msgWidth - 4)}${RESET}`);
-        const msgContent = renderWorkerMessages(selected, msgWidth);
-        for (const line of msgContent.slice(0, 10)) {
-          msgLines.push(line);
-        }
-        while (msgLines.length < 12) msgLines.push("");
-      }
-    } else {
-      msgLines.push(` ${DIM}No workers${RESET}`);
-      while (msgLines.length < 12) msgLines.push("");
-    }
-    const msgH = msgLines.length + 2;
-    out += box(msgWidth, ...msgLines);
-
-    // ── Event Log ──
-    const inputSectionH = 4;
-    const remainingH = rows - teamBoxH - (taskH + 2) - msgH - inputSectionH - 3;
-    const logH = Math.max(remainingH, 3);
-    const logLines: string[] = [];
-    logLines.push(` ${BOLD}EVENT LOG${RESET}`);
-    logLines.push(` ${DIM}${"─".repeat(cols - 4)}${RESET}`);
-    const events = state.events.slice(-(logH - 3));
-    for (const e of events) {
-      const msg = truncate(e.message, cols - 18);
-      logLines.push(` ${DIM}${e.timestamp}${RESET} ${msg}`);
-    }
-    while (logLines.length < logH - 1) logLines.push("");
-    out += box(cols - 2, ...logLines);
-
-    // ── Input Line ──
-    const inputPrompt = `> ${this.inputBuffer}█`;
-    const inputHint = this.inputBuffer.length === 0 ? `${DIM}Type a message and press Enter to send${RESET}` : "";
-    const inputBox = box(cols - 2, inputPrompt, inputHint || " ");
-    out += inputBox;
-
-    // ── Footer ──
-    const idShort = state.leaderInstanceId.slice(0, 8);
-    const cacheDisplay = state.cacheDir.length > 60
-      ? "..." + state.cacheDir.slice(-57)
-      : state.cacheDir;
-    const footer = `${DIM}Leader: ${state.leaderName} | Instance: ${idShort} | Cache: ${cacheDisplay} | Ctrl+C to stop${RESET}`;
-    out += `\n${footer}`;
-
+    const out = composeFrame(state, this.ui, cols, rows, Date.now());
     process.stdout.write(out);
   }
 
