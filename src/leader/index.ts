@@ -14,6 +14,7 @@ import { MessageRouter } from "../modules/message-router.js";
 import { ClaudeRunner } from "../executor/runner.js";
 import { loadInstanceConfig, saveInstanceId, loadConfig } from "../config.js";
 import { Logger } from "../utils/logger.js";
+import { captureConsoleToFile, restoreConsole } from "../utils/console-capture.js";
 import { LeaderTui } from "./tui.js";
 
 export async function startLeader(config: {
@@ -58,6 +59,9 @@ export async function startLeader(config: {
 
   // Resolve cache dir from config (defaults to project-local .claude-orchestrator/sessions)
   const resolvedConfig = loadConfig({ zookeeper: config.zkHosts });
+
+  // Redirect all console output to file so TUI controls the screen
+  captureConsoleToFile(resolvedConfig.cacheDir);
 
   // Initialize cache runner for path management (leader doesn't call claude-cli)
   const cacheRunner = new ClaudeRunner(
@@ -125,6 +129,7 @@ export async function startLeader(config: {
   await new Promise<void>((resolve) => {
     const cleanup = () => {
       tui.destroy();
+      restoreConsole();
       resolve();
     };
     process.once("SIGINT", cleanup);
