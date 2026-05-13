@@ -73,7 +73,7 @@ Type a requirement in the TUI input line and press Enter. The Leader forwards it
 # CLI commands (from any terminal)
 claude-orchestrator push-task --title "Implement login endpoint" --priority 0
 claude-orchestrator send-message --to-name Jerry --content "Starting on the auth module?"
-claude-orchestrator list-tasks --status pending
+claude-orchestrator poll-task --status pending
 ```
 
 ---
@@ -84,7 +84,7 @@ claude-orchestrator list-tasks --status pending
 
 | Component | What it does | ZK magic |
 |-----------|-------------|----------|
-| **Leader** | Read-only TUI, mechanical message/task routing, merge validation, orphan recovery. No AI calls. | `/leader` EPHEMERAL — exactly one Leader |
+| **Leader** | Read-only TUI, mechanical message/task routing, merge validation, orphan recovery. Self-processes decompose via claude-cli when template available; otherwise forwards to Planner. | `/leader` EPHEMERAL — exactly one Leader |
 | **Worker** | Isolated git worktree, ZK watch loop, auto-processes messages via `claude -p`, self-evaluates output, auto-commits changes | EPHEMERAL nodes → auto-cleanup on disconnect |
 | **Task Queue** | Push → Claim → Complete (or Block/Fail/Retry). Role-link priority sorting. | Sequential nodes for FIFO, ephemeral claims for atomic locks |
 | **Message Router** | Point-to-point messaging via ZK watches | Persistent-sequential nodes, push notification |
@@ -99,7 +99,7 @@ Each Worker runs in its own `git worktree` under `.claude-orchestrator/worktree/
 
 ### CLI-Native — Zero MCP Server
 
-Leader and Workers each connect directly to ZooKeeper. The Leader is a pure router: forwards requirements, creates tasks from ChainDef JSON, mechanically executes EvalDecision JSON. All AI intelligence runs exclusively on Workers via `claude -p`. No HTTP, no SSE, no MCP protocol.
+Leader and Workers each connect directly to ZooKeeper. The Leader is primarily a router: self-processes decompose when template available (otherwise forwards to Planner), creates tasks from ChainDef JSON, mechanically executes EvalDecision JSON. All other AI intelligence runs on Workers via `claude -p`. No HTTP, no SSE, no MCP protocol.
 
 ### Responsibility Chain
 
@@ -120,7 +120,7 @@ Each link is a dedicated role. One Worker produces, the next Worker verifies —
 | `push-task` | Create a task (optionally assign to someone) |
 | `claim-task` | Grab the next task — atomic, no two instances can claim the same one |
 | `complete-task` | Mark a task done with results |
-| `list-tasks` | List tasks by status |
+| `poll-task` | List tasks, optionally filtered by status |
 | `task-block` | Mark a claimed task as blocked (with reason) |
 | `task-fail` | Mark a claimed task as failed (with reason) |
 | `task-retry` | Re-queue a failed task (retry_count + 1, max 3) |
@@ -249,7 +249,7 @@ node dist/index.js run --worker 3
 ### Run Tests
 
 ```bash
-npm test                    # All unit tests (110+)
+npm test                    # Run all tests
 npm run test:watch          # Watch mode
 npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt rendering verification
 ```
@@ -267,14 +267,15 @@ npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt rendering ve
 │   ├── leader/                    # Leader node
 │   │   ├── index.ts               #   Startup / shutdown orchestration
 │   │   ├── tui.ts                 #   ANSI TUI with Worker Messages panel
-│   │   ├── event-bus.ts           #   Typed EventEmitter (15 events)
+│   │   ├── event-bus.ts           #   Typed EventEmitter (17 events)
 │   │   ├── state.ts               #   Centralized LeaderState
 │   │   ├── monitor.ts             #   WorkerMonitor — join/leave detection
 │   │   ├── orchestrator.ts        #   TaskOrchestrator — lifecycle tracking
 │   │   ├── recovery.ts            #   TaskRecovery — orphan recovery (max 3 retries)
 │   │   ├── watcher.ts             #   LeaderWatcher — message processing
-│   │   ├── chain-router.ts        #   ChainRouter — mechanical routing (no AI)
-│   │   └── merge-validator.ts     #   Cross-verify + merge worker branches
+│   │   ├── chain-router.ts        #   ChainRouter — mechanical routing (self or forward decompose)
+│   │   ├── merge-validator.ts     #   Cross-verify + merge worker branches
+│   │   └── stream-tailer.ts       #   StreamTailer — live worker log display
 │   ├── worker/                    # Worker node
 │   │   ├── worktree-initializer.ts#   Name generation, worktree creation, role assignment
 │   │   ├── child.ts               #   Child process entry point
@@ -287,16 +288,21 @@ npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt rendering ve
 │   │   └── runner.ts              #   ClaudeRunner — CLI execution wrapper
 │   ├── zk/
 │   │   ├── client.ts              # ZooKeeper connection management
-│   │   └── paths.ts               # ZK path constants
+│   │   ├── paths.ts               # ZK path constants
+│   │   └── watcher.ts             # ZK watch callback wrapper
 │   ├── modules/
 │   │   ├── registry.ts            # Instance registry
 │   │   ├── task-queue.ts          # Task queue (push/claim/complete/block/fail/retry)
 │   │   └── message-router.ts      # Message routing + template rendering
+│   ├── hooks/
+│   │   └── engine.ts              # HookEngine — pre/post lifecycle hooks
 │   ├── models/
 │   │   └── schemas.ts             # Zod schemas (Instance, Task, Message, ChainDef, EvalDecision)
 │   └── utils/
-│       ├── exec.ts                # Shell execution (execWithTee)
-│       └── logger.ts              # Tagged logger (+ --debug mode)
+│       ├── exec.ts                # Shell execution (execWithTee, execWithStreaming, execAndCapture)
+│       ├── logger.ts              # Tagged logger (+ --debug mode)
+│       ├── output.ts              # JSON output helper
+│       └── console-capture.ts     # Console redirect to file (for TUI)
 ├── templates/                     # Prompt and memory templates (v0.4)
 │   ├── agents/                    #   7 Worker prompt templates
 │   └── claude-memory/             #   6 CLAUDE.md directory memory templates
@@ -317,9 +323,9 @@ npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt rendering ve
 │   │       └── design.md          #   Worker initialization + directory memory design
 │   └── v0.3/                      #   Archived v0.3 docs
 ├── tests/
-│   ├── unit/                      #   11 test files, 110+ tests
+│   ├── unit/                      #   11 test files
 │   │   └── worker-prompt-rendering.test.ts  # Prompt variable substitution verification
-│   └── integration/               #   Leader-Worker integration tests
+│   └── integration/               #   7 integration test files
 ├── examples-workspace/            # Reference implementation of multi-agent patterns
 ├── docker-compose.yml             # ZooKeeper
 ├── package.json

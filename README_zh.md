@@ -73,7 +73,7 @@ claude-orchestrator run --worker 5
 # CLI 命令（可从任意终端执行）
 claude-orchestrator push-task --title "实现登录接口" --priority 0
 claude-orchestrator send-message --to-name Jerry --content "开始写认证模块了吗？"
-claude-orchestrator list-tasks --status pending
+claude-orchestrator poll-task --status pending
 ```
 
 ---
@@ -84,7 +84,7 @@ claude-orchestrator list-tasks --status pending
 
 | 组件 | 功能 | ZK 魔法 |
 |------|------|---------|
-| **Leader** | 只读 TUI，机械消息/任务路由，合并验证，孤儿任务恢复。不调用 AI。 | `/leader` EPHEMERAL — 同时只有一个 Leader |
+| **Leader** | 只读 TUI，机械消息/任务路由，合并验证，孤儿任务恢复。当 decompose 模板可用时自行处理需求拆解，否则转发给 Planner。 | `/leader` EPHEMERAL — 同时只有一个 Leader |
 | **Worker** | 独立 git worktree，ZK Watch 循环，通过 `claude -p` 自动处理消息，自评估输出，自动提交变更 | EPHEMERAL 临时节点 → 断线自动清理 |
 | **任务队列** | 推送 → 认领 → 完成（或阻塞/失败/重试）。角色匹配优先级排序。 | 顺序节点保证 FIFO，临时节点实现原子锁 |
 | **消息路由** | 点对点消息传递 | 持久顺序节点 + ZK Watch 推送 |
@@ -99,7 +99,7 @@ claude-orchestrator list-tasks --status pending
 
 ### CLI 原生 — 零 MCP 服务器
 
-Leader 和 Worker 各自直连 ZooKeeper。Leader 是纯路由器：转发需求、从 ChainDef JSON 创建任务、机械执行 EvalDecision JSON。所有 AI 智能只在 Worker 端通过 `claude -p` 运行。无 HTTP、无 SSE、无 MCP 协议。
+Leader 和 Worker 各自直连 ZooKeeper。Leader 主要是路由器：当 decompose 模板可用时自行处理需求拆解（否则转发给 Planner），从 ChainDef JSON 创建任务，机械执行 EvalDecision JSON。其他 AI 智能在 Worker 端通过 `claude -p` 运行。无 HTTP、无 SSE、无 MCP 协议。
 
 ### 责任链闭环
 
@@ -120,7 +120,7 @@ Plan → Build → Verify → Review → Accept
 | `push-task` | 创建任务（可指定分配给某人） |
 | `claim-task` | 认领下一个任务 —— 原子操作，不会重复认领 |
 | `complete-task` | 标记任务完成并提交结果 |
-| `list-tasks` | 按状态查看任务 |
+| `poll-task` | 按状态查看任务列表 |
 | `task-block` | 标记任务为阻塞（附原因） |
 | `task-fail` | 标记任务为失败（附原因） |
 | `task-retry` | 重新入队失败任务（retry_count + 1，最多 3 次） |
@@ -249,7 +249,7 @@ node dist/index.js run --worker 3
 ### 运行测试
 
 ```bash
-npm test                    # 全部单元测试（110+）
+npm test                    # 运行全部测试
 npm run test:watch          # Watch 模式
 npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt 渲染验证
 ```
@@ -267,14 +267,15 @@ npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt 渲染验证
 │   ├── leader/                    # Leader 节点
 │   │   ├── index.ts               #   启动 / 关闭编排
 │   │   ├── tui.ts                 #   ANSI TUI + Worker Messages 面板
-│   │   ├── event-bus.ts           #   类型化 EventEmitter（15 个事件）
+│   │   ├── event-bus.ts           #   类型化 EventEmitter（17 个事件）
 │   │   ├── state.ts               #   LeaderState 中心状态
 │   │   ├── monitor.ts             #   WorkerMonitor — 上下线检测
 │   │   ├── orchestrator.ts        #   TaskOrchestrator — 任务生命周期
 │   │   ├── recovery.ts            #   TaskRecovery — 孤儿恢复（最多 3 次重试）
 │   │   ├── watcher.ts             #   LeaderWatcher — 消息处理
-│   │   ├── chain-router.ts        #   ChainRouter — 机械路由（无 AI 调用）
-│   │   └── merge-validator.ts     #   交叉验证 + 合并 Worker 分支
+│   │   ├── chain-router.ts        #   ChainRouter — 机械路由（自行或转发 decompose）
+│   │   ├── merge-validator.ts     #   交叉验证 + 合并 Worker 分支
+│   │   └── stream-tailer.ts       #   StreamTailer — 实时 Worker 日志显示
 │   ├── worker/                    # Worker 节点
 │   │   ├── worktree-initializer.ts#   名称生成、worktree 创建、角色分配
 │   │   ├── child.ts               #   子进程入口
@@ -287,16 +288,21 @@ npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt 渲染验证
 │   │   └── runner.ts              #   ClaudeRunner — CLI 执行封装
 │   ├── zk/
 │   │   ├── client.ts              # ZooKeeper 连接管理
-│   │   └── paths.ts               # ZK 路径常量
+│   │   ├── paths.ts               # ZK 路径常量
+│   │   └── watcher.ts             # ZK Watch 回调封装
 │   ├── modules/
 │   │   ├── registry.ts            # 实例注册
 │   │   ├── task-queue.ts          # 任务队列（push/claim/complete/block/fail/retry）
 │   │   └── message-router.ts      # 消息路由 + 模板渲染
+│   ├── hooks/
+│   │   └── engine.ts              # HookEngine — 生命周期钩子
 │   ├── models/
 │   │   └── schemas.ts             # Zod 模式（Instance, Task, Message, ChainDef, EvalDecision）
 │   └── utils/
-│       ├── exec.ts                # Shell 执行工具（execWithTee）
-│       └── logger.ts              # 标记化日志（+ --debug 模式）
+│       ├── exec.ts                # Shell 执行工具（execWithTee, execWithStreaming, execAndCapture）
+│       ├── logger.ts              # 标记化日志（+ --debug 模式）
+│       ├── output.ts              # JSON 输出辅助
+│       └── console-capture.ts     # 控制台重定向到文件（用于 TUI）
 ├── templates/                     # Prompt 与记忆模板（v0.4）
 │   ├── agents/                    #   7 个 Worker prompt 模板
 │   └── claude-memory/             #   6 个 CLAUDE.md 目录记忆模板
@@ -317,9 +323,9 @@ npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt 渲染验证
 │   │       └── design.md          #   Worker 初始化 + 目录记忆设计
 │   └── v0.3/                      #   存档：v0.3 文档
 ├── tests/
-│   ├── unit/                      #   11 个测试文件，110+ 测试
+│   ├── unit/                      #   11 个测试文件
 │   │   └── worker-prompt-rendering.test.ts  # Prompt 变量替换验证
-│   └── integration/               #   Leader-Worker 集成测试
+│   └── integration/               #   7 个集成测试文件
 ├── examples-workspace/            # 多智能体模式参考实现
 ├── docker-compose.yml             # ZooKeeper
 ├── package.json
