@@ -15,6 +15,7 @@ import {
   type Message,
   type EvalDecision,
 } from "../models/schemas.js";
+import { extractJson } from "../utils/json.js";
 
 const NEXT_LINKS: Record<string, string | null> = {
   plan: "build",
@@ -35,6 +36,7 @@ const LINK_TO_ROLE: Record<string, string> = {
 
 export class ChainRouter {
   private logger = new Logger("ChainRouter");
+  private taskDocTemplate: string | null = null;
 
   constructor(
     private zk: ZkClient,
@@ -72,8 +74,6 @@ export class ChainRouter {
       const logPath = this.runner.logPath(uniqueKey);
 
       const prompt = this.templateEngine.render(template, {
-        name: this.leaderName,
-        preset_role: "leader",
         task_title: msg.task_title ?? "",
         task_description: msg.task_description ?? msg.content,
         task_criteria: msg.task_criteria ?? "",
@@ -82,9 +82,6 @@ export class ChainRouter {
         work_dir: process.cwd(),
         time: new Date().toISOString(),
         content: msg.content,
-        worktree_path: "",
-        worktree_branch: "",
-        instance_id: this.leaderInstanceId,
       });
 
       this.logger.info(`Leader self-processing decompose: "${msg.content.slice(0, 80)}"`);
@@ -96,13 +93,8 @@ export class ChainRouter {
         taskId: msg.id,
       });
 
-      await this.runner.run(prompt, logPath, (line: string) => {
-        this.eventBus.emit({
-          type: "stream_chunk",
-          instanceId: this.leaderInstanceId,
-          line,
-          timestamp: new Date().toLocaleTimeString(),
-        });
+      await this.runner.run(prompt, logPath, {
+        systemPrompt: this.runner.buildIdentityPrompt(),
       });
 
       this.eventBus.emit({
@@ -113,7 +105,7 @@ export class ChainRouter {
 
       try {
         const resultContent = await fs.promises.readFile(resultPath, "utf-8");
-        const cleanedContent = this.extractJson(resultContent);
+        const cleanedContent = extractJson(resultContent);
         const syntheticMsg = createMessage({
           from_instance: this.leaderInstanceId,
           from_name: this.leaderName,
@@ -157,18 +149,11 @@ export class ChainRouter {
     }
   }
 
-  private extractJson(content: string): string {
-    // Strip markdown code fences and extract the first JSON object/array
-    let cleaned = content.trim();
-    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
-    const match = cleaned.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    return match ? match[0].trim() : cleaned;
-  }
 
   private async handleTaskDefinitions(msg: Message): Promise<void> {
     let chainDef;
     try {
-      chainDef = ChainDefSchema.parse(JSON.parse(this.extractJson(msg.content)));
+      chainDef = ChainDefSchema.parse(JSON.parse(extractJson(msg.content)));
     } catch (err) {
       this.logger.error("Failed to parse task definitions", err);
       return;
@@ -198,16 +183,19 @@ export class ChainRouter {
         chainDef.chain_id,
       );
 
+      if (this.taskDocTemplate === null) {
+        this.taskDocTemplate = await this.templateEngine.loadFile("worker-task-doc.md");
+      }
       const docPath = this.runner.taskDocPath(task.id);
-      await fs.promises.writeFile(
-        docPath,
-        `# ${def.title}\n\n` +
-        `**Link**: ${link}\n` +
-        `**Chain**: ${chainDef.chain_id}\n` +
-        `**Priority**: ${def.priority}\n\n` +
-        `## Description\n\n${def.description}\n\n` +
-        `## Completion Criteria\n\n${def.criteria}\n`,
-      );
+      const docContent = this.templateEngine.render(this.taskDocTemplate, {
+        title: def.title,
+        link,
+        chain_id: chainDef.chain_id,
+        priority: String(def.priority),
+        description: def.description,
+        criteria: def.criteria,
+      });
+      await fs.promises.writeFile(docPath, docContent);
 
       createdTasks.set(link, { taskId: task.id, docPath, def });
 
@@ -260,7 +248,7 @@ export class ChainRouter {
     let decision: EvalDecision;
     let parsed = true;
     try {
-      decision = EvalDecisionSchema.parse(JSON.parse(this.extractJson(msg.content)));
+      decision = EvalDecisionSchema.parse(JSON.parse(extractJson(msg.content)));
     } catch {
       parsed = false;
       const currentLink = msg.link!;

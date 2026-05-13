@@ -34,9 +34,20 @@ function makeFakeRunner() {
 function makeFakeTemplateEngine() {
   return {
     get: vi.fn().mockReturnValue(undefined),
-    render: vi.fn(),
+    render: vi.fn().mockImplementation((template: string, vars: Record<string, string>) => {
+      let body = template;
+      for (const [key, value] of Object.entries(vars)) {
+        body = body.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+      }
+      return body;
+    }),
     loadAll: vi.fn(),
-    loadFile: vi.fn(),
+    loadFile: vi.fn().mockImplementation((filename: string) => {
+      if (filename === "worker-task-doc.md") {
+        return "# {{title}}\n\n**Link**: {{link}}\n**Chain**: {{chain_id}}\n**Priority**: {{priority}}\n\n## Description\n\n{{description}}\n\n## Completion Criteria\n\n{{criteria}}\n";
+      }
+      return `Template: ${filename}`;
+    }),
   } as any as TemplateEngine;
 }
 

@@ -77,8 +77,6 @@ export class WorkerWatcher {
     const template = this.templateEngine.get(link);
     const prompt = template
       ? this.templateEngine.render(template, {
-          name: this.instanceName,
-          preset_role: this.instanceRole,
           task_title: (msg.task_title as string) ?? "",
           task_description: (msg.task_description as string) ?? msg.content,
           task_criteria: (msg.task_criteria as string) ?? "",
@@ -87,9 +85,6 @@ export class WorkerWatcher {
           work_dir: this.worktreePath,
           time: new Date().toISOString(),
           content: msg.content,
-          worktree_path: this.worktreePath,
-          worktree_branch: this.worktreeBranch,
-          instance_id: this.instanceId,
         })
       : msg.content;
 
@@ -112,7 +107,9 @@ export class WorkerWatcher {
     };
 
     this.hooks.fire("worker_message_start", hookCtx);
-    const result = await this.runner.run(prompt, logPath);
+    const result = await this.runner.run(prompt, logPath, {
+      systemPrompt: this.runner.buildIdentityPrompt(),
+    });
     this.hooks.fire("worker_message_end", { ...hookCtx, logPath, exitCode: result.code });
 
     // Auto-commit changes for chain-link tasks
@@ -122,11 +119,11 @@ export class WorkerWatcher {
         link,
         taskTitle: (msg.task_title as string) ?? link,
         taskDescription: (msg.task_description as string) ?? msg.content,
-      });
+      }, result.sessionId);
     }
 
     if (link !== "_generic") {
-      await this.sendCompletionReport(link, msg, resultPath, uniqueKey, commitResult);
+      await this.sendCompletionReport(link, msg, resultPath, uniqueKey, commitResult, result.sessionId);
     }
 
     try {
@@ -146,6 +143,7 @@ export class WorkerWatcher {
     resultPath: string,
     uniqueKey: string,
     commitResult: CommitResult | null = null,
+    mainSessionId?: string,
   ): Promise<void> {
     try {
       let reportContent: string;
@@ -166,7 +164,7 @@ export class WorkerWatcher {
           task_doc_path: (msg.task_doc_path as string) ?? "",
           content: msg.content as string,
         };
-        reportContent = await this.evaluator.evaluate(link, msgVars, resultPath, uniqueKey);
+        reportContent = await this.evaluator.evaluate(link, msgVars, resultPath, uniqueKey, mainSessionId);
       } else {
         reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}\nTask completed.`;
       }

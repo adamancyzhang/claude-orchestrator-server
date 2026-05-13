@@ -64,7 +64,8 @@ function makeMockRunner() {
     resultPath: vi.fn().mockReturnValue("/tmp/test-result.md"),
     evalLogPath: vi.fn().mockReturnValue("/tmp/test-eval.log"),
     evalResultPath: vi.fn().mockReturnValue("/tmp/test-eval-result.md"),
-    run: vi.fn().mockResolvedValue({ code: 0 }),
+    run: vi.fn().mockResolvedValue({ code: 0, sessionId: "mock-session-001" }),
+    buildIdentityPrompt: vi.fn().mockReturnValue("## Worker Identity\nYou are **test-worker**, a **builder**..."),
   } as any;
 }
 

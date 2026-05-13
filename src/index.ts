@@ -57,8 +57,9 @@ program
   .command("run")
   .description("One-shot orchestration: setup environment, start TUI, register Workers")
   .requiredOption("--worker <n>", "Number of Workers", parseInt)
+  .option("-y, --yes", "Skip interactive prompts, auto-approve based on history")
   .action(async function (this: Command) {
-    const { worker } = getSubOpts<{ worker: number }>(this);
+    const { worker, yes } = getSubOpts<{ worker: number; yes?: boolean }>(this);
     const debug = getDebug(this);
     if (debug) Logger.enableDebug();
     const config = loadConfig({ zookeeper: getZkHosts(this) });
@@ -68,6 +69,7 @@ program
       workerCount: worker,
       name: undefined,
       debug,
+      yFlag: !!yes,
     });
   });
 

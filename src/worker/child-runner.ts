@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { ZkClient } from "../zk/client.js";
 import { InstanceRegistry } from "../modules/registry.js";
@@ -64,17 +65,34 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
   }
 
   // 5. Initialize modules
+  const projectRoot = path.resolve(config.worktreePath, "..", "..", "..");
+  const distTemplateDir = path.join(projectRoot, "dist", "templates");
+  const srcTemplateDir = path.join(projectRoot, "templates");
+  const builtinTemplateDir = fs.existsSync(distTemplateDir) ? distTemplateDir : srcTemplateDir;
+  const builtinAgentsDir = path.join(builtinTemplateDir, "agents");
   const agentsDir = path.join(config.worktreePath, ".claude-orchestrator", "agents");
+  const templateEngine = new TemplateEngine(agentsDir, builtinAgentsDir);
+  await templateEngine.loadAll();
+
+  const identity = {
+    name: config.name,
+    role: config.role,
+    worktreePath: config.worktreePath,
+    worktreeBranch: config.branch,
+    instanceId: config.instanceId,
+  };
   const runner = new ClaudeRunner(
     config.cliCommand,
     config.cacheDir,
     leaderInstanceId,
     config.worktreePath,
+    identity,
+    undefined, // identityTemplate — not needed, buildIdentityPrompt() is used instead
+    undefined, // onChunk — Worker uses quiet mode, no streaming callback
     true, // quiet mode — don't corrupt the orchestrator TUI
   );
 
-  const templateEngine = new TemplateEngine(agentsDir);
-  const evaluator = new SelfEvaluator(templateEngine, runner, config.name, config.role);
+  const evaluator = new SelfEvaluator(templateEngine, runner);
   const commitChecker = new CommitChecker(config.worktreePath, runner);
   const hooks = new HookEngine();
 

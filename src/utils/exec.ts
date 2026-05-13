@@ -2,53 +2,38 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-export async function execWithTee(
-  command: string,
-  message: string,
-  logPath: string,
-  cwd?: string,
-  quiet?: boolean,
-): Promise<{ code: number }> {
-  await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
-
-  const escapedMsg = message.replace(/'/g, "'\\''");
-  const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
-
-  const msgPreview = message.length > 100 ? message.slice(0, 100) + "..." : message;
-  if (!quiet) {
-    console.log(`\n[Exec] ${command} -p '${msgPreview}' | tee -a '${logPath}'`);
+function extractSessionId(line: string): string | null {
+  try {
+    const obj = JSON.parse(line);
+    return obj.session_id || null;
+  } catch {
+    return null;
   }
+}
 
-  return new Promise((resolve) => {
-    const child = spawn("sh", ["-c", shellCmd], {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env },
-    });
-
-    child.stdout?.on("data", (d: Buffer) => {
-      if (!quiet) process.stdout.write(d);
-    });
-    child.stderr?.on("data", (d: Buffer) => {
-      if (!quiet) process.stderr.write(d);
-    });
-    child.on("exit", (code) => resolve({ code: code ?? -1 }));
-    child.on("error", () => resolve({ code: -1 }));
-  });
+function escapeShell(s: string): string {
+  return s.replace(/'/g, "'\\''");
 }
 
 export async function execWithStreaming(
   command: string,
   message: string,
   logPath: string,
-  onChunk: (line: string) => void,
+  systemPrompt?: string,
+  onChunk?: (line: string) => void,
   cwd?: string,
   quiet?: boolean,
-): Promise<{ code: number }> {
+): Promise<{ code: number; sessionId?: string }> {
   await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
 
-  const escapedMsg = message.replace(/'/g, "'\\''");
-  const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
+  const escapedMsg = escapeShell(message);
+
+  let flags = `--output-format stream-json --verbose`;
+  if (systemPrompt) {
+    flags += ` --append-system-prompt '${escapeShell(systemPrompt)}'`;
+  }
+
+  const shellCmd = `exec ${command} ${flags} -p '${escapedMsg}' | tee -a '${escapeShell(logPath)}'`;
 
   if (!quiet) {
     const msgPreview = message.length > 100 ? message.slice(0, 100) + "..." : message;
@@ -63,6 +48,8 @@ export async function execWithStreaming(
     });
 
     let partial = "";
+    let sessionId: string | undefined;
+
     child.stdout?.on("data", (d: Buffer) => {
       const text = d.toString();
       if (!quiet) process.stdout.write(text);
@@ -70,51 +57,22 @@ export async function execWithStreaming(
       const lines = partial.split("\n");
       partial = lines.pop() ?? "";
       for (const line of lines) {
-        if (line.length > 0) onChunk(line);
+        if (line.length > 0) {
+          if (!sessionId) sessionId = extractSessionId(line) ?? undefined;
+          onChunk?.(line);
+        }
       }
     });
     child.stderr?.on("data", (d: Buffer) => {
       if (!quiet) process.stderr.write(d);
     });
     child.on("exit", (code) => {
-      if (partial.length > 0) onChunk(partial);
-      resolve({ code: code ?? -1 });
+      if (partial.length > 0) {
+        if (!sessionId) sessionId = extractSessionId(partial) ?? undefined;
+        onChunk?.(partial);
+      }
+      resolve({ code: code ?? -1, sessionId });
     });
     child.on("error", () => resolve({ code: -1 }));
-  });
-}
-
-export async function execAndCapture(
-  command: string,
-  message: string,
-  logPath: string,
-  cwd?: string,
-  quiet?: boolean,
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  await fs.promises.mkdir(path.dirname(logPath), { recursive: true });
-
-  const escapedMsg = message.replace(/'/g, "'\\''");
-  const shellCmd = `exec ${command} -p '${escapedMsg}' | tee -a '${logPath}'`;
-
-  return new Promise((resolve) => {
-    const child = spawn("sh", ["-c", shellCmd], {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env },
-    });
-
-    let stdout = "", stderr = "";
-    child.stdout?.on("data", (d: Buffer) => {
-      const s = d.toString();
-      stdout += s;
-      if (!quiet) process.stdout.write(s);
-    });
-    child.stderr?.on("data", (d: Buffer) => {
-      const s = d.toString();
-      stderr += s;
-      if (!quiet) process.stderr.write(s);
-    });
-    child.on("exit", (code) => resolve({ code: code ?? -1, stdout, stderr }));
-    child.on("error", (err) => resolve({ code: -1, stdout, stderr: err.message }));
   });
 }

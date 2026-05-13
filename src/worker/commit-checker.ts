@@ -16,13 +16,17 @@ export class CommitChecker {
   constructor(
     private worktreePath: string,
     private runner: ClaudeRunner,
+    private commitMsgTemplate?: string,
   ) {}
 
-  async check(taskContext: {
-    link: string;
-    taskTitle: string;
-    taskDescription: string;
-  }): Promise<CommitResult | null> {
+  async check(
+    taskContext: {
+      link: string;
+      taskTitle: string;
+      taskDescription: string;
+    },
+    resumeSessionId?: string,
+  ): Promise<CommitResult | null> {
     try {
       const statusOutput = execSync("git status --porcelain", {
         cwd: this.worktreePath,
@@ -37,7 +41,7 @@ export class CommitChecker {
 
       const { changed, untracked } = this.parseStatus(statusOutput);
 
-      const commitMsg = await this.generateCommitMessage(changed, untracked, taskContext);
+      const commitMsg = await this.generateCommitMessage(changed, untracked, taskContext, resumeSessionId);
 
       execSync("git add -A", { cwd: this.worktreePath, stdio: "pipe" });
       execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, {
@@ -81,25 +85,18 @@ export class CommitChecker {
     changed: string[],
     untracked: string[],
     ctx: { link: string; taskTitle: string; taskDescription: string },
+    resumeSessionId?: string,
   ): Promise<string> {
-    const prompt = [
-      "## Commit Task",
-      "",
-      "Changed files:",
-      ...changed.map(f => `  ${f}`),
-      "",
-      "Untracked files:",
-      ...untracked.map(f => `  ${f}`),
-      "",
-      `Task: ${ctx.taskTitle} (${ctx.link})`,
-      "",
-      "Generate a concise git commit message (single line, under 72 chars).",
-      "Output ONLY the commit message.",
-    ].join("\n");
+    const template = this.commitMsgTemplate ?? "";
+    const prompt = template
+      .replace(/\{\{changed_files\}\}/g, changed.map(f => `  ${f}`).join("\n"))
+      .replace(/\{\{untracked_files\}\}/g, untracked.map(f => `  ${f}`).join("\n"))
+      .replace(/\{\{task_title\}\}/g, ctx.taskTitle)
+      .replace(/\{\{link\}\}/g, ctx.link);
 
     const uniqueKey = `commit-${Date.now().toString(36)}`;
     const logPath = this.runner.logPath(uniqueKey);
-    await this.runner.run(prompt, logPath);
+    await this.runner.run(prompt, logPath, { resumeSessionId });
 
     try {
       const output = await fs.promises.readFile(logPath, "utf-8");

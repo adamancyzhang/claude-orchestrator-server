@@ -22,6 +22,23 @@ export interface HooksConfig {
   worker_message_end?: string | null;
 }
 
+export type StepAction = "created" | "updated" | "replaced" | "skipped" | "rejected" | "completed" | "failed";
+
+export interface StepRecord {
+  action: StepAction;
+  timestamp: string;
+  reason?: string;
+}
+
+export interface InitStatus {
+  global_config?: StepRecord;
+  user_claude_md?: StepRecord;
+  team_claude_md?: StepRecord;
+  skills?: Record<string, StepRecord>;
+  worktrees?: Record<string, StepRecord>;
+  npm_install?: Record<string, StepRecord>;
+}
+
 export interface InstanceConfig {
   instance_id?: string;
   name?: string;
@@ -31,6 +48,7 @@ export interface InstanceConfig {
   cache_dir?: string;
   zookeeper?: ZkConfig;
   worktree?: Record<string, { name: string; role: string; path: string; branch: string; instance_id: string }>;
+  init_status?: InitStatus;
 }
 
 export interface ResolvedConfig {
@@ -60,7 +78,7 @@ function defaultCacheDir(): string {
 }
 
 function defaultCliCommand(): string {
-  return "claude --dangerously-skip-permissions --permission-mode dontAsk --output-format stream-json";
+  return "claude --dangerously-skip-permissions --permission-mode dontAsk";
 }
 
 export function loadConfig(cliOpts: {
@@ -188,6 +206,29 @@ export function saveProjectWorktreeConfig(
     record = entries;
   }
   saveInstanceConfig({ worktree: record }, false);
+}
+
+export function loadInitStatus(): InitStatus {
+  const global = loadGlobalConfig();
+  return (global.init_status as InitStatus) ?? {};
+}
+
+export function saveInitStatusStep(
+  stepId: string,
+  record: StepRecord,
+  subId?: string,
+): void {
+  const global = loadGlobalConfig();
+  const status: InitStatus = (global.init_status as InitStatus) ?? {};
+  if (subId) {
+    (status as Record<string, StepRecord | Record<string, StepRecord>>)[stepId] = {
+      ...((status as Record<string, StepRecord | Record<string, StepRecord>>)[stepId] as Record<string, StepRecord>),
+      [subId]: record,
+    };
+  } else {
+    (status as Record<string, StepRecord>)[stepId] = record;
+  }
+  saveInstanceConfig({ init_status: status } as InstanceConfig, true);
 }
 
 export function expandHomeDir(p: string): string {

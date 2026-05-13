@@ -67,15 +67,15 @@ export async function startLeader(config: {
   // Redirect all console output to file so TUI controls the screen
   captureConsoleToFile(resolvedConfig.cacheDir);
 
-  // Initialize ClaudeRunner with real CLI command for leader task execution
-  const cacheRunner = new ClaudeRunner(
-    resolvedConfig.cliCommand,
-    resolvedConfig.cacheDir,
-    instance.id,
-    process.cwd(),
-  );
+  // Initialize EventBus + State
+  const eventBus = new LeaderEventBus();
+  const state = new LeaderState();
+  state.leaderName = leaderName;
+  state.leaderInstanceId = instance.id;
+  state.cacheDir = resolvedConfig.cacheDir;
+  eventBus.onAll((event) => state.apply(event));
 
-  // Initialize TemplateEngine for leader decompose handling
+  // Initialize TemplateEngine first — needed for identity and merge templates
   const projectRoot = process.cwd();
   const distTemplateDir = path.join(projectRoot, "dist", "templates");
   const srcTemplateDir = path.join(projectRoot, "templates");
@@ -83,15 +83,33 @@ export async function startLeader(config: {
   const agentsDir = path.join(templateDir, "agents");
   const templateEngine = new TemplateEngine(agentsDir);
   await templateEngine.loadAll();
+  const identityTemplate = await templateEngine.loadFile("worker-identity.md");
+  const mergeDecisionTemplate = await templateEngine.loadFile("worker-merge-decision.md");
 
-  // Initialize EventBus + State
-  const eventBus = new LeaderEventBus();
-  const state = new LeaderState();
-  state.leaderName = leaderName;
-  state.leaderInstanceId = instance.id;
-  state.cacheDir = resolvedConfig.cacheDir;
-
-  eventBus.onAll((event) => state.apply(event));
+  // Initialize ClaudeRunner with streaming callback for TUI
+  const leaderIdentity = {
+    name: leaderName,
+    role: "leader",
+    worktreePath: process.cwd(),
+    worktreeBranch: "",
+    instanceId: instance.id,
+  };
+  const cacheRunner = new ClaudeRunner(
+    resolvedConfig.cliCommand,
+    resolvedConfig.cacheDir,
+    instance.id,
+    process.cwd(),
+    leaderIdentity,
+    identityTemplate,
+    (line: string) => {
+      eventBus.emit({
+        type: "stream_chunk",
+        instanceId: instance.id,
+        line,
+        timestamp: new Date().toLocaleTimeString(),
+      });
+    },
+  );
 
   // StreamTailer for cross-process file-based streaming
   const streamTailer = new StreamTailer();
@@ -137,7 +155,7 @@ export async function startLeader(config: {
   const messageRouter = new MessageRouter(zk);
 
   // Initialize MergeValidator
-  const mergeValidator = new MergeValidator(process.cwd(), cacheRunner, eventBus);
+  const mergeValidator = new MergeValidator(process.cwd(), cacheRunner, eventBus, mergeDecisionTemplate);
 
   const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, cacheRunner, templateEngine, mergeValidator);
 

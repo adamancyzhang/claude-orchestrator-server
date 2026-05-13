@@ -1,8 +1,16 @@
 import * as fs from "node:fs";
 import path from "node:path";
-import { execWithTee, execWithStreaming } from "../utils/exec.js";
+import { execWithStreaming } from "../utils/exec.js";
 import { expandHomeDir } from "../config.js";
 import { Logger } from "../utils/logger.js";
+
+export interface WorkerIdentity {
+  name: string;
+  role: string;
+  worktreePath: string;
+  worktreeBranch: string;
+  instanceId: string;
+}
 
 export class ClaudeRunner {
   private logger = new Logger("ClaudeRunner");
@@ -13,6 +21,9 @@ export class ClaudeRunner {
     private cacheDir: string,
     private leaderInstanceId: string,
     private workDir: string,
+    private identity: WorkerIdentity,
+    private identityTemplate?: string,
+    private onChunk?: (line: string) => void,
     private quiet = false,
   ) {
     this.resolvedCache = expandHomeDir(path.join(this.cacheDir, this.leaderInstanceId));
@@ -56,14 +67,36 @@ export class ClaudeRunner {
     return path.join(dir, `${uniqueKey}-eval-result.md`);
   }
 
-  async run(prompt: string, logPath: string, onStreamChunk?: (line: string) => void): Promise<{ code: number }> {
+  buildIdentityPrompt(): string {
+    if (!this.identityTemplate) return "";
+    return this.identityTemplate
+      .replace(/\{\{name\}\}/g, this.identity.name)
+      .replace(/\{\{role\}\}/g, this.identity.role)
+      .replace(/\{\{worktreePath\}\}/g, this.identity.worktreePath)
+      .replace(/\{\{worktreeBranch\}\}/g, this.identity.worktreeBranch)
+      .replace(/\{\{instanceId\}\}/g, this.identity.instanceId);
+  }
+
+  async run(
+    prompt: string,
+    logPath: string,
+    opts?: {
+      systemPrompt?: string;
+      resumeSessionId?: string;
+      forkSession?: boolean;
+    },
+  ): Promise<{ code: number; sessionId?: string }> {
     if (Logger.isDebug()) {
       this.logger.debug(`Prompt (${prompt.length} chars):\n${prompt.slice(0, 1000)}${prompt.length > 1000 ? "\n... (truncated)" : ""}`);
       this.logger.debug(`Log: ${logPath}`);
     }
-    if (onStreamChunk) {
-      return execWithStreaming(this.command, prompt, logPath, onStreamChunk, this.workDir, this.quiet);
+    let cmd = this.command;
+    if (opts?.resumeSessionId) {
+      cmd = `${cmd} --resume ${opts.resumeSessionId}`;
+      if (opts?.forkSession) {
+        cmd = `${cmd} --fork-session`;
+      }
     }
-    return execWithTee(this.command, prompt, logPath, this.workDir, this.quiet);
+    return execWithStreaming(cmd, prompt, logPath, opts?.systemPrompt, this.onChunk, this.workDir, this.quiet);
   }
 }

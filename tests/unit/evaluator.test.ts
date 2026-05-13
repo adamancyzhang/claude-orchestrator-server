@@ -11,17 +11,23 @@ function makeMockTemplateEngine() {
     loadFile: vi.fn(),
     render: vi.fn(),
   } as any as TemplateEngine;
-  // Default: loadFile returns a minimal eval template
-  engine.loadFile.mockResolvedValue("Eval template: {{name}} {{link}} {{task_title}}");
+  // Default: loadFile returns appropriate content based on filename
+  engine.loadFile.mockImplementation((filename: string) => {
+    if (filename === "worker-evaluate-format-hint.md") {
+      return "## IMPORTANT: Format Correction\nYour previous output was invalid.";
+    }
+    return "Eval template: {{name}} {{link}} {{task_title}}";
+  });
   engine.render.mockReturnValue("rendered eval prompt");
   return engine;
 }
 
 function makeMockRunner() {
   return {
-    run: vi.fn().mockResolvedValue({ code: 0 }),
+    run: vi.fn().mockResolvedValue({ code: 0, sessionId: "mock-session-001" }),
     evalResultPath: vi.fn().mockReturnValue("/tmp/eval-result.json"),
     evalLogPath: vi.fn().mockReturnValue("/tmp/eval.log"),
+    buildIdentityPrompt: vi.fn().mockReturnValue("## Worker Identity\nYou are **TestWorker**, a **builder**..."),
   } as any as ClaudeRunner;
 }
 
@@ -41,7 +47,7 @@ describe("SelfEvaluator", () => {
   beforeEach(() => {
     engine = makeMockTemplateEngine();
     runner = makeMockRunner();
-    evaluator = new SelfEvaluator(engine, runner, "TestWorker", "builder");
+    evaluator = new SelfEvaluator(engine, runner);
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "eval-test-"));
   });
 
@@ -88,19 +94,10 @@ describe("SelfEvaluator", () => {
       expect(parsed.decision).toBe("activate_next");
     });
 
-    it("uses fallback template when worker-evaluate.md not found", async () => {
-      engine.loadFile.mockRejectedValue(new Error("not found"));
-      engine.render.mockReturnValue("fallback rendered");
-      runner.evalResultPath.mockReturnValue(path.join(tmpDir, "eval-result.json"));
-
-      fs.writeFileSync(
-        path.join(tmpDir, "eval-result.json"),
-        JSON.stringify({ decision: "close_chain", reason: "Complete" })
-      );
-
-      const result = await evaluator.evaluate("accept", {}, "/tmp/result.md", "test");
-      const parsed = JSON.parse(result);
-      expect(parsed.decision).toBe("close_chain");
+    it("throws when worker-evaluate.md not found and no builtin fallback", async () => {
+      engine.loadFile.mockRejectedValue(new Error("Template worker-evaluate.md not found"));
+      await expect(evaluator.evaluate("accept", {}, "/tmp/result.md", "test"))
+        .rejects.toThrow("not found");
     });
   });
 

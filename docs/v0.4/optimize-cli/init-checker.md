@@ -1,8 +1,12 @@
 # 交互式初始化检查器
 
+> **Status: ✅ Implemented** (2026-05-13)
+>
+> 核心模块 `src/orchestrator/init-checker.ts` 已实现。`run` 命令支持 `-y` / `--yes` flag。
+
 ## 问题
 
-当前 `ensureEnvironment()` (`src/orchestrator/run.ts:74-140`) 在 `run` 命令启动时静默执行所有初始化操作：
+当前 `ensureEnvironment()` (`src/orchestrator/run.ts`) 在 `run` 命令启动时静默执行所有初始化操作：
 
 1. 创建/更新 `~/.claude-orchestrator/config.json`
 2. 复制 team CLAUDE.md 到项目根
@@ -336,11 +340,17 @@ $ claude-orchestrator run --worker 5
 Leader TUI starting...
 ```
 
+## 实施注意事项
+
+- 当前 `src/orchestrator/run.ts` 的 `ensureEnvironment()` 已包含部分初始化逻辑（global config、team CLAUDE.md、skills 复制），但缺少交互确认和 `init_status` 持久化
+- `src/config.ts` 的 `InstanceConfig` 接口需要扩展 `init_status` 字段
+- `src/index.ts` 的 `run` 命令当前不支持 `-y` flag，需新增
+- Step 2（user_claude_md）是全新步骤，首次执行时若 `~/.claude/CLAUDE.md` 已存在会进入 Danger 确认
+
 ## 兼容性
 
 - `-y` flag 可选，不传时走交互模式
 - `init_status` 是新字段，旧版 config.json 不存在时视为空对象，不影响现有逻辑
-- Step 2（user_claude_md）是新增步骤，首次执行时若 `~/.claude/CLAUDE.md` 已存在会进入 Danger 确认
 - 所有交互输入均支持 `Ctrl+C` 终止
 
 ## 收益

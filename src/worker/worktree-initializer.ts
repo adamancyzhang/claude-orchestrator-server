@@ -140,6 +140,9 @@ async function ensureWorktreeEnvironment(
       "worker-decompose.md", "worker-evaluate.md",
       "worker-plan.md", "worker-build.md", "worker-verify.md",
       "worker-review.md", "worker-accept.md",
+      "worker-identity.md", "worker-merge-decision.md",
+      "worker-commit-message.md", "worker-evaluate-format-hint.md",
+      "worker-task-doc.md",
     ];
     for (const filename of templates) {
       const src = path.join(templateDir, "agents", filename);
