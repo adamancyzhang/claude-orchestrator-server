@@ -127,12 +127,8 @@ export class WorkerWatcher {
       await this.sendCompletionReport(link, msg, resultPath, uniqueKey, commitResult, result.sessionId);
     }
 
-    try {
-      msg.read = true;
-      await this.zk.updateMessage(this.instanceId, msgId, msg as unknown as Record<string, unknown>);
-    } catch (err) {
-      this.logger.warn(`Failed to mark message as read: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    msg.read = true;
+    await this.zk.updateMessage(this.instanceId, msgId, msg as unknown as Record<string, unknown>);
 
     this.inFlight.delete(msgId);
     this.logger.info(`Done. Log: ${logPath}`);
@@ -146,67 +142,56 @@ export class WorkerWatcher {
     commitResult: CommitResult | null = null,
     mainSessionId?: string,
   ): Promise<void> {
-    try {
-      let reportContent: string;
-      let reportLink = link;
+    let reportContent: string;
+    let reportLink = link;
 
-      if (link === "decompose") {
-        try {
-          reportContent = await fs.promises.readFile(resultPath, "utf-8");
-          reportLink = "task_defs";
-        } catch (err) {
-          this.logger.warn(`Failed to read decompose result, using fallback: ${err instanceof Error ? err.message : String(err)}`);
-          reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}`;
-        }
-      } else if (CHAIN_LINKS.includes(link)) {
-        const msgVars: Record<string, string> = {
-          task_title: (msg.task_title as string) ?? "",
-          task_description: (msg.task_description as string) ?? "",
-          task_criteria: (msg.task_criteria as string) ?? "",
-          task_doc_path: (msg.task_doc_path as string) ?? "",
-          content: msg.content as string,
-        };
-        reportContent = await this.evaluator.evaluate(link, msgVars, resultPath, uniqueKey, mainSessionId);
-      } else {
-        reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}\nTask completed.`;
-      }
-
-      // Inject commit info into report content if available
-      if (commitResult) {
-        try {
-          const reportJson = JSON.parse(reportContent);
-          reportJson.commit = {
-            sha: commitResult.sha,
-            message: commitResult.message,
-            branch: this.worktreeBranch,
-            changed_files: commitResult.changedFiles,
-            untracked_files: commitResult.untrackedFiles,
-          };
-          reportContent = JSON.stringify(reportJson);
-        } catch {
-          // Content is not JSON, append commit info as plain text
-          this.logger.debug("Report content is not JSON, appending commit info as text");
-          reportContent += `\nCommit: ${commitResult.sha.slice(0, 7)} - ${commitResult.message}`;
-        }
-      }
-
-      await this.zk.createMessage(this.leaderInstanceId, {
-        type: "direct",
-        from_instance: this.instanceId,
-        from_name: this.instanceName,
-        from_role: this.instanceRole,
-        to_instance: this.instanceId,
-        content: reportContent,
-        created_at: new Date().toISOString(),
-        read: false,
-        result_path: resultPath,
-        link: reportLink,
-        chain_id: msg.chain_id as string ?? null,
-      });
-      this.logger.info("Completion report sent.");
-    } catch (err) {
-      this.logger.error("Failed to send completion report", err);
+    if (link === "decompose") {
+      reportContent = await fs.promises.readFile(resultPath, "utf-8");
+      reportLink = "task_defs";
+    } else if (CHAIN_LINKS.includes(link)) {
+      const msgVars: Record<string, string> = {
+        task_title: (msg.task_title as string) ?? "",
+        task_description: (msg.task_description as string) ?? "",
+        task_criteria: (msg.task_criteria as string) ?? "",
+        task_doc_path: (msg.task_doc_path as string) ?? "",
+        content: msg.content as string,
+      };
+      reportContent = await this.evaluator.evaluate(link, msgVars, resultPath, uniqueKey, mainSessionId);
+    } else {
+      reportContent = `Link: ${link}\nStatus: completed\nResult Path: ${resultPath}\nTask completed.`;
     }
+
+    // Inject commit info into report content if available
+    if (commitResult) {
+      if (reportContent.trim().startsWith("{")) {
+        const reportJson = JSON.parse(reportContent);
+        reportJson.commit = {
+          sha: commitResult.sha,
+          message: commitResult.message,
+          branch: this.worktreeBranch,
+          changed_files: commitResult.changedFiles,
+          untracked_files: commitResult.untrackedFiles,
+        };
+        reportContent = JSON.stringify(reportJson);
+      } else {
+        reportContent += `\nCommit: ${commitResult.sha.slice(0, 7)} - ${commitResult.message}`;
+      }
+    }
+
+    await this.zk.createMessage(this.leaderInstanceId, {
+      type: "direct",
+      from_instance: this.instanceId,
+      from_name: this.instanceName,
+      from_role: this.instanceRole,
+      to_instance: this.instanceId,
+      content: reportContent,
+      created_at: new Date().toISOString(),
+      read: false,
+      result_path: resultPath,
+      link: reportLink,
+      chain_id: msg.chain_id as string ?? null,
+    });
+    this.logger.info("Completion report sent.");
   }
 
   stop(): void {

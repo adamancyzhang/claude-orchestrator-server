@@ -27,40 +27,35 @@ export class CommitChecker {
     },
     resumeSessionId?: string,
   ): Promise<CommitResult | null> {
-    try {
-      const statusOutput = execSync("git status --porcelain", {
-        cwd: this.worktreePath,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+    const statusOutput = execSync("git status --porcelain", {
+      cwd: this.worktreePath,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
-      if (!statusOutput.trim()) {
-        this.logger.info("No changes to commit");
-        return null;
-      }
-
-      const { changed, untracked } = this.parseStatus(statusOutput);
-
-      const commitMsg = await this.generateCommitMessage(changed, untracked, taskContext, resumeSessionId);
-
-      execSync("git add -A", { cwd: this.worktreePath, stdio: "pipe" });
-      execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, {
-        cwd: this.worktreePath,
-        stdio: "pipe",
-      });
-
-      const sha = execSync("git rev-parse HEAD", {
-        cwd: this.worktreePath,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-
-      this.logger.info(`Committed ${sha.slice(0, 7)}: ${commitMsg}`);
-      return { sha, message: commitMsg, changedFiles: changed, untrackedFiles: untracked };
-    } catch (err) {
-      this.logger.error("Commit check failed", err);
+    if (!statusOutput.trim()) {
+      this.logger.info("No changes to commit");
       return null;
     }
+
+    const { changed, untracked } = this.parseStatus(statusOutput);
+
+    const commitMsg = await this.generateCommitMessage(changed, untracked, taskContext, resumeSessionId);
+
+    execSync("git add -A", { cwd: this.worktreePath, stdio: "pipe" });
+    execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, {
+      cwd: this.worktreePath,
+      stdio: "pipe",
+    });
+
+    const sha = execSync("git rev-parse HEAD", {
+      cwd: this.worktreePath,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    this.logger.info(`Committed ${sha.slice(0, 7)}: ${commitMsg}`);
+    return { sha, message: commitMsg, changedFiles: changed, untrackedFiles: untracked };
   }
 
   private parseStatus(statusOutput: string): { changed: string[]; untracked: string[] } {
@@ -98,12 +93,7 @@ export class CommitChecker {
     const logPath = this.runner.logPath(uniqueKey);
     await this.runner.run(prompt, logPath, { resumeSessionId });
 
-    try {
-      const output = await fs.promises.readFile(logPath, "utf-8");
-      return output.trim().split("\n")[0].slice(0, 72);
-    } catch (err) {
-      this.logger.warn(`Failed to read commit message from log, using fallback: ${err instanceof Error ? err.message : String(err)}`);
-      return `chore: auto-commit ${ctx.link} task`;
-    }
+    const output = await fs.promises.readFile(logPath, "utf-8");
+    return output.trim().split("\n")[0].slice(0, 72);
   }
 }

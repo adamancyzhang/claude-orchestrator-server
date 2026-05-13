@@ -73,12 +73,8 @@ export class LeaderWatcher {
 
     await this.chainRouter.route(msg);
 
-    try {
-      msg.read = true;
-      await this.zk.updateMessage(this.leaderInstanceId, msgId, msg as unknown as Record<string, unknown>);
-    } catch (err) {
-      this.logger.warn(`Failed to mark message as read: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    msg.read = true;
+    await this.zk.updateMessage(this.leaderInstanceId, msgId, msg as unknown as Record<string, unknown>);
 
     this.inFlight.delete(msgId);
     this.eventBus.emit({ type: "message_processed", msgId });

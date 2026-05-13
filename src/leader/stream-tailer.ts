@@ -32,27 +32,24 @@ export class StreamTailer {
 
   private poll(): void {
     if (!this.activeFile || !this.onLine) return;
-    try {
-      const stat = fs.statSync(this.activeFile);
-      if (stat.size <= this.lastPosition) {
-        if (stat.size < this.lastPosition) {
-          this.lastPosition = 0;
-        }
-        return;
+    if (!fs.existsSync(this.activeFile)) return;
+    const stat = fs.statSync(this.activeFile);
+    if (stat.size <= this.lastPosition) {
+      if (stat.size < this.lastPosition) {
+        this.lastPosition = 0;
       }
-      const fd = fs.openSync(this.activeFile, "r");
-      const buf = Buffer.alloc(stat.size - this.lastPosition);
-      fs.readSync(fd, buf, 0, buf.length, this.lastPosition);
-      fs.closeSync(fd);
-      this.lastPosition = stat.size;
+      return;
+    }
+    const fd = fs.openSync(this.activeFile, "r");
+    const buf = Buffer.alloc(stat.size - this.lastPosition);
+    fs.readSync(fd, buf, 0, buf.length, this.lastPosition);
+    fs.closeSync(fd);
+    this.lastPosition = stat.size;
 
-      const content = buf.toString("utf-8");
-      const lines = content.split("\n");
-      for (const line of lines) {
-        if (line.length > 0) this.onLine(line);
-      }
-    } catch {
-      // file not created yet — retry on next poll
+    const content = buf.toString("utf-8");
+    const lines = content.split("\n");
+    for (const line of lines) {
+      if (line.length > 0) this.onLine(line);
     }
   }
 }

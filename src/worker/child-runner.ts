@@ -39,29 +39,21 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
   const instance = await registry.register(config.name, config.role, config.instanceId);
 
   // Update instance with worktree metadata
-  try {
-    await zk.updateInstance(instance.id, {
-      ...(instance as unknown as Record<string, unknown>),
-      worktree_name: config.name,
-      worktree_path: config.worktreePath,
-      worktree_branch: config.branch,
-      pid: process.pid,
-    });
-  } catch (err) {
-    logger.warn(`Failed to update instance metadata: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  await zk.updateInstance(instance.id, {
+    ...(instance as unknown as Record<string, unknown>),
+    worktree_name: config.name,
+    worktree_path: config.worktreePath,
+    worktree_branch: config.branch,
+    pid: process.pid,
+  });
 
   saveInstanceId(instance.id);
 
   // 4. Resolve leader instance ID for cache path
   let leaderInstanceId = instance.id;
-  try {
-    const leaderData = await zk.getLeader();
-    if (leaderData?.instance_id) {
-      leaderInstanceId = leaderData.instance_id as string;
-    }
-  } catch (err) {
-    logger.warn(`Failed to get leader, using own instance id: ${err instanceof Error ? err.message : String(err)}`);
+  const leaderData = await zk.getLeader();
+  if (leaderData?.instance_id) {
+    leaderInstanceId = leaderData.instance_id as string;
   }
 
   // 5. Initialize modules
@@ -132,11 +124,7 @@ export async function startWorkerChild(config: ChildConfig): Promise<void> {
   });
 
   // 9. Cleanup
-  try {
-    await registry.unregister(instance.id);
-  } catch (err) {
-    logger.warn(`Failed to unregister instance on cleanup: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  await registry.unregister(instance.id);
   await zk.disconnect();
   logger.info("Unregistered. Goodbye.");
 }

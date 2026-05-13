@@ -78,12 +78,8 @@ program
   .description("Explicitly unregister an instance")
   .option("--instance-id <id>", "Instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { instanceId } = getSubOpts<{ instanceId?: string }>(this);
       await cmdUnregister(getZkHosts(this), instanceId);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -115,15 +111,11 @@ program
   .requiredOption("--content <text>", "Message content")
   .option("--instance-id <id>", "Sender instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { content, instanceId } = getSubOpts<{
         content: string;
         instanceId?: string;
       }>(this);
       await cmdSendMessage(getZkHosts(this), instanceId, content);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -131,12 +123,8 @@ program
   .description("Check for new messages")
   .option("--instance-id <id>", "Instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { instanceId } = getSubOpts<{ instanceId?: string }>(this);
       await cmdPollMessage(getZkHosts(this), instanceId);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -145,12 +133,8 @@ program
   .requiredOption("--message-id <id>", "Message ID to delete")
   .option("--instance-id <id>", "Instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { messageId, instanceId } = getSubOpts<{ messageId: string; instanceId?: string }>(this);
       await cmdDeleteMessage(getZkHosts(this), instanceId, messageId);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 // ── Task Commands ──
@@ -168,7 +152,6 @@ program
   .option("--blocked-by <ids>", "Comma-separated task IDs blocking this task")
   .option("--instance-id <id>", "Creator instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { title, description, priority, assignee, link, chainId, dependsOn, blockedBy, instanceId } = getSubOpts<{
         title: string;
         description: string;
@@ -183,9 +166,6 @@ program
       const dependsOnArr = dependsOn ? dependsOn.split(",").map(s => s.trim()).filter(Boolean) : undefined;
       const blockedByArr = blockedBy ? blockedBy.split(",").map(s => s.trim()).filter(Boolean) : undefined;
       await cmdPushTask(getZkHosts(this), instanceId, title, description, parseInt(priority), assignee, link, chainId, dependsOnArr, blockedByArr);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -193,12 +173,8 @@ program
   .description("List tasks, optionally filtered by status")
   .option("--status <status>", "Filter: pending, claimed, completed, blocked, failed")
   .action(async function (this: Command) {
-    try {
       const { status } = getSubOpts<{ status?: string }>(this);
       await cmdPollTask(getZkHosts(this), status);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -206,12 +182,8 @@ program
   .description("Claim the highest-priority pending task")
   .option("--instance-id <id>", "Instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { instanceId } = getSubOpts<{ instanceId?: string }>(this);
       await cmdClaimTask(getZkHosts(this), instanceId);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -221,12 +193,8 @@ program
   .requiredOption("--result <text>", "Summary of what was accomplished")
   .option("--instance-id <id>", "Instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { taskId, result, instanceId } = getSubOpts<{ taskId: string; result: string; instanceId?: string }>(this);
       await cmdCompleteTask(getZkHosts(this), instanceId, taskId, result);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -236,12 +204,8 @@ program
   .requiredOption("--reason <text>", "Blocking reason")
   .option("--instance-id <id>", "Instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { taskId, reason, instanceId } = getSubOpts<{ taskId: string; reason: string; instanceId?: string }>(this);
       await cmdTaskBlock(getZkHosts(this), instanceId, taskId, reason);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -251,12 +215,8 @@ program
   .requiredOption("--reason <text>", "Failure reason")
   .option("--instance-id <id>", "Instance ID (default from project config)")
   .action(async function (this: Command) {
-    try {
       const { taskId, reason, instanceId } = getSubOpts<{ taskId: string; reason: string; instanceId?: string }>(this);
       await cmdTaskFail(getZkHosts(this), instanceId, taskId, reason);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 program
@@ -264,12 +224,8 @@ program
   .description("Re-queue a failed task for retry")
   .requiredOption("--task-id <id>", "Task ID to retry")
   .action(async function (this: Command) {
-    try {
       const { taskId } = getSubOpts<{ taskId: string }>(this);
       await cmdTaskRetry(getZkHosts(this), undefined, taskId);
-    } catch (e) {
-      output({ error: String(e) }, true);
-    }
   });
 
 // ── Main entry ──

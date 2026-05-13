@@ -199,19 +199,15 @@ export async function startLeader(config: {
 
   // Wire TUI input to send messages to leader's own queue for processing
   tui.onInput(async (text) => {
-    try {
-      await zk.createMessage(instance.id, {
-        type: "direct",
-        from_instance: instance.id,
-        from_name: leaderName,
-        to_instance: instance.id,
-        content: text,
-        created_at: new Date().toISOString(),
-        read: false,
-      });
-    } catch (err) {
-      logger.warn(`Failed to send TUI message to ZK: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    await zk.createMessage(instance.id, {
+      type: "direct",
+      from_instance: instance.id,
+      from_name: leaderName,
+      to_instance: instance.id,
+      content: text,
+      created_at: new Date().toISOString(),
+      read: false,
+    });
   });
 
   // Block on SIGINT

@@ -31,57 +31,31 @@ export class MergeValidator {
     const merged = this.isCommitMerged(commitInfo.sha, mainBranch);
     if (merged) return { decision: "skip", reason: "Already merged" };
 
-    try {
-      const decision = await this.askMergeDecision(commitInfo, mainBranch);
+    const decision = await this.askMergeDecision(commitInfo, mainBranch);
 
-      if (decision.decision === "merge") {
-        try {
-          const currentBranch = this.execGit("rev-parse --abbrev-ref HEAD");
-          this.execGit(`checkout ${mainBranch}`);
-          this.execGit(
-            `merge ${commitInfo.branch} --no-ff -m "Merge ${commitInfo.branch}: ${commitInfo.message}"`,
-          );
-          this.eventBus.emit({
-            type: "debug_info",
-            message: `Merged: ${commitInfo.branch} -> ${mainBranch}`,
-          });
-          // Switch back
-          try { this.execGit(`checkout ${currentBranch}`); } catch (err) {
-            this.logger.debug(`Failed to switch back to original branch after merge: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        } catch (err) {
-          this.logger.warn(`Merge failed, aborting: ${err instanceof Error ? err.message : String(err)}`);
-          try { this.execGit("merge --abort"); } catch (err2) {
-            this.logger.warn(`Failed to abort merge: ${err2 instanceof Error ? err2.message : String(err2)}`);
-          }
-          return { decision: "review_first", reason: "Merge conflict, manual review needed" };
-        }
-      }
-
-      return decision;
-    } catch (err) {
-      this.logger.warn(`Merge decision failed, falling back to manual review: ${err instanceof Error ? err.message : String(err)}`);
-      return { decision: "review_first", reason: "Merge decision failed, manual review needed" };
+    if (decision.decision === "merge") {
+      const currentBranch = this.execGit("rev-parse --abbrev-ref HEAD");
+      this.execGit(`checkout ${mainBranch}`);
+      this.execGit(
+        `merge ${commitInfo.branch} --no-ff -m "Merge ${commitInfo.branch}: ${commitInfo.message}"`,
+      );
+      this.eventBus.emit({
+        type: "debug_info",
+        message: `Merged: ${commitInfo.branch} -> ${mainBranch}`,
+      });
+      this.execGit(`checkout ${currentBranch}`);
     }
+
+    return decision;
   }
 
   private getMainBranch(): string {
-    try {
-      return this.execGit("rev-parse --abbrev-ref HEAD");
-    } catch (err) {
-      this.logger.warn(`Failed to get main branch, defaulting to main: ${err instanceof Error ? err.message : String(err)}`);
-      return "main";
-    }
+    return this.execGit("rev-parse --abbrev-ref HEAD");
   }
 
   private isCommitMerged(sha: string, _mainBranch: string): boolean {
-    try {
-      const result = this.execGit(`branch --contains ${sha}`);
-      return result.length > 0;
-    } catch (err) {
-      this.logger.warn(`Failed to check if commit is merged: ${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    }
+    const result = this.execGit(`branch --contains ${sha}`);
+    return result.length > 0;
   }
 
   private async askMergeDecision(
@@ -101,25 +75,15 @@ export class MergeValidator {
     const logPath = this.runner.logPath(uniqueKey);
     await this.runner.run(prompt, logPath);
 
-    try {
-      const output = await fs.promises.readFile(logPath, "utf-8");
-      return JSON.parse(extractJson(output));
-    } catch (err) {
-      this.logger.warn(`Failed to parse merge decision, falling back to auto-merge: ${err instanceof Error ? err.message : String(err)}`);
-      return { decision: "merge", reason: "Auto-merge (no decision available)" };
-    }
+    const output = await fs.promises.readFile(logPath, "utf-8");
+    return JSON.parse(extractJson(output));
   }
 
   private execGit(args: string): string {
-    try {
-      return execSync(`git ${args}`, {
-        cwd: this.projectRoot,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`git ${args} failed: ${msg}`);
-    }
+    return execSync(`git ${args}`, {
+      cwd: this.projectRoot,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
   }
 }

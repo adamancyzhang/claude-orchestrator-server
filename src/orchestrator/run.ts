@@ -148,7 +148,9 @@ async function handleShutdown(children: ChildProcess[]): Promise<void> {
     const cleanup = () => {
       shuttingDown = true;
       for (const child of children) {
-        try { child.kill("SIGTERM"); } catch { /* already dead */ }
+        if (child.exitCode === null && !child.killed) {
+          child.kill("SIGTERM");
+        }
       }
       resolve();
     };
@@ -157,7 +159,9 @@ async function handleShutdown(children: ChildProcess[]): Promise<void> {
     process.once("SIGTERM", cleanup);
     process.on("exit", () => {
       for (const child of children) {
-        try { child.kill("SIGTERM"); } catch { /* already dead */ }
+        if (child.exitCode === null && !child.killed) {
+          child.kill("SIGTERM");
+        }
       }
     });
   });

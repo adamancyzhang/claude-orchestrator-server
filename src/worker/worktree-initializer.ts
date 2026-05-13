@@ -42,12 +42,7 @@ export function getWorktreeBranch(name: string): string {
 }
 
 function execGit(args: string, cwd: string): string {
-  try {
-    return execSync(`git ${args}`, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-  } catch (err) {
-    logger.warn(`git ${args} failed in ${cwd}: ${err instanceof Error ? err.message : String(err)}`);
-    return "";
-  }
+  return execSync(`git ${args}`, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
 }
 
 async function scanExistingNames(projectRoot: string): Promise<Set<string>> {
@@ -244,49 +239,41 @@ export async function initializeWorktrees(
     const relativePath = `.claude-orchestrator/worktree/${name}`;
     const branch = getWorktreeBranch(name);
 
-    try {
-      await fs.promises.mkdir(worktreeRoot, { recursive: true });
+    await fs.promises.mkdir(worktreeRoot, { recursive: true });
 
-      const branchExists = execGit(`rev-parse --verify ${branch}`, projectRoot);
-      if (branchExists) {
-        execGit(`worktree add ${relativePath} ${branch}`, projectRoot);
-      } else {
-        execGit(`worktree add ${relativePath} -b ${branch}`, projectRoot);
-      }
-
-      const instanceId = crypto.randomUUID().replace(/-/g, "");
-
-      const wtConfigDir = path.join(wtPath, ".claude-orchestrator");
-      await fs.promises.mkdir(wtConfigDir, { recursive: true });
-      await fs.promises.writeFile(
-        path.join(wtConfigDir, "config.json"),
-        JSON.stringify({ name, role, instance_id: instanceId }, null, 2),
-      );
-
-      await ensureWorktreeEnvironment(wtPath, name, role);
-
-      if (fs.existsSync(path.join(wtPath, "package.json"))) {
-        logger.info(`Installing dependencies for ${name}...`);
-        try {
-          execSync("npm install", { cwd: wtPath, stdio: "inherit" });
-        } catch {
-          logger.warn(`npm install failed for ${name}, continuing...`);
-        }
-      }
-
-      configs.push({
-        name,
-        role,
-        worktreePath: wtPath,
-        relativePath,
-        branch,
-        instanceId,
-      });
-
-      logger.info(`Created worktree: ${name} (${role}) at ${relativePath}`);
-    } catch (err) {
-      logger.error(`Failed to create worktree for ${name}`, err);
+    const branchExists = execGit(`rev-parse --verify ${branch}`, projectRoot);
+    if (branchExists) {
+      execGit(`worktree add ${relativePath} ${branch}`, projectRoot);
+    } else {
+      execGit(`worktree add ${relativePath} -b ${branch}`, projectRoot);
     }
+
+    const instanceId = crypto.randomUUID().replace(/-/g, "");
+
+    const wtConfigDir = path.join(wtPath, ".claude-orchestrator");
+    await fs.promises.mkdir(wtConfigDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(wtConfigDir, "config.json"),
+      JSON.stringify({ name, role, instance_id: instanceId }, null, 2),
+    );
+
+    await ensureWorktreeEnvironment(wtPath, name, role);
+
+    if (fs.existsSync(path.join(wtPath, "package.json"))) {
+      logger.info(`Installing dependencies for ${name}...`);
+      execSync("npm install", { cwd: wtPath, stdio: "inherit" });
+    }
+
+    configs.push({
+      name,
+      role,
+      worktreePath: wtPath,
+      relativePath,
+      branch,
+      instanceId,
+    });
+
+    logger.info(`Created worktree: ${name} (${role}) at ${relativePath}`);
   }
 
   if (configs.length > 0) {

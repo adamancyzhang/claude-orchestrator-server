@@ -3,12 +3,11 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 function extractSessionId(line: string): string | null {
-  try {
+  if (line.startsWith("{")) {
     const obj = JSON.parse(line);
     return obj.session_id || null;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 function escapeShell(s: string): string {

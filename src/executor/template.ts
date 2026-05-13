@@ -14,18 +14,17 @@ export class TemplateEngine {
   ) {}
 
   private async readTemplate(filename: string): Promise<string> {
-    try {
-      return await fs.promises.readFile(
-        path.join(this.agentsDir, filename), "utf-8",
-      );
-    } catch {
-      if (this.builtinDir) {
-        return fs.promises.readFile(
-          path.join(this.builtinDir, filename), "utf-8",
-        );
-      }
-      throw new Error(`Template ${filename} not found in ${this.agentsDir}`);
+    const primaryPath = path.join(this.agentsDir, filename);
+    if (fs.existsSync(primaryPath)) {
+      return await fs.promises.readFile(primaryPath, "utf-8");
     }
+    if (this.builtinDir) {
+      const fallbackPath = path.join(this.builtinDir, filename);
+      if (fs.existsSync(fallbackPath)) {
+        return fs.promises.readFile(fallbackPath, "utf-8");
+      }
+    }
+    throw new Error(`Template ${filename} not found in ${this.agentsDir}`);
   }
 
   async loadAll(): Promise<void> {

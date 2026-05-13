@@ -74,14 +74,7 @@ export class InitChecker {
       console.log(`  ${dangerLabel(step.dangerLevel)} — auto-executing`);
     }
 
-    try {
-      await step.execute();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log(`  ${COLORS.danger}Failed${RESET}: ${msg}`);
-      this.saveStatus(step.id, { action: "failed", timestamp: new Date().toISOString(), reason: msg });
-      return;
-    }
+    await step.execute();
 
     const record = this.buildRecord(step.id, details);
     console.log(`  ${COLORS.safe}Done${RESET} — ${record.action}`);

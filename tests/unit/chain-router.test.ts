@@ -209,15 +209,10 @@ describe("ChainRouter", () => {
       expect(taskQueue.push).toHaveBeenCalledTimes(5);
     });
 
-    it("handles malformed JSON gracefully", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    it("throws on malformed JSON in task definitions", async () => {
       const msg = makeMsg({ link: "task_defs", content: "not json" });
-      await router.route(msg);
-
+      await expect(router.route(msg)).rejects.toThrow(SyntaxError);
       expect(taskQueue.push).not.toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalled();
-      expect(consoleSpy.mock.calls[0][0]).toContain("Failed to parse task definitions");
-      consoleSpy.mockRestore();
     });
   });
 
@@ -275,20 +270,14 @@ describe("ChainRouter", () => {
       );
     });
 
-    it("falls back to auto-advance when content is not valid JSON", async () => {
+    it("throws on non-JSON completion report content", async () => {
       const msg = makeMsg({ link: "build", content: "Task completed. Leader, please review." });
-      await router.route(msg);
-
-      expect(taskQueue.push).toHaveBeenCalledWith(
-        expect.any(String), "", 1, "leader1", undefined, "Leader", undefined, "verify", null,
-      );
+      await expect(router.route(msg)).rejects.toThrow(SyntaxError);
     });
 
-    it("falls back to close_chain for accept link with non-JSON content", async () => {
+    it("throws on non-JSON accept report content", async () => {
       const msg = makeMsg({ link: "accept", content: "Acceptance complete." });
-      await router.route(msg);
-
-      expect(taskQueue.push).not.toHaveBeenCalled();
+      await expect(router.route(msg)).rejects.toThrow(SyntaxError);
     });
   });
 });

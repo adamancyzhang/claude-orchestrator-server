@@ -58,7 +58,7 @@ function box(width: number, ...lines: string[]): string {
 }
 
 function stripJsonChunk(line: string): string {
-  try {
+  if (line.startsWith("{")) {
     const parsed = JSON.parse(line);
     if (parsed.type === "content_block_delta" && parsed.delta?.text) {
       return parsed.delta.text;
@@ -67,9 +67,8 @@ function stripJsonChunk(line: string): string {
       return parsed.content_block.text;
     }
     return "";
-  } catch {
-    return line;
   }
+  return line;
 }
 
 function workerStatusColor(status: string): string {

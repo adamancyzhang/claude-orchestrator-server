@@ -103,22 +103,17 @@ export class ChainRouter {
         logPath,
       });
 
-      try {
-        const resultContent = await fs.promises.readFile(resultPath, "utf-8");
-        const cleanedContent = extractJson(resultContent);
-        const syntheticMsg = createMessage({
-          from_instance: this.leaderInstanceId,
-          from_name: this.leaderName,
-          from_role: "leader",
-          to_instance: this.leaderInstanceId,
-          content: cleanedContent,
-          link: "task_defs",
-        });
-        await this.handleTaskDefinitions(syntheticMsg);
-      } catch (err) {
-        this.logger.error("Failed to read decompose result, falling back to planner", err);
-        await this.forwardToPlanner(msg);
-      }
+      const resultContent = await fs.promises.readFile(resultPath, "utf-8");
+      const cleanedContent = extractJson(resultContent);
+      const syntheticMsg = createMessage({
+        from_instance: this.leaderInstanceId,
+        from_name: this.leaderName,
+        from_role: "leader",
+        to_instance: this.leaderInstanceId,
+        content: cleanedContent,
+        link: "task_defs",
+      });
+      await this.handleTaskDefinitions(syntheticMsg);
     } else {
       // Fallback: forward to planner worker
       await this.forwardToPlanner(msg);
@@ -151,13 +146,7 @@ export class ChainRouter {
 
 
   private async handleTaskDefinitions(msg: Message): Promise<void> {
-    let chainDef;
-    try {
-      chainDef = ChainDefSchema.parse(JSON.parse(extractJson(msg.content)));
-    } catch (err) {
-      this.logger.error("Failed to parse task definitions", err);
-      return;
-    }
+    const chainDef = ChainDefSchema.parse(JSON.parse(extractJson(msg.content)));
 
     const taskLinks: Array<{ link: string; def: { title: string; description: string; criteria: string; priority: number } | null }> = [
       { link: "plan", def: chainDef.tasks.plan },
@@ -228,44 +217,23 @@ export class ChainRouter {
 
   private async handleCompletionReport(msg: Message): Promise<void> {
     // Try merge validation if commit info is present
-    if (this.mergeValidator) {
-      try {
-        const parsed = JSON.parse(msg.content);
-        if (parsed.commit?.sha) {
-          this.mergeValidator.validate({
-            sha: parsed.commit.sha,
-            message: parsed.commit.message,
-            branch: parsed.commit.branch,
-            taskTitle: (msg.task_title as string) ?? "unknown",
-            taskLink: (msg.link as string) ?? "unknown",
-          }).catch(() => { /* best effort */ });
-        }
-      } catch {
-        // Content is not JSON, skip merge validation
-        this.logger.debug("Report content is not JSON, skipping merge validation");
+    if (this.mergeValidator && typeof msg.content === "string" && msg.content.startsWith("{")) {
+      const parsed = JSON.parse(msg.content);
+      if (parsed.commit?.sha) {
+        this.mergeValidator.validate({
+          sha: parsed.commit.sha,
+          message: parsed.commit.message,
+          branch: parsed.commit.branch,
+          taskTitle: (msg.task_title as string) ?? "unknown",
+          taskLink: (msg.link as string) ?? "unknown",
+        });
       }
     }
 
-    let decision: EvalDecision;
-    let parsed = true;
-    try {
-      decision = EvalDecisionSchema.parse(JSON.parse(extractJson(msg.content)));
-    } catch (err) {
-      this.logger.warn(`Failed to parse EvalDecision, synthesizing fallback: ${err instanceof Error ? err.message : String(err)}`);
-      parsed = false;
-      const currentLink = msg.link!;
-      const nextLink = NEXT_LINKS[currentLink];
-      if (nextLink) {
-        decision = { decision: "activate_next", reason: "Auto-advance (no structured decision)", nextLink };
-      } else if (nextLink === null && currentLink === "accept") {
-        decision = { decision: "close_chain", reason: "Accept link completed" };
-      } else {
-        decision = { decision: "activate_next", reason: "Auto-advance", nextLink: NEXT_LINKS[currentLink] ?? undefined };
-      }
-    }
+    const decision: EvalDecision = EvalDecisionSchema.parse(JSON.parse(extractJson(msg.content)));
 
     if (Logger.isDebug()) {
-      this.eventBus.emit({ type: "debug_info", message: `EvalDecision: ${decision.decision} (${decision.reason})${parsed ? "" : " [fallback]"}` });
+      this.eventBus.emit({ type: "debug_info", message: `EvalDecision: ${decision.decision} (${decision.reason})` });
     }
 
     switch (decision.decision) {
