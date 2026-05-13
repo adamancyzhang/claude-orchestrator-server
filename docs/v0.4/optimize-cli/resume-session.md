@@ -71,19 +71,15 @@ function extractSessionId(line: string): string | null {
 
 由于 `session_id` 在第一行 `system/init` 中就出现，提取非常早，不需要遍历大量输出行。
 
-**修改 `execWithTee`**：新增 session ID 提取逻辑，在 `stdout.on("data")` 中解析 JSON 行，拿到后立即停止解析。
-
-**修改 `execWithStreaming`**：已有 line-by-line 解析（`partial` buffer），在现有循环中加入 `extractSessionId`。
-
-**修改 `execAndCapture`**：同上。
+**修改 `execWithStreaming`**（唯一的执行入口）：在现有 line-by-line 解析（`partial` buffer）中加入 `extractSessionId`。由于 `session_id` 在第一行 `system/init` 就出现，提取非常早。
 
 **返回值变更**：
 
 | 函数 | 当前返回 | 新返回 |
 |------|----------|--------|
-| `execWithTee` | `{ code }` | `{ code, sessionId? }` |
 | `execWithStreaming` | `{ code }` | `{ code, sessionId? }` |
-| `execAndCapture` | `{ code, stdout, stderr }` | `{ code, stdout, stderr, sessionId? }` |
+
+`execWithTee` 和 `execAndCapture` 已删除，其功能由 `execWithStreaming` 覆盖。
 
 ### 2. `src/executor/runner.ts` — 支持 `--resume`
 
@@ -111,11 +107,8 @@ async run(prompt: string, logPath: string, opts?: {...}): Promise<{ code: number
   if (opts?.resumeSessionId) {
     cmd = `${cmd} --resume ${opts.resumeSessionId}`;
   }
-  // 使用 cmd 而非 this.command 进行本次调用
-  if (opts?.onStreamChunk) {
-    return execWithStreaming(cmd, prompt, logPath, opts.onStreamChunk, this.workDir, this.quiet);
-  }
-  return execWithTee(cmd, prompt, logPath, this.workDir, this.quiet);
+  // 始终走 execWithStreaming（唯一执行入口）
+  return execWithStreaming(cmd, prompt, logPath, opts?.onStreamChunk, this.workDir, this.quiet);
 }
 ```
 
@@ -205,7 +198,7 @@ Leader 的 decompose 自执行（`handleRequirement`）调用 `runner.run()` 后
 | `WorkerWatcher.processMessage()` (L115) | `run(prompt, logPath)` | `run(prompt, logPath)`，解构 `{ code, sessionId }` |
 | `SelfEvaluator.evaluate()` (L92) | `run(prompt, evalLogPath)` | `run(prompt, evalLogPath, { resumeSessionId })` |
 | `CommitChecker.generateCommitMessage()` (L102) | `run(prompt, logPath)` | `run(prompt, logPath, { resumeSessionId })` |
-| `ChainRouter.handleRequirement()` (L99) | `run(prompt, logPath, cb)` | `run(prompt, logPath, { onStreamChunk: cb })` |
+| `ChainRouter.handleRequirement()` (L99) | `run(prompt, logPath, cb)` | `run(prompt, logPath, { onStreamChunk: cb })` — 始终走 streaming |
 
 ## 边缘情况
 

@@ -7,11 +7,34 @@
 
 优化 Leader 和 Worker 中所有 Claude Code CLI 调用以及 worktree 初始化流程，利用三个原生 CLI flag 替代当前的 Node.js 端模板渲染和文件拷贝。
 
+## 设计原则 0: `execWithStreaming` 作为唯一执行入口
+
+**当前 `src/utils/exec.ts` 有三个函数**：`execWithTee`、`execWithStreaming`、`execAndCapture`。它们逻辑高度重复，核心差异仅在于是否逐行解析 stdout 以及是否捕获返回值字符串。`ClaudeRunner.run()` 根据是否传入 `onStreamChunk` 回调来二选一。
+
+**优化后**：`execWithStreaming` 是唯一的执行入口。所有 Claude CLI 调用统一走流式输出（逐行 JSON 解析），这是 `session_id` 提取和 TUI 实时展示的基础设施。
+
+```typescript
+// 统一的执行入口
+async function execWithStreaming(
+  command: string,
+  message: string,
+  logPath: string,
+  onChunk?: (line: string) => void,  // 可选，TUI streaming 时传入
+  cwd?: string,
+  quiet?: boolean,
+): Promise<{ code: number; sessionId?: string }>
+```
+
+`execWithTee` 和 `execAndCapture` 删除，其功能由 `execWithStreaming` 覆盖：
+- `execWithTee` 的 tee 写日志 → `execWithStreaming` 内部同步写日志
+- `execAndCapture` 的 stdout/stderr 捕获 → 不再需要（调用方不消费这两个字符串）
+- 无论是否传入 `onChunk`，逐行 JSON 解析始终执行，确保 `session_id` 一定被提取
+
 ## 前置条件：`--output-format stream-json --verbose` 强制追加
 
 **当前 `-p` 已经在 `exec.ts` 中强制追加**（`src/utils/exec.ts:15`），但 `--output-format stream-json` 和 `--verbose` 仅存在于默认 `cliCommand` 配置中，用户覆盖 `commands.claude-cli` 时可能丢失，导致 session_id 提取失败等不可控问题。
 
-**改动**：在 `src/utils/exec.ts` 的三个函数（`execWithTee`、`execWithStreaming`、`execAndCapture`）中，将 `--output-format stream-json --verbose` 与 `-p` 一样强制追加到 shell 命令中。
+**改动**：在 `execWithStreaming` 中，将 `--output-format stream-json --verbose` 与 `-p` 一样强制追加到 shell 命令中。
 
 ```typescript
 // 当前
@@ -24,18 +47,10 @@ const shellCmd = `exec ${command} --output-format stream-json --verbose -p '${es
 同时将 `src/config.ts` 的默认 `cliCommand` 中移除这两个 flag（它们现在是代码强制追加的）：
 
 ```typescript
-// 当前
-function defaultCliCommand(): string {
-  return "claude --dangerously-skip-permissions --permission-mode dontAsk --output-format stream-json";
-}
-
-// 优化后
 function defaultCliCommand(): string {
   return "claude --dangerously-skip-permissions --permission-mode dontAsk";
 }
 ```
-
-这样 `session_id` 提取和 `--resume` 功能具备了可靠的运行基础，不受用户配置覆盖影响。
 
 ## 当前痛点
 
@@ -167,8 +182,8 @@ You are **Tom**, a **planner** ...
 | `src/executor/template.ts:5-16` | 删除 `BUSINESS_CARD` 常量 |
 | `src/executor/template.ts:52-66` | `render()` 不再拼接 business card，只做 `{{var}}` 替换 |
 | `src/executor/runner.ts:11-18` | `ClaudeRunner` 构造函数新增 `systemPrompt` 参数 |
-| `src/executor/runner.ts:59-68` | `run()` 方法构建 system prompt flag 并传入 shell 命令 |
-| `src/utils/exec.ts:14-15` | `execWithTee` / `execWithStreaming` 支持 `--append-system-prompt` 参数 |
+| `src/executor/runner.ts:59-68` | `run()` 方法构建 system prompt flag 并传入 `execWithStreaming` |
+| `src/utils/exec.ts` | `execWithStreaming` 支持 `--append-system-prompt` 参数 |
 | `src/worker/watcher.ts:78-93` | 渲染后分离 business card vars 和 task vars |
 | `src/leader/chain-router.ts:74-88` | 同上 |
 
@@ -204,9 +219,14 @@ You are **${vars.name}**, a **${vars.role}** in the multi-agent orchestration sy
   async run(
     prompt: string,
     logPath: string,
-    systemPrompt?: string,  // 新增可选参数
-    onStreamChunk?: (line: string) => void,
-  ): Promise<{ code: number }> { ... }
+    opts?: {
+      systemPrompt?: string;
+      onStreamChunk?: (line: string) => void;
+      resumeSessionId?: string;
+    },
+  ): Promise<{ code: number; sessionId?: string }> {
+    // 始终调用 execWithStreaming
+  }
 }
 ```
 
@@ -236,10 +256,12 @@ You are **${vars.name}**, a **${vars.role}** in the multi-agent orchestration sy
 
 ## 实施步骤
 
-### Phase 0: `--output-format stream-json --verbose` 强制追加 (前置)
+### Phase 0: 统一执行入口 + 强制 flag (前置)
 
-1. **修改 `exec.ts`**：在三个函数中强制追加 `--output-format stream-json --verbose`
-2. **修改 `config.ts`**：从默认 `cliCommand` 中移除 `--output-format stream-json`
+1. **合并 `exec.ts` 为一个函数**：删除 `execWithTee` 和 `execAndCapture`，`execWithStreaming` 作为唯一入口
+2. **强制追加 flag**：在 `execWithStreaming` 中强制追加 `--output-format stream-json --verbose`
+3. **修改 `runner.ts`**：`ClaudeRunner.run()` 始终调用 `execWithStreaming`，`onChunk` 改为可选参数
+4. **修改 `config.ts`**：从默认 `cliCommand` 中移除 `--output-format stream-json`
 
 ### Phase 1: `--add-dir` (低风险，纯增量)
 
@@ -271,7 +293,7 @@ You are **${vars.name}**, a **${vars.role}** in the multi-agent orchestration sy
 
 ### Phase 2: `--append-system-prompt` (中风险，需改模板渲染链路)
 
-1. **扩展 `execWithTee` / `execWithStreaming`** (`src/utils/exec.ts`)
+1. **扩展 `execWithStreaming`** (`src/utils/exec.ts`)
    - 添加 `systemPrompt?: string` 参数
    - 在 shell 命令中插入 `--append-system-prompt '${escapedSystemPrompt}'`
 
