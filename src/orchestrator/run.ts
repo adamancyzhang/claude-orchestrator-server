@@ -86,29 +86,8 @@ async function ensureEnvironment(): Promise<void> {
     );
   }
 
-  // 2. Copy templates to .claude-orchestrator/agents/
+  // 2. Copy team-level CLAUDE.md to project root (if not exists)
   const templateDir = path.join(__dirname, "..", "templates");
-  const agentsDir = path.join(process.cwd(), ".claude-orchestrator", "agents");
-
-  const templates: Record<string, string> = {
-    "worker-decompose.md": path.join(templateDir, "agents", "worker-decompose.md"),
-    "worker-evaluate.md": path.join(templateDir, "agents", "worker-evaluate.md"),
-    "worker-plan.md": path.join(templateDir, "agents", "worker-plan.md"),
-    "worker-build.md": path.join(templateDir, "agents", "worker-build.md"),
-    "worker-verify.md": path.join(templateDir, "agents", "worker-verify.md"),
-    "worker-review.md": path.join(templateDir, "agents", "worker-review.md"),
-    "worker-accept.md": path.join(templateDir, "agents", "worker-accept.md"),
-  };
-
-  for (const [filename, srcPath] of Object.entries(templates)) {
-    const destPath = path.join(agentsDir, filename);
-    if (!fs.existsSync(destPath)) {
-      fs.mkdirSync(agentsDir, { recursive: true });
-      fs.copyFileSync(srcPath, destPath);
-    }
-  }
-
-  // Copy team-level CLAUDE.md to project root (if not exists)
   const teamClaudeSrc = path.join(templateDir, "claude-memory", "team-claude.md");
   const teamClaudeDest = path.join(process.cwd(), "CLAUDE.md");
   if (fs.existsSync(teamClaudeSrc) && !fs.existsSync(teamClaudeDest)) {

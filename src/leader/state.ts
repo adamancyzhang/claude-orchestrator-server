@@ -101,7 +101,7 @@ export class LeaderState {
           w.currentMessageTime = timestamp;
           w.messageHistory.push({
             timestamp,
-            content: rawContent.slice(0, 200),
+            content: rawContent,
             contentFull: rawContent,
             link: (event.link as string) ?? null,
             messageId: (event.messageId as string) ?? "",

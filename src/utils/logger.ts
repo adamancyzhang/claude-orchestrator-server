@@ -7,7 +7,7 @@ export class Logger {
   constructor(private tag: string) {}
 
   info(msg: string): void {
-    console.log(`[${this.tag}] ${msg}`);
+    console.error(`[${this.tag}] ${msg}`);
   }
 
   warn(msg: string): void {
@@ -21,7 +21,7 @@ export class Logger {
 
   debug(msg: string): void {
     if (Logger.debugEnabled) {
-      console.log(`[${this.tag}] [DEBUG] ${msg}`);
+      console.error(`[${this.tag}] [DEBUG] ${msg}`);
     }
   }
 }

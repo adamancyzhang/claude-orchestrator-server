@@ -77,15 +77,22 @@ function renderWorkerMessages(
     const time = worker.currentMessageTime
       ? ` ${DIM}(${worker.currentMessageTime})${RESET}`
       : "";
-    lines.push(` ${GREEN}◆${RESET} ${BOLD}Current task${RESET}${time}${linkTag}`);
+    lines.push(` ${GREEN}◆${RESET} ${BOLD}Working${RESET}${time}${linkTag}`);
 
     const wrapped = wrapText(worker.currentMessage, contentW - 2);
     for (const line of wrapped) {
       lines.push(`   ${line}`);
     }
     lines.push("");
+  } else if (worker.status === "busy" && worker.currentTaskId) {
+    const roleTag = worker.currentRole
+      ? ` ${MAGENTA}[${worker.currentRole}]${RESET}`
+      : "";
+    lines.push(` ${YELLOW}◆${RESET} ${BOLD}Working${RESET}${roleTag}`);
+    lines.push(`   ${DIM}Task: ${worker.currentTaskId}${RESET}`);
+    lines.push("");
   } else if (worker.lastCompletedTask) {
-    lines.push(` ${DIM}◇ (idle) — last task: ${worker.lastCompletedTask}${RESET}`);
+    lines.push(` ${DIM}◇ (idle) — last: ${worker.lastCompletedTask}${RESET}`);
     lines.push("");
   } else {
     lines.push(` ${DIM}◇ (idle)${RESET}`);
@@ -97,8 +104,11 @@ function renderWorkerMessages(
     for (const entry of worker.messageHistory.slice(-5).reverse()) {
       const time = `${DIM}${entry.timestamp}${RESET}`;
       const link = entry.link ? ` ${CYAN}[${entry.link}]${RESET}` : "";
-      const summary = truncate(entry.content.replace(/\n/g, " "), contentW - 25);
-      lines.push(`   ${time}${link}  "${summary}"`);
+      lines.push(`   ${time}${link}`);
+      const wrapped = wrapText(entry.content, contentW - 4);
+      for (const line of wrapped) {
+        lines.push(`     ${DIM}${line}${RESET}`);
+      }
     }
   }
 
