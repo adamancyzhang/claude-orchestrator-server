@@ -1,4 +1,6 @@
+import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import { ZkClient, isNodeExists } from "../zk/client.js";
 import { InstanceRegistry } from "../modules/registry.js";
 import { LeaderEventBus } from "./event-bus.js";
@@ -12,6 +14,7 @@ import { MergeValidator } from "./merge-validator.js";
 import { TaskQueue } from "../modules/task-queue.js";
 import { MessageRouter } from "../modules/message-router.js";
 import { ClaudeRunner } from "../executor/runner.js";
+import { TemplateEngine } from "../executor/template.js";
 import { loadInstanceConfig, saveInstanceId, loadConfig } from "../config.js";
 import { Logger } from "../utils/logger.js";
 import { captureConsoleToFile, restoreConsole } from "../utils/console-capture.js";
@@ -63,13 +66,22 @@ export async function startLeader(config: {
   // Redirect all console output to file so TUI controls the screen
   captureConsoleToFile(resolvedConfig.cacheDir);
 
-  // Initialize cache runner for path management (leader doesn't call claude-cli)
+  // Initialize ClaudeRunner with real CLI command for leader task execution
   const cacheRunner = new ClaudeRunner(
-    "", // command unused by leader
+    resolvedConfig.cliCommand,
     resolvedConfig.cacheDir,
     instance.id,
     process.cwd(),
   );
+
+  // Initialize TemplateEngine for leader decompose handling
+  const projectRoot = process.cwd();
+  const distTemplateDir = path.join(projectRoot, "dist", "templates");
+  const srcTemplateDir = path.join(projectRoot, "templates");
+  const templateDir = fs.existsSync(distTemplateDir) ? distTemplateDir : srcTemplateDir;
+  const agentsDir = path.join(templateDir, "agents");
+  const templateEngine = new TemplateEngine(agentsDir);
+  await templateEngine.loadAll();
 
   // Initialize EventBus + State
   const eventBus = new LeaderEventBus();
@@ -87,7 +99,7 @@ export async function startLeader(config: {
   // Initialize MergeValidator
   const mergeValidator = new MergeValidator(process.cwd(), cacheRunner, eventBus);
 
-  const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, cacheRunner, mergeValidator);
+  const chainRouter = new ChainRouter(zk, taskQueue, messageRouter, eventBus, instance.id, leaderName, cacheRunner, templateEngine, mergeValidator);
 
   // Start subsystems
   const leaderWatcher = new LeaderWatcher(zk, eventBus, instance.id, chainRouter);

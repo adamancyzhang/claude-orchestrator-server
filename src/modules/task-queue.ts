@@ -63,6 +63,7 @@ export class TaskQueue {
       verifier: "verify",
       reviewer: "review",
       accepter: "accept",
+      leader: "decompose",
     };
 
     const sortKey = (item: [string, Record<string, unknown>]) => {
@@ -86,6 +87,9 @@ export class TaskQueue {
     });
 
     for (const [taskId, data] of pending) {
+      // Skip leader_only tasks for non-leader instances
+      if (data.leader_only === true && instanceRole !== "leader") continue;
+
       // Embed full task_data in claimed node for recovery
       const taskBytes = Buffer.from(JSON.stringify(data), "utf-8");
       const claimed = await this.zk.claimTask(instanceId, taskId, taskBytes);

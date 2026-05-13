@@ -71,6 +71,7 @@ export const TaskSchema = z.object({
   duration_seconds: z.number().nullable().default(null),
   depends_on: z.array(z.string()).default([]),
   blocked_by: z.array(z.string()).default([]),
+  leader_only: z.boolean().default(false),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -127,6 +128,7 @@ export function createTask(overrides: {
   chain_id?: string | null;
   depends_on?: string[];
   blocked_by?: string[];
+  leader_only?: boolean;
 }): Task {
   return TaskSchema.parse({
     id: "",
@@ -152,6 +154,7 @@ export function createTask(overrides: {
     duration_seconds: null,
     depends_on: overrides.depends_on ?? [],
     blocked_by: overrides.blocked_by ?? [],
+    leader_only: overrides.leader_only ?? false,
   });
 }
 

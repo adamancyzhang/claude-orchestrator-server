@@ -5,7 +5,8 @@ import { MessageRouter } from "../modules/message-router.js";
 import { LeaderEventBus } from "./event-bus.js";
 import { MergeValidator } from "./merge-validator.js";
 import { Logger } from "../utils/logger.js";
-import type { ClaudeRunner } from "../executor/runner.js";
+import { ClaudeRunner } from "../executor/runner.js";
+import { TemplateEngine } from "../executor/template.js";
 import {
   MessageSchema,
   createMessage,
@@ -29,6 +30,7 @@ const LINK_TO_ROLE: Record<string, string> = {
   verify: "verifier",
   review: "reviewer",
   accept: "accepter",
+  decompose: "leader",
 };
 
 export class ChainRouter {
@@ -42,6 +44,7 @@ export class ChainRouter {
     private leaderInstanceId: string,
     private leaderName: string,
     private runner: ClaudeRunner,
+    private templateEngine: TemplateEngine,
     private mergeValidator: MergeValidator | null = null,
   ) {}
 
@@ -60,6 +63,55 @@ export class ChainRouter {
   }
 
   private async handleRequirement(msg: Message): Promise<void> {
+    const template = this.templateEngine.get("decompose");
+
+    if (template) {
+      // Leader self-processes decompose
+      const uniqueKey = `leader-decompose-${msg.id || Date.now().toString(36)}`;
+      const resultPath = this.runner.resultPath(uniqueKey);
+      const logPath = this.runner.logPath(uniqueKey);
+
+      const prompt = this.templateEngine.render(template, {
+        name: this.leaderName,
+        preset_role: "leader",
+        task_title: msg.task_title ?? "",
+        task_description: msg.task_description ?? msg.content,
+        task_criteria: msg.task_criteria ?? "",
+        task_doc_path: msg.task_doc_path ?? "",
+        result_path: resultPath,
+        work_dir: process.cwd(),
+        time: new Date().toISOString(),
+        content: msg.content,
+        worktree_path: "",
+        worktree_branch: "",
+        instance_id: this.leaderInstanceId,
+      });
+
+      this.logger.info(`Leader self-processing decompose: "${msg.content.slice(0, 80)}"`);
+      await this.runner.run(prompt, logPath);
+
+      try {
+        const resultContent = await fs.promises.readFile(resultPath, "utf-8");
+        const syntheticMsg = createMessage({
+          from_instance: this.leaderInstanceId,
+          from_name: this.leaderName,
+          from_role: "leader",
+          to_instance: this.leaderInstanceId,
+          content: resultContent,
+          link: "task_defs",
+        });
+        await this.handleTaskDefinitions(syntheticMsg);
+      } catch (err) {
+        this.logger.error("Failed to read decompose result, falling back to planner", err);
+        await this.forwardToPlanner(msg);
+      }
+    } else {
+      // Fallback: forward to planner worker
+      await this.forwardToPlanner(msg);
+    }
+  }
+
+  private async forwardToPlanner(msg: Message): Promise<void> {
     const planner = await this.findWorkerByRole("planner");
     if (!planner) {
       this.logger.error("No planner worker available. Requirement not processed.");

@@ -69,9 +69,29 @@ function makeMockRunner() {
   return {
     taskDocPath: vi.fn().mockImplementation((id: string) => `/tmp/cache/tasks/${id}.md`),
     ensureDir: vi.fn(),
+    run: vi.fn().mockResolvedValue({ code: 0 }),
+    resultPath: vi.fn().mockImplementation((key: string) => `/tmp/cache/results/${key}-result.md`),
+    logPath: vi.fn().mockImplementation((key: string) => `/tmp/cache/logs/${key}.log`),
   } as unknown as {
     taskDocPath: ReturnType<typeof vi.fn>;
     ensureDir: ReturnType<typeof vi.fn>;
+    run: ReturnType<typeof vi.fn>;
+    resultPath: ReturnType<typeof vi.fn>;
+    logPath: ReturnType<typeof vi.fn>;
+  };
+}
+
+function makeMockTemplateEngine() {
+  return {
+    get: vi.fn().mockReturnValue(undefined),
+    loadAll: vi.fn().mockResolvedValue(undefined),
+    render: vi.fn().mockReturnValue("rendered prompt"),
+    loadFile: vi.fn(),
+  } as unknown as {
+    get: ReturnType<typeof vi.fn>;
+    loadAll: ReturnType<typeof vi.fn>;
+    render: ReturnType<typeof vi.fn>;
+    loadFile: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -81,6 +101,7 @@ describe("ChainRouter", () => {
   let messageRouter: ReturnType<typeof makeMockMessageRouter>;
   let eventBus: ReturnType<typeof makeMockEventBus>;
   let runner: ReturnType<typeof makeMockRunner>;
+  let templateEngine: ReturnType<typeof makeMockTemplateEngine>;
   let router: ChainRouter;
 
   beforeEach(() => {
@@ -89,9 +110,10 @@ describe("ChainRouter", () => {
     messageRouter = makeMockMessageRouter();
     eventBus = makeMockEventBus();
     runner = makeMockRunner();
+    templateEngine = makeMockTemplateEngine();
     router = new ChainRouter(
       zk as any, taskQueue as any, messageRouter as any, eventBus as any,
-      "leader1", "Leader", runner as any,
+      "leader1", "Leader", runner as any, templateEngine as any,
     );
   });
 

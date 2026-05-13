@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fork, type ChildProcess } from "node:child_process";
+import { execSync, fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadConfig, loadGlobalConfig, saveInstanceConfig, loadInstanceConfig } from "../config.js";
 import { Logger } from "../utils/logger.js";
@@ -12,6 +12,17 @@ const logger = new Logger("Orchestrator");
 
 let shuttingDown = false;
 
+function ensureCleanWorkspace(projectRoot: string): void {
+  const status = execSync("git status --porcelain", { cwd: projectRoot, encoding: "utf-8" }).trim();
+  if (status) {
+    logger.error("Workspace has uncommitted changes. Please commit or stash before running orchestrator:");
+    for (const line of status.split("\n")) {
+      logger.error(`  ${line}`);
+    }
+    process.exit(1);
+  }
+}
+
 export async function runOrchestrator(config: {
   zkHosts: string;
   workerCount: number;
@@ -20,6 +31,9 @@ export async function runOrchestrator(config: {
 }): Promise<void> {
   // Phase 1: Environment self-check + config
   await ensureEnvironment();
+
+  // Ensure workspace is clean before creating worktrees
+  ensureCleanWorkspace(process.cwd());
 
   // Phase 2: Role assignment & worktree initialization
   const { initializeWorktrees } = await import("../worker/worktree-initializer.js");
