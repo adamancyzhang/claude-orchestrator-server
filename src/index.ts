@@ -2,19 +2,6 @@
 import { Command } from "commander";
 import { loadConfig, loadInstanceConfig } from "./config.js";
 import { Logger } from "./utils/logger.js";
-import {
-  cmdPushTask,
-  cmdClaimTask,
-  cmdCompleteTask,
-  cmdPollTask,
-  cmdSendMessage,
-  cmdPollMessage,
-  cmdDeleteMessage,
-  cmdUnregister,
-  cmdTaskBlock,
-  cmdTaskFail,
-  cmdTaskRetry,
-} from "./cli/commands.js";
 import { output } from "./utils/output.js";
 
 import { readFileSync } from "node:fs";
@@ -47,8 +34,6 @@ function getDebug(cmd: Command): boolean {
 
 // ── Commands ──
 
-// ── Control Commands ──
-
 program
   .command("run")
   .description("One-shot orchestration: setup environment, start TUI, register Workers")
@@ -70,15 +55,6 @@ program
   });
 
 program
-  .command("unregister")
-  .description("Explicitly unregister an instance")
-  .option("--instance-id <id>", "Instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { instanceId } = this.opts() as { instanceId?: string };
-      await cmdUnregister(getZkHosts(this), instanceId);
-  });
-
-program
   .command("config")
   .description("Show current configuration")
   .action(async function (this: Command) {
@@ -97,131 +73,6 @@ program
         instance_id: projectConfig.instance_id || "(not set)",
       },
     });
-  });
-
-// ── Message Commands ──
-
-program
-  .command("send-message")
-  .description("Send a message to the leader instance")
-  .requiredOption("--content <text>", "Message content")
-  .option("--instance-id <id>", "Sender instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { content, instanceId } = this.opts() as {
-        content: string;
-        instanceId?: string;
-      };
-      await cmdSendMessage(getZkHosts(this), instanceId, content);
-  });
-
-program
-  .command("poll-message")
-  .description("Check for new messages")
-  .option("--instance-id <id>", "Instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { instanceId } = this.opts() as { instanceId?: string };
-      await cmdPollMessage(getZkHosts(this), instanceId);
-  });
-
-program
-  .command("delete-message")
-  .description("Delete a message")
-  .requiredOption("--message-id <id>", "Message ID to delete")
-  .option("--instance-id <id>", "Instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { messageId, instanceId } = this.opts() as { messageId: string; instanceId?: string };
-      await cmdDeleteMessage(getZkHosts(this), instanceId, messageId);
-  });
-
-// ── Task Commands ──
-
-program
-  .command("push-task")
-  .description("Create and push a new task to the queue")
-  .requiredOption("--title <title>", "Task title")
-  .option("--description <text>", "Task description", "")
-  .option("--priority <n>", "Priority: 0=HIGH, 1=MEDIUM, 2=LOW", "1")
-  .option("--assignee <id>", "Target instance ID")
-  .option("--link <link>", "Responsibility chain link: plan, build, verify, review, accept")
-  .option("--chain-id <id>", "Chain identifier for grouping related tasks")
-  .option("--depends-on <ids>", "Comma-separated task IDs this task depends on")
-  .option("--blocked-by <ids>", "Comma-separated task IDs blocking this task")
-  .option("--instance-id <id>", "Creator instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { title, description, priority, assignee, link, chainId, dependsOn, blockedBy, instanceId } = this.opts() as {
-        title: string;
-        description: string;
-        priority: string;
-        assignee?: string;
-        link?: string;
-        chainId?: string;
-        dependsOn?: string;
-        blockedBy?: string;
-        instanceId?: string;
-      };
-      const dependsOnArr = dependsOn ? dependsOn.split(",").map(s => s.trim()).filter(Boolean) : undefined;
-      const blockedByArr = blockedBy ? blockedBy.split(",").map(s => s.trim()).filter(Boolean) : undefined;
-      await cmdPushTask(getZkHosts(this), instanceId, title, description, parseInt(priority), assignee, link, chainId, dependsOnArr, blockedByArr);
-  });
-
-program
-  .command("poll-task")
-  .description("List tasks, optionally filtered by status")
-  .option("--status <status>", "Filter: pending, claimed, completed, blocked, failed")
-  .action(async function (this: Command) {
-      const { status } = this.opts() as { status?: string };
-      await cmdPollTask(getZkHosts(this), status);
-  });
-
-program
-  .command("claim-task")
-  .description("Claim the highest-priority pending task")
-  .option("--instance-id <id>", "Instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { instanceId } = this.opts() as { instanceId?: string };
-      await cmdClaimTask(getZkHosts(this), instanceId);
-  });
-
-program
-  .command("complete-task")
-  .description("Mark a claimed task as completed")
-  .requiredOption("--task-id <id>", "Task ID to complete")
-  .requiredOption("--result <text>", "Summary of what was accomplished")
-  .option("--instance-id <id>", "Instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { taskId, result, instanceId } = this.opts() as { taskId: string; result: string; instanceId?: string };
-      await cmdCompleteTask(getZkHosts(this), instanceId, taskId, result);
-  });
-
-program
-  .command("task-block")
-  .description("Mark a claimed task as blocked")
-  .requiredOption("--task-id <id>", "Task ID")
-  .requiredOption("--reason <text>", "Blocking reason")
-  .option("--instance-id <id>", "Instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { taskId, reason, instanceId } = this.opts() as { taskId: string; reason: string; instanceId?: string };
-      await cmdTaskBlock(getZkHosts(this), instanceId, taskId, reason);
-  });
-
-program
-  .command("task-fail")
-  .description("Mark a claimed task as failed")
-  .requiredOption("--task-id <id>", "Task ID")
-  .requiredOption("--reason <text>", "Failure reason")
-  .option("--instance-id <id>", "Instance ID (default from project config)")
-  .action(async function (this: Command) {
-      const { taskId, reason, instanceId } = this.opts() as { taskId: string; reason: string; instanceId?: string };
-      await cmdTaskFail(getZkHosts(this), instanceId, taskId, reason);
-  });
-
-program
-  .command("task-retry")
-  .description("Re-queue a failed task for retry")
-  .requiredOption("--task-id <id>", "Task ID to retry")
-  .action(async function (this: Command) {
-      const { taskId } = this.opts() as { taskId: string };
-      await cmdTaskRetry(getZkHosts(this), undefined, taskId);
   });
 
 // ── Main entry ──
