@@ -122,27 +122,89 @@ function generateWorkerNames(
   return result;
 }
 
-async function ensureWorktreeEnvironment(worktreePath: string): Promise<void> {
+async function ensureWorktreeEnvironment(
+  worktreePath: string,
+  name: string,
+  role: string,
+): Promise<void> {
   const projectRoot = path.resolve(worktreePath, "..", "..", "..");
   const distTemplateDir = path.join(projectRoot, "dist", "templates");
-  const srcTemplateDir = path.join(projectRoot, "src", "templates");
+  const srcTemplateDir = path.join(projectRoot, "templates");
 
   const templateDir = fs.existsSync(distTemplateDir) ? distTemplateDir : srcTemplateDir;
   const agentsDir = path.join(worktreePath, ".claude-orchestrator", "agents");
 
   if (fs.existsSync(templateDir)) {
+    // Copy agent templates
     const templates = [
       "worker-decompose.md", "worker-evaluate.md",
       "worker-plan.md", "worker-build.md", "worker-verify.md",
       "worker-review.md", "worker-accept.md",
     ];
     for (const filename of templates) {
-      const src = path.join(templateDir, filename);
+      const src = path.join(templateDir, "agents", filename);
       const dest = path.join(agentsDir, filename);
       if (fs.existsSync(src) && !fs.existsSync(dest)) {
         fs.mkdirSync(agentsDir, { recursive: true });
         fs.copyFileSync(src, dest);
       }
+    }
+
+    // Copy skills to worktree .claude/skills/
+    const distSkillsDir = path.join(projectRoot, "dist", "skills");
+    const srcSkillsDir = path.join(projectRoot, "skills");
+    const skillsSrcDir = fs.existsSync(distSkillsDir) ? distSkillsDir : srcSkillsDir;
+    const skillsDstDir = path.join(worktreePath, ".claude", "skills");
+
+    const SKILLS_TO_COPY = [
+      "task-traceability",
+      "task-planning",
+      "task-execution",
+      "task-verification",
+      "task-review",
+      "task-acceptance",
+      "claude-orchestrator",
+    ];
+
+    if (fs.existsSync(skillsSrcDir)) {
+      for (const skillName of SKILLS_TO_COPY) {
+        const srcSkillPath = path.join(skillsSrcDir, skillName, "SKILL.md");
+        const dstSkillDir = path.join(skillsDstDir, skillName);
+        const dstSkillPath = path.join(dstSkillDir, "SKILL.md");
+
+        if (!fs.existsSync(srcSkillPath)) continue;
+
+        if (fs.existsSync(dstSkillDir)) {
+          fs.rmSync(dstSkillDir, { recursive: true, force: true });
+        }
+        fs.mkdirSync(dstSkillDir, { recursive: true });
+        fs.copyFileSync(srcSkillPath, dstSkillPath);
+      }
+    }
+
+    // Copy team-level CLAUDE.md to worktree root
+    const teamClaudeSrc = path.join(templateDir, "claude-memory", "team-claude.md");
+    const teamClaudeDest = path.join(worktreePath, "CLAUDE.md");
+    if (fs.existsSync(teamClaudeSrc) && !fs.existsSync(teamClaudeDest)) {
+      fs.copyFileSync(teamClaudeSrc, teamClaudeDest);
+    }
+
+    // Copy personal CLAUDE.md for this role
+    const roleToPersonalTemplate: Record<string, string> = {
+      planner: "personal-claude-planner.md",
+      builder: "personal-claude-builder.md",
+      verifier: "personal-claude-verifier.md",
+      reviewer: "personal-claude-reviewer.md",
+      accepter: "personal-claude-accepter.md",
+    };
+    const personalSrc = path.join(templateDir, "claude-memory", roleToPersonalTemplate[role] ?? "personal-claude-builder.md");
+    const personalDir = path.join(worktreePath, ".claude-orchestrator", "docs", name);
+    const personalDest = path.join(personalDir, "CLAUDE.md");
+    if (fs.existsSync(personalSrc) && !fs.existsSync(personalDest)) {
+      fs.mkdirSync(personalDir, { recursive: true });
+      let content = fs.readFileSync(personalSrc, "utf-8");
+      content = content.replace(/\{\{name\}\}/g, name).replace(/\{\{role\}\}/g, role);
+      fs.writeFileSync(personalDest, content, "utf-8");
     }
   }
 }
@@ -197,7 +259,7 @@ export async function initializeWorktrees(
         JSON.stringify({ name, role, instance_id: instanceId }, null, 2),
       );
 
-      await ensureWorktreeEnvironment(wtPath);
+      await ensureWorktreeEnvironment(wtPath, name, role);
 
       if (fs.existsSync(path.join(wtPath, "package.json"))) {
         logger.info(`Installing dependencies for ${name}...`);

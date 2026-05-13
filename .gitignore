@@ -9,3 +9,4 @@ bin/orchestrator-binary
 sessions/
 .claude-orchestrator/
 countlines-cli/
+examples-workspace

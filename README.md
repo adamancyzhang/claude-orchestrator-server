@@ -18,29 +18,22 @@
 
 ## What is this?
 
-**Claude Orchestrator** lets you run multiple Claude Code instances that talk to each other — assign tasks, send messages, share context, and collaborate on real work. Think of it as giving each Claude Code instance a walkie-talkie and a shared kanban board, then watching them build together.
+**Claude Orchestrator** runs multiple Claude Code instances as an AI team. Each Worker gets an isolated git worktree with humanized names (Tom, Jerry, Lucy...), auto-processes assigned tasks via `claude -p`, self-evaluates output, and sends structured decisions back to the Leader. The Leader runs a read-only TUI and mechanically routes tasks through the Plan → Build → Verify → Review → Accept responsibility chain.
 
-Behind the scenes, ZooKeeper acts as the coordination backbone: ephemeral nodes for instance heartbeat, sequential nodes for FIFO task ordering, and watches for real-time change notification.
-
-v0.3.1 delivers a **Leader-Worker CLI-native architecture**: no MCP server, no HTTP. The Leader runs a read-only TUI and acts as a pure message/task router — it never calls `claude -p`. Workers connect directly to ZooKeeper, process messages via `claude -p`, self-evaluate their output, and send structured decisions back to the Leader. All AI intelligence lives in Workers; the Leader only handles mechanical forwarding, task distribution, and recovery. Built-in Claude Code skills (task-planning, task-execution, task-verification, task-review, task-acceptance, task-traceability) enforce a standardized responsibility chain for every task.
+Under the hood, ZooKeeper handles coordination: ephemeral nodes for heartbeat, sequential nodes for FIFO task ordering, and watches for real-time notification. Zero external database — all state lives in ZooKeeper.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  ZooKeeper                       │
-│  /leader  /instances  /tasks  /messages│
-└──────┬──────────────┬──────────────┬────────────┘
-       │              │              │
-  ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
-  │ Leader  │    │ Worker  │    │ Worker  │
-  │  (TUI)  │    │ (CLI)   │    │ (CLI)   │
-  │ Tom     │    │ Jerry   │    │  Bob    │
-  │architect│    │developer│    │ tester  │
-  └─────────┘    └─────────┘    └─────────┘
-       │              │              │
-       └──────────────┼──────────────┘
-                      │
-              claude-orchestrator CLI
-              (send-message, push-task, …)
+┌──────────────────────────────────────────────────────┐
+│                     ZooKeeper                         │
+│     /leader  /instances  /tasks  /messages            │
+└────────┬────────────────┬────────────────┬────────────┘
+         │                │                │
+    ┌────┴────┐      ┌────┴────┐      ┌────┴────┐
+    │ Leader  │      │ Worker  │      │ Worker  │
+    │  (TUI)  │      │(worktree)│     │(worktree)│
+    │  Tom    │      │  Jerry   │      │  Lucy   │
+    │planner  │      │ builder  │      │verifier │
+    └─────────┘      └─────────┘      └─────────┘
 ```
 
 ---
@@ -59,187 +52,175 @@ npm install -g @adamancyzhang/claude-orchestrator
 docker-compose up -d
 ```
 
-### 3. Initialize your environment
+### 3. Launch Everything
 
 ```bash
-# For the Leader (the team coordinator):
-claude-orchestrator setup --leader --name Tom
-
-# For each Worker (the doers):
-claude-orchestrator setup --name Jerry --role builder
+claude-orchestrator run --worker 5
 ```
 
-This creates `.claude-orchestrator/agents/` with message templates, `.claude/skills/` with responsibility-chain skills, and writes project + global config.
+One command. It:
+- Creates isolated git worktrees for each Worker (`.claude-orchestrator/worktree/{name}/`)
+- Assigns humanized names (Tom, Jerry, Lucy, Thomas, Jack...) and roles (planner, builder, verifier, reviewer, accepter)
+- Copies agent templates and skills into each worktree
+- Starts the Leader TUI
+- Forks Worker child processes (each in its own worktree)
 
-### 4. Start the Leader
+### 4. Use It
 
-```bash
-claude-orchestrator leader --name Tom
-# → TUI launches: team panel, task board, event log, footer
-```
-
-The Leader TUI shows who's online, what tasks are pending, and a scrolling event log. It also has a keyboard input line — typed text is sent as a message for processing. All other actions are triggered by CLI commands or Worker registrations.
-
-### 5. Register a Worker
+Type a requirement in the TUI input line and press Enter. The Leader forwards it to a Planner Worker, which decomposes it into a responsibility chain. Each Worker processes its link, self-evaluates, and the Leader routes the next link.
 
 ```bash
-# Reads name/role from .claude-orchestrator/config.json (set during setup).
-# Starts Worker Watcher — listens for messages and auto-processes via claude -p:
-claude-orchestrator register
-# Press Ctrl+C to stop and unregister
-```
-
-### 6. Go
-
-Now the Leader TUI shows Jerry online. You can push tasks, send messages, and manage the full lifecycle — all from any terminal.
-
-```bash
+# CLI commands (from any terminal)
 claude-orchestrator push-task --title "Implement login endpoint" --priority 0
-claude-orchestrator send-message --content "Starting on the auth module?"
-claude-orchestrator poll-task
+claude-orchestrator send-message --to-name Jerry --content "Starting on the auth module?"
+claude-orchestrator list-tasks --status pending
 ```
 
 ---
 
-## How It Works
+## Architecture
 
-### Leader-Worker Model
+### Leader-Worker Model (v0.4)
 
 | Component | What it does | ZK magic |
 |-----------|-------------|----------|
-| **Leader** | TUI with keyboard input, mechanical message/task router, recovers orphaned tasks. No AI calls. | `/leader` EPHEMERAL — only one Leader at a time |
-| **Worker** | Persistent ZK connection, auto-processes messages via `claude -p`, self-evaluates output | Ephemeral nodes → auto-cleanup on disconnect |
-| **Task Queue** | Push → Claim → Complete (or Block/Fail/Retry) | Sequential nodes for FIFO, ephemeral claims for atomic locks |
-| **Message Router** | Point-to-point messaging via ZK watches | Persistent-sequential nodes, ZK watches for push |
+| **Leader** | Read-only TUI, mechanical message/task routing, merge validation, orphan recovery. No AI calls. | `/leader` EPHEMERAL — exactly one Leader |
+| **Worker** | Isolated git worktree, ZK watch loop, auto-processes messages via `claude -p`, self-evaluates output, auto-commits changes | EPHEMERAL nodes → auto-cleanup on disconnect |
+| **Task Queue** | Push → Claim → Complete (or Block/Fail/Retry). Role-link priority sorting. | Sequential nodes for FIFO, ephemeral claims for atomic locks |
+| **Message Router** | Point-to-point messaging via ZK watches | Persistent-sequential nodes, push notification |
 
-### CLI-Native — No MCP Server
+### Worktree Isolation
 
-v0.3.x removes the centralized MCP Server entirely. Leader and Workers each connect directly to ZooKeeper. The Leader is a pure router: it forwards requirements to Planner Workers, creates tasks from structured definitions, and mechanically executes EvalDecision JSON from Workers. AI intelligence (task decomposition, self-evaluation) runs exclusively on Workers via `claude -p`. This eliminates 3 layers of indirection (MCP protocol, SSE, HTTP) and makes every node self-contained.
+Each Worker runs in its own `git worktree` under `.claude-orchestrator/worktree/{name}/`. This gives every Worker:
+- **Independent working directory** — no file conflicts
+- **Dedicated git branch** — `claude-orchestrator/{name}-workspace`
+- **Personal CLAUDE.md** — role-specific rules at `.claude-orchestrator/docs/{name}/CLAUDE.md`
+- **Daily directory memory** — `.claude-orchestrator/docs/{name}/YYYY-MM-DD/CLAUDE.md` preserves session context across restarts
 
-### CLI Commands
+### CLI-Native — Zero MCP Server
 
-| Command | What it does |
+Leader and Workers each connect directly to ZooKeeper. The Leader is a pure router: forwards requirements, creates tasks from ChainDef JSON, mechanically executes EvalDecision JSON. All AI intelligence runs exclusively on Workers via `claude -p`. No HTTP, no SSE, no MCP protocol.
+
+### Responsibility Chain
+
+```
+Plan → Build → Verify → Review → Accept
+```
+
+Each link is a dedicated role. One Worker produces, the next Worker verifies — forming a **closed-loop responsibility chain**. Every output is written to `.claude-orchestrator/docs/{name}/YYYY-MM-DD/` and the next link reads from there. Built-in self-evaluation after every link ensures quality at each step.
+
+---
+
+## CLI Commands
+
+| Command | Description |
 |---------|-------------|
-| `leader` | Start Leader node with TUI (keyboard input for sending messages) |
-| `setup` | Initialize environment: templates, skills, config |
-| `register` | Join the swarm. Reads name/role from `.claude-orchestrator/config.json`, registers and listens in cwd |
+| `run --worker <n>` | Start full orchestration: Leader TUI + N Workers with worktree isolation |
 | `unregister` | Explicitly unregister an instance |
 | `push-task` | Create a task (optionally assign to someone) |
 | `claim-task` | Grab the next task — atomic, no two instances can claim the same one |
 | `complete-task` | Mark a task done with results |
-| `poll-task` | Check your claimed tasks |
+| `list-tasks` | List tasks by status |
 | `task-block` | Mark a claimed task as blocked (with reason) |
 | `task-fail` | Mark a claimed task as failed (with reason) |
-| `task-retry` | Re-queue a failed task for retry (retry_count + 1, max 3) |
-| `send-message` | Send a message to the Leader instance |
+| `task-retry` | Re-queue a failed task (retry_count + 1, max 3) |
+| `send-message` | Send a message to a specific instance |
 | `poll-message` | Check your inbox |
 | `delete-message` | Delete a message from your inbox |
 | `config` | Show current configuration |
 
-All CLI commands return JSON. Every command supports `--zookeeper` / `-z` (or `ZK_HOSTS` env var) for pointing at a remote ZooKeeper.
+---
+
+## Directory Memory (CLAUDE.md)
+
+Claude Orchestrator uses a three-layer **CLAUDE.md** system as directory memory:
+
+| Layer | Location | Content |
+|-------|----------|---------|
+| **Team** | Worktree root `CLAUDE.md` | Team roles, directory structure, responsibility chain, git rules |
+| **Personal** | `.claude-orchestrator/docs/{name}/CLAUDE.md` | Role-specific process, output standards, communication rules, prohibited behaviors |
+| **Daily** | `.claude-orchestrator/docs/{name}/YYYY-MM-DD/CLAUDE.md` | Session context, task progress, decisions, blockers |
+
+Layers 1 and 2 are seeded from templates during worktree creation. Layer 3 is created and maintained by Workers themselves during task execution — guided by prompt templates that instruct Claude to manage its own daily memory.
 
 ---
 
-## Example Session
+## Template Structure
 
-Here's a real flow with a Leader (Tom) and two Workers (Jerry, Bob):
-
-**Tom starts the Leader:**
 ```
-claude-orchestrator leader --name Tom
-→ TUI shows: [TEAM] Tom (leader), [PENDING] empty, [EVENT LOG] Leader started
-```
-
-**Jerry registers as a Worker:**
-```bash
-claude-orchestrator register
-```
-```
-TUI updates:
-  [TEAM] Jerry joined (builder)
-  [EVENT] 9:15:03 PM Jerry joined (builder)
-```
-
-**Tom assigns work (from another terminal):**
-```bash
-claude-orchestrator push-task --title "Implement POST /api/auth/login" \
-  --description "Email+password login, return JWT." --priority 0
+templates/
+├── agents/                          ← Worker prompt templates
+│   ├── worker-decompose.md          #   Requirement → chain decomposition
+│   ├── worker-plan.md               #   Planner: blueprint design
+│   ├── worker-build.md              #   Builder: traceable implementation
+│   ├── worker-verify.md             #   Verifier: cross-check Plan vs Build
+│   ├── worker-review.md             #   Reviewer: chain-level quality gate
+│   ├── worker-accept.md             #   Accepter: final Go/No-Go decision
+│   └── worker-evaluate.md           #   Self-evaluation after each link
+└── claude-memory/                   ← Directory memory templates
+    ├── team-claude.md               #   Workspace-level CLAUDE.md
+    ├── personal-claude-planner.md   #   Planner role rules
+    ├── personal-claude-builder.md   #   Builder role rules
+    ├── personal-claude-verifier.md  #   Verifier role rules
+    ├── personal-claude-reviewer.md  #   Reviewer role rules
+    └── personal-claude-accepter.md  #   Accepter role rules
 ```
 
-**Jerry claims it:**
-```bash
-claude-orchestrator claim-task
-# → { "id": "task-0000000000", "status": "claimed", ... }
-```
-
-**Jerry gets blocked:**
-```bash
-claude-orchestrator task-block --task-id task-0000000000 --reason "Waiting for API key"
-```
-
-**Tom sees the block in the TUI and sends the key:**
-```bash
-claude-orchestrator send-message --content "API key is in 1Password: auth/third-party/google-oauth"
-```
-
-**Jerry finishes:**
-```bash
-claude-orchestrator complete-task --task-id task-0000000000 --result "PR #42 — login endpoint with tests"
-```
-
-**Bob fails a task (test env down):**
-```bash
-claude-orchestrator task-fail --task-id task-0000000001 --reason "Test environment unavailable"
-claude-orchestrator task-retry --task-id task-0000000001
-# → Re-queued as task-0000000002 with retry_count: 1
-```
+Worker templates are lean — they provide task context and key instructions, then guide Workers to read the corresponding skill file (`.claude/skills/{skill}/SKILL.md`) for detailed process. This keeps prompts focused and prevents LLM attention dispersion.
 
 ---
 
-## ZooKeeper Schema (v0.3.0)
+## Skills
+
+| Skill | Role | Description |
+|-------|------|-------------|
+| `task-planning` | Planner | Analyze requirements, define blueprints, break down tasks |
+| `task-execution` | Builder | Claim tasks, implement against blueprints, commit with traceability |
+| `task-verification` | Verifier | Independently verify Builder output against Plan criteria |
+| `task-review` | Reviewer | Review full chain (Plan→Build→Verify) for design consistency |
+| `task-acceptance` | Accepter | Validate final deliverable against business criteria, sign Go/No-Go |
+| `task-traceability` | Foundation | Trace → Execute → Map → Evidence → Record — all roles |
+
+---
+
+## ZooKeeper Node Tree
 
 ```
 /claude-orchestrator
 ├── leader                     [EPHEMERAL] Leader metadata
-├── instances/
-│   ├── a1b2c3d4...            [EPHEMERAL] Tom (leader)
-│   ├── f6e5d4c3...            [EPHEMERAL] Jerry (developer)
-│   └── e7f8a9b0...            [EPHEMERAL] Bob (tester)
+├── instances/{id}             [EPHEMERAL] Instance metadata
 ├── tasks/
-│   ├── pending/
-│   │   ├── task-0000000000    [PERSISTENT_SEQUENTIAL]
-│   │   └── task-0000000001    [PERSISTENT_SEQUENTIAL]
-│   ├── claimed/
-│   │   └── f6e5d4c3-task-0000000000  [EPHEMERAL] ← atomic lock!
-│   └── completed/
-│       └── task-0000000000    [PERSISTENT]
-├── messages/
-│   ├── a1b2c3d4.../
-│   │   └── msg-0000000000    [PERSISTENT_SEQUENTIAL]
-│   └── f6e5d4c3.../
-│       └── msg-0000000000    [PERSISTENT_SEQUENTIAL]
+│   ├── pending/task-NNNNN     [PERSISTENT_SEQUENTIAL]
+│   ├── claimed/{insId}-task-NNNNN [EPHEMERAL] ← atomic lock
+│   └── completed/task-NNNNN   [PERSISTENT]
+└── messages/{instanceId}/msg-NNNNN [PERSISTENT_SEQUENTIAL]
 ```
-
-**Key insight:** Ephemeral nodes mean crashed instances auto-unregister. Ephemeral claim nodes mean abandoned tasks auto-release. The Leader monitors `/instances` and recovers orphaned tasks when a Worker disconnects (max 3 retries, then archived as failed).
 
 ---
 
-## Task State Machine (v0.3.0)
+## Why ZooKeeper?
 
-```
-pending → claimed → completed
-                            → blocked → pending (retry)
-                            → failed  → pending (retry, max 3)
-claimed → pending (Worker disconnect, Leader recovers orphan)
-```
+| Concern | ZooKeeper answer |
+|---------|-----------------|
+| Instance lifecycle | Ephemeral nodes → auto-cleanup on crash |
+| Task ordering | Sequential nodes → guaranteed FIFO |
+| Claim atomicity | `create(path, ephemeral=true)` is atomic — only one winner |
+| Leader election | `/leader` EPHEMERAL → exactly one Leader |
+| Change notification | Built-in watches → push, not poll |
+| Dependencies | One dependency (ZK). No database, no HTTP server. |
 
-| State | Meaning | Trigger |
-|-------|---------|---------|
-| `pending` | Waiting for claim | `push_task` |
-| `claimed` | Claimed, not started | `claim_task` |
-| `completed` | Done | `complete_task` |
-| `blocked` | Blocked, waiting unblock | `task-block` |
-| `failed` | Failed, can retry | `task-fail` |
+---
+
+## Roles
+
+| Role | Value | Typical behavior |
+|------|-------|-----------------|
+| Leader | `leader` | Runs TUI, mechanical routing, merge validation, orphan recovery |
+| Planner | `planner` | Decomposes requirements, defines blueprints |
+| Builder | `builder` | Implements per blueprint, produces traceability evidence |
+| Verifier | `verifier` | Cross-checks Builder output against Plan |
+| Reviewer | `reviewer` | Quality gate for design consistency across full chain |
+| Accepter | `accepter` | Final Go/No-Go validation against business criteria |
 
 ---
 
@@ -257,70 +238,93 @@ claimed → pending (Worker disconnect, Leader recovers orphan)
 git clone https://github.com/adamancyzhang/claude-orchestrator-server.git
 cd claude-orchestrator-server
 
-# Install dependencies
 npm install
-
-# Start ZooKeeper
 docker-compose up -d
-
-# Build TypeScript
 npm run build
 
-# Start the Leader
-claude-orchestrator leader
-
-# Or use the CLI directly
-claude-orchestrator config
+# Start with 3 Workers
+node dist/index.js run --worker 3
 ```
 
 ### Run Tests
 
 ```bash
-npm test
+npm test                    # All unit tests (110+)
+npm run test:watch          # Watch mode
+npx vitest run tests/unit/worker-prompt-rendering.test.ts  # Prompt rendering verification
 ```
 
 ---
 
-## Skills for Claude Code
+## Project Structure
 
-The repo includes Claude Code skills that enforce a standardized **responsibility chain**: Plan → Build → Verify → Review → Accept. Each link has a dedicated skill, grounded on the `task-traceability` foundation layer. The `setup` command installs the 6 responsibility-chain skills into `.claude/skills/`.
-
-| Skill | Role | What it does |
-|-------|------|-------------|
-| `task-planning` | Planner | Analyze requirements, define blueprints, break down tasks, push to queue |
-| `task-execution` | Builder | Claim tasks, implement against blueprints, commit code with traceability |
-| `task-verification` | Verifier | Independently verify Builder output against Plan criteria |
-| `task-review` | Reviewer | Review full chain (Plan→Build→Verify) for design consistency |
-| `task-acceptance` | Accepter | Validate final deliverable against business criteria, sign Go/No-Go |
-| `task-traceability` | Foundation | Trace → Execute → Map → Evidence → Record — all roles |
-
----
-
-## Why ZooKeeper?
-
-| Concern | ZooKeeper answer |
-|---------|-----------------|
-| Instance lifecycle | Ephemeral nodes → auto-cleanup. No heartbeat polling needed. |
-| Task ordering | Sequential nodes → guaranteed FIFO. No race conditions. |
-| Claim atomicity | `create(path, ephemeral=true)` is atomic at the ZK level. Only one winner. |
-| Leader election | `/leader` EPHEMERAL → exactly one Leader. Auto-released on crash. |
-| Change notification | Built-in watches → push, not poll. |
-| Dependencies | One dependency (ZK). No external database, no HTTP server. |
-
-Zero external database. All state lives in ZooKeeper.
-
----
-
-## Roles
-
-| Role | Value | Typical behavior |
-|------|-------|-----------------|
-| Leader | `leader` | Runs TUI, mechanical message/task routing, recovers orphaned tasks |
-| Planner | `planner` | Decomposes requirements into task chains, defines blueprints |
-| Builder | `builder` | Claims build tasks, writes code, submits PRs |
-| Verifier | `verifier` | Claims verify tasks, checks Builder output against Plan |
-| Reviewer | `reviewer` | Claims review tasks, quality gate for design consistency |
-| Accepter | `accepter` | Claims accept tasks, final Go/No-Go validation |
+```
+├── src/
+│   ├── index.ts                   # CLI entry point (commander)
+│   ├── config.ts                  # Configuration layering (global + project)
+│   ├── orchestrator/
+│   │   └── run.ts                 # Unified run orchestrator (5-phase startup)
+│   ├── leader/                    # Leader node
+│   │   ├── index.ts               #   Startup / shutdown orchestration
+│   │   ├── tui.ts                 #   ANSI TUI with Worker Messages panel
+│   │   ├── event-bus.ts           #   Typed EventEmitter (15 events)
+│   │   ├── state.ts               #   Centralized LeaderState
+│   │   ├── monitor.ts             #   WorkerMonitor — join/leave detection
+│   │   ├── orchestrator.ts        #   TaskOrchestrator — lifecycle tracking
+│   │   ├── recovery.ts            #   TaskRecovery — orphan recovery (max 3 retries)
+│   │   ├── watcher.ts             #   LeaderWatcher — message processing
+│   │   ├── chain-router.ts        #   ChainRouter — mechanical routing (no AI)
+│   │   └── merge-validator.ts     #   Cross-verify + merge worker branches
+│   ├── worker/                    # Worker node
+│   │   ├── worktree-initializer.ts#   Name generation, worktree creation, role assignment
+│   │   ├── child.ts               #   Child process entry point
+│   │   ├── child-runner.ts        #   Child process core (chdir → ZK → Watcher)
+│   │   ├── watcher.ts             #   WorkerWatcher — ZK watch loop + orchestration
+│   │   ├── evaluator.ts           #   SelfEvaluator — built-in self-evaluation (max 3 retries)
+│   │   └── commit-checker.ts      #   Auto-commit after task completion
+│   ├── executor/                  # Template execution engine
+│   │   ├── template.ts            #   TemplateEngine — loading + identity card + rendering
+│   │   └── runner.ts              #   ClaudeRunner — CLI execution wrapper
+│   ├── zk/
+│   │   ├── client.ts              # ZooKeeper connection management
+│   │   └── paths.ts               # ZK path constants
+│   ├── modules/
+│   │   ├── registry.ts            # Instance registry
+│   │   ├── task-queue.ts          # Task queue (push/claim/complete/block/fail/retry)
+│   │   └── message-router.ts      # Message routing + template rendering
+│   ├── models/
+│   │   └── schemas.ts             # Zod schemas (Instance, Task, Message, ChainDef, EvalDecision)
+│   └── utils/
+│       ├── exec.ts                # Shell execution (execWithTee)
+│       └── logger.ts              # Tagged logger (+ --debug mode)
+├── templates/                     # Prompt and memory templates (v0.4)
+│   ├── agents/                    #   7 Worker prompt templates
+│   └── claude-memory/             #   6 CLAUDE.md directory memory templates
+├── skills/                        # Claude Code skills (8 total)
+│   ├── task-traceability/         #   Foundation layer
+│   ├── task-planning/             #   Planner skill
+│   ├── task-execution/            #   Builder skill
+│   ├── task-verification/         #   Verifier skill
+│   ├── task-review/               #   Reviewer skill
+│   ├── task-acceptance/           #   Accepter skill
+│   ├── claude-orchestrator/       #   CLI reference
+│   └── claude-code-developer/     #   Claude Code developer reference
+├── docs/
+│   ├── v0.4/
+│   │   ├── design.md              #   v0.4 full design document
+│   │   ├── CLAUDE.md              #   v0.4 changelog summary
+│   │   └── worker-init/
+│   │       └── design.md          #   Worker initialization + directory memory design
+│   └── v0.3/                      #   Archived v0.3 docs
+├── tests/
+│   ├── unit/                      #   11 test files, 110+ tests
+│   │   └── worker-prompt-rendering.test.ts  # Prompt variable substitution verification
+│   └── integration/               #   Leader-Worker integration tests
+├── examples-workspace/            # Reference implementation of multi-agent patterns
+├── docker-compose.yml             # ZooKeeper
+├── package.json
+└── tsconfig.json
+```
 
 ---
 
@@ -329,85 +333,9 @@ Zero external database. All state lives in ZooKeeper.
 | Config | Where | Default |
 |--------|-------|---------|
 | ZK hosts | `-z, --zookeeper` flag or `ZK_HOSTS` env | `127.0.0.1:2181` |
-| Instance ID | `-i, --instance-id` flag or `.claude-orchestrator/config.json` (project) / `~/.claude-orchestrator/config.json` (global) | auto-saved after `register` |
-| Claude command | `--command` flag or `config.json` → `commands.claude-cli` | `claude --dangerously-skip-permissions --permission-mode dontAsk` |
-| Cache directory | `--cache-dir` flag or `config.json` → `cache_dir` | `~/.claude-orchestrator/sessions` |
-
----
-
-## Project Structure
-
-```
-├── src/
-│   ├── index.ts               # CLI entry point (commander, 15 commands)
-│   ├── config.ts              # Configuration handling
-│   ├── cli/
-│   │   └── commands.ts        # CLI subcommand implementations
-│   ├── leader/                # Leader node (v0.3.1)
-│   │   ├── index.ts           #   startup / shutdown orchestration
-│   │   ├── tui.ts             #   ANSI-based read-only TUI
-│   │   ├── event-bus.ts       #   typed EventEmitter (14 events)
-│   │   ├── state.ts           #   centralized LeaderState
-│   │   ├── monitor.ts         #   WorkerMonitor — join/leave detection
-│   │   ├── orchestrator.ts    #   TaskOrchestrator — lifecycle tracking
-│   │   ├── recovery.ts        #   TaskRecovery — orphan recovery (max 3 retries)
-│   │   ├── watcher.ts         #   LeaderWatcher — message processing
-│   │   └── chain-router.ts    #   ChainRouter — mechanical routing (no AI)
-│   ├── worker/                # Worker node (v0.3.1)
-│   │   ├── watcher.ts         #   WorkerWatcher — ZK watch loop + orchestration
-│   │   └── evaluator.ts       #   SelfEvaluator — built-in self-evaluation
-│   ├── executor/              # Template execution engine
-│   │   ├── template.ts        #   TemplateEngine — loading + rendering
-│   │   └── runner.ts          #   ClaudeRunner — CLI execution wrapper
-│   ├── templates/             # Built-in agent templates
-│   │   ├── worker-decompose.md #   Planner decompose prompt
-│   │   ├── worker-evaluate.md  #   Worker self-evaluation prompt
-│   │   ├── worker-plan.md     #   Planner template (task-traceability + task-acceptance)
-│   │   ├── worker-build.md    #   Builder template (task-traceability)
-│   │   ├── worker-verify.md   #   Verifier template (task-traceability)
-│   │   ├── worker-review.md   #   Reviewer template (task-traceability)
-│   │   └── worker-accept.md   #   Accepter template (task-traceability + task-acceptance)
-│   ├── zk/
-│   │   ├── client.ts          # ZooKeeper connection management
-│   │   └── paths.ts           # ZK path constants
-│   ├── modules/
-│   │   ├── registry.ts        # Instance registry
-│   │   ├── task-queue.ts      # Task queue (6-state: push/claim/block/fail/retry)
-│   │   ├── message-router.ts  # Message routing + template rendering + long-poll
-│   ├── models/
-│   │   └── schemas.ts         # Zod schemas and inferred types
-│   └── utils/
-│       ├── exec.ts            # Shell execution (execWithTee)
-│       ├── output.ts          # CLI output formatting
-│       └── logger.ts          # Tagged logger for contextual output
-├── bin/
-│   └── claude-orchestrator     # npm CLI entry (Node.js)
-├── scripts/
-│   ├── start-zk.sh             # Docker ZK launcher
-│   ├── start-leader.sh         # Leader launcher
-│   ├── start-worker.sh         # Worker launcher
-│   ├── stop-all.sh             # Tear down
-│   └── publish.sh              # npm publish pipeline
-├── skills/                     # Claude Code skills (6 responsibility-chain + 2 infrastructure)
-│   ├── task-planning/           #   Planner skill
-│   ├── task-execution/          #   Builder skill
-│   ├── task-verification/       #   Verifier skill
-│   ├── task-review/             #   Reviewer skill
-│   ├── task-acceptance/         #   Accepter skill
-│   └── task-traceability/       #   Foundation layer skill
-├── docs/
-│   ├── v0.1.0/                 # Archived Python v0.1.0 docs
-│   ├── v0.2.0/                 # Archived MCP-based v0.2.x docs
-│   └── v0.3.0/                 # Current v0.3.0 docs
-│       ├── prd/                # Full spec + architecture + ZK schema
-│       └── migration-guide.md  # v0.2.0 → v0.3.0 migration
-├── tests/
-│   ├── unit/
-│   └── integration/
-├── docker-compose.yml          # ZooKeeper
-├── package.json                # npm package definition
-└── tsconfig.json               # TypeScript configuration
-```
+| Instance ID | Auto-generated per Worker | saved to `.claude-orchestrator/config.json` |
+| Claude command | `config.json` → `commands.claude-cli` | `claude --dangerously-skip-permissions --permission-mode dontAsk` |
+| Cache directory | `config.json` → `cache_dir` | `~/.claude-orchestrator/sessions` |
 
 ---
 
