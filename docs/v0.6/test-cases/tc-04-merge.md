@@ -4,44 +4,7 @@
 
 ## Level 1 — 单点测试
 
-### TC-04.1.1 检查是否已合并
-
-```typescript
-it("should detect already-merged commit → verify: isAncestor returns true", async () => {
-  // Given: commit 已在 main 中
-  await execGit("checkout main");
-  await fs.writeFile(path.join(repo, "test.txt"), "test");
-  await execGit("add -A && commit -m 'test'");
-  const sha = (await execGit("rev-parse HEAD")).trim();
-
-  // When:
-  const isMerged = await mergeValidator.isAncestor(sha, "main");
-
-  // Then:
-  expect(isMerged).toBe(true);
-});
-```
-
-### TC-04.1.2 未合并的 commit
-
-```typescript
-it("should detect unmerged commit → verify: isAncestor returns false", async () => {
-  // Given: commit 在其他分支，未合并到 main
-  await execGit("checkout -b test-branch");
-  await fs.writeFile(path.join(repo, "test.txt"), "test");
-  await execGit("add -A && commit -m 'test'");
-  const sha = (await execGit("rev-parse HEAD")).trim();
-  await execGit("checkout main");
-
-  // When:
-  const isMerged = await mergeValidator.isAncestor(sha, "main");
-
-  // Then:
-  expect(isMerged).toBe(false);
-});
-```
-
-### TC-04.1.3 解析 MergeDecision
+### TC-04.1.1 解析 MergeDecision
 
 ```typescript
 it("should parse valid MergeDecision JSON → verify: all fields correct", async () => {
@@ -58,6 +21,47 @@ it("should parse review_first with conflict files → verify: conflict_files pop
   };
   const parsed = MergeDecisionSchema.parse(json);
   expect(parsed.conflict_files).toHaveLength(2);
+});
+```
+
+### TC-04.1.2 MergeValidator 调用 ClaudeRunner
+
+```typescript
+it("should render merge template and call ClaudeRunner → verify: runner invoked with correct prompt", async () => {
+  // Given: commit 信息
+  const commitInfo = {
+    sha: "abc1234", message: "feat: add feature",
+    branch: "claude-orchestrator/Tom-workspace",
+    taskTitle: "Build Feature", taskLink: "build",
+  };
+
+  // When:
+  await mergeValidator.validate(commitInfo);
+
+  // Then: ClaudeRunner 被调用
+  expect(mockClaudeRunner.run).toHaveBeenCalledTimes(1);
+  // 传入的 prompt 包含 commit 信息
+  const promptArg = mockClaudeRunner.run.mock.calls[0][0];
+  expect(promptArg).toContain("abc1234");
+  expect(promptArg).toContain("claude-orchestrator/Tom-workspace");
+});
+```
+
+### TC-04.1.3 claude-cli 失败 → 保守策略
+
+```typescript
+it("should default to review_first when claude-cli produces no valid JSON → verify: conservative", async () => {
+  // Given: claude-cli 输出无有效 JSON
+  mockClaudeRunner.setOutput("Some unstructured error output");
+
+  const decision = await mergeValidator.validate({
+    sha: "abc1234", message: "test", branch: "claude-orchestrator/Tom-workspace",
+    taskTitle: "T", taskLink: "plan",
+  });
+
+  // Then: 保守策略
+  expect(decision.decision).toBe("review_first");
+  expect(decision.reason).toContain("failed");
 });
 ```
 
@@ -297,15 +301,18 @@ it("should default to review_first when claude merge decision fails → verify: 
 });
 ```
 
-### TC-04.5.2 git checkout 失败
+### TC-04.5.2 ClaudeRunner 执行异常
 
 ```typescript
-it("should handle git checkout failure → verify: review_first returned", async () => {
-  // Given: main 分支被锁定（模拟）
-  mockGitCheckoutError(new Error("Permission denied"));
+it("should handle ClaudeRunner execution failure → verify: review_first returned", async () => {
+  // Given: ClaudeRunner 抛出异常（claude-cli 进程崩溃）
+  mockClaudeRunner.setError(new ClaudeRunnerError("CLAUDE_RUNNER_EXIT_NON_ZERO", "exit 1"));
 
   // When:
-  const decision = await mergeValidator.validate({ ... });
+  const decision = await mergeValidator.validate({
+    sha: "abc1234", message: "test", branch: "claude-orchestrator/Tom-workspace",
+    taskTitle: "T", taskLink: "build",
+  });
 
   // Then:
   expect(decision.decision).toBe("review_first");

@@ -28,8 +28,8 @@
 │                                                                         │
 │   链路 4: 合并 → 关闭                                                    │
 │   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐          │
-│   │ Commit   │───▶│ Merge    │───▶│ git      │───▶│ Chain    │          │
-│   │ Check    │    │ Validate │    │ merge    │    │ Close    │          │
+│   │ Commit   │───▶│ Merge    │───▶│ claude-  │───▶│ Chain    │          │
+│   │ Check    │    │ Validator│    │ cli merge│    │ Close    │          │
 │   └──────────┘    └──────────┘    └──────────┘    └──────────┘          │
 │                                                                         │
 │   链路 5: 恢复                                                           │
@@ -67,7 +67,7 @@
 | 1. 需求→任务 | `01-requirement-to-tasks.md` | TUI 键盘输入 | 5 个任务入 pending | ChainRouter, Planner |
 | 2. 认领→执行 | `02-task-claim-and-execute.md` | ZK 消息到达 | EvalDecision JSON | Worker, TemplateEngine, ClaudeRunner, SelfEvaluator |
 | 3. 链推进 | `03-chain-progression.md` | 完成报告到达 Leader | 下一 link 激活 或 链终结 | ChainRouter, LeaderWatcher |
-| 4. 合并→关闭 | `04-merge-and-close.md` | Worker commit ready | git merge 完成 + 链关闭 | MergeValidator, ChainRouter |
+| 4. 合并→关闭 | `04-merge-and-close.md` | Worker commit ready | claude-cli merge 完成 + 链关闭 | MergeValidator, ClaudeRunner, ChainRouter |
 | 5. 恢复 | `05-recovery.md` | Worker EPHEMERAL 消失 | 任务重入 pending 或归档 | Recovery, TaskOrchestrator |
 
 ## 4. 端到端数据流
@@ -83,7 +83,7 @@
 8. Jerry 执行 worker-build.md → 实现代码 → commit → 自评估 → activate_next(verify)
 9. ... 依次至 Accept
 10. Jack 执行 worker-accept.md → close_chain
-11. MergeValidator 合并各 Worker 分支 → main
+11. MergeValidator 通过 claude-cli 合并各 Worker 分支 → main
 ```
 
 ## 5. 关键决策点
