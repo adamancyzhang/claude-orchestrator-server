@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A CLI-native multi-agent orchestration system backed by ZooKeeper. Leader runs a read-only TUI; Workers connect directly to ZK and auto-process messages via `claude -p`. No MCP server, no HTTP — everything is CLI + ZK watches.
+A CLI-native multi-agent orchestration system backed by ZooKeeper. Leader runs an interactive TUI (input line for user requirements, Tab/Shift+Tab/1–9 to switch the focused Worker's message panel); Workers connect directly to ZK and auto-process messages via `claude -p`. No MCP server, no HTTP — everything is CLI + ZK watches.
 
 ## Development Commands
 
