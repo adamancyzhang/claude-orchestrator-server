@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import {
   cachePaths,
   type IClaudeRunner,
@@ -54,8 +54,11 @@ export class CommitChecker {
     const message = await this.generateMessage(ctx, changed, untracked, resumeSessionId);
 
     try {
-      execSync("git add -A", { cwd: this.opts.worktree_path, stdio: "pipe" });
-      execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+      execFileSync("git", ["add", "-A"], {
+        cwd: this.opts.worktree_path,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["commit", "-m", message], {
         cwd: this.opts.worktree_path,
         stdio: "pipe",
       });

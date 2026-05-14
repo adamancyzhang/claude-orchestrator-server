@@ -152,7 +152,7 @@ Deviations: none
 }
 ```
 
-⚠️ commit message 由 claude 生成，可能含中文 / 特殊字符。`commit-checker.ts:58` 用 `replace(/"/g, '\\"')` 转义引号，但其他 shell 元字符（反引号等）未转义——若 commit message 含反引号有注入风险。这是现状⚠️。
+✅ **已修复（issue #11）**：原现状 `commit-checker.ts:58` 用 `` execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`) `` 把 commit message 拼进字符串再交给 shell，仅转义双引号；反引号 / `$()` / 分号等可被 shell 解释，存在命令注入风险。修复改用 `execFileSync("git", ["commit", "-m", message], …)` 把 message 作为单独 argv 元素传给 git，完全跳过 shell 解析。`git add -A` 也一并切换以保持一致。锁定行为见 `packages/worker/tests/core/unit/commit-checker.test.ts`。
 
 ## 6.7 SelfEvaluator
 
