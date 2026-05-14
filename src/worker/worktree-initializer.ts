@@ -13,18 +13,18 @@ export interface WorktreeConfig {
   instanceId: string;
 }
 
-const BUILTIN_NAMES = [
+export const BUILTIN_NAMES = [
   "Tom", "Jerry", "Lucy", "Thomas", "Jack", "Lisa",
   "Alice", "Bob", "Charlie", "Diana", "Edward", "Fiona",
   "George", "Helen", "Ivan", "Julia", "Kevin", "Linda",
   "Mike", "Nancy",
 ];
 
-const ROLE_PRIORITY = ["planner", "builder", "verifier", "reviewer", "accepter"];
+export const ROLE_PRIORITY = ["planner", "builder", "verifier", "reviewer", "accepter"];
 
 const logger = new Logger("WorktreeInit");
 
-function assignRoles(count: number): string[] {
+export function assignRoles(count: number): string[] {
   if (count <= ROLE_PRIORITY.length) {
     return ROLE_PRIORITY.slice(0, count);
   }
@@ -73,7 +73,7 @@ async function scanExistingNames(projectRoot: string): Promise<Set<string>> {
   return used;
 }
 
-function generateFallbackNames(count: number, used: string[]): string[] {
+export function generateFallbackNames(count: number, used: string[]): string[] {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const result: string[] = [];
   for (const letter of alphabet) {
@@ -90,7 +90,7 @@ function generateFallbackNames(count: number, used: string[]): string[] {
   return result;
 }
 
-function generateWorkerNames(
+export function generateWorkerNames(
   count: number,
   usedNames: Set<string>,
 ): Array<{ name: string; role: string }> {
