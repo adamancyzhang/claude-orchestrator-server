@@ -18,6 +18,10 @@ Claude Orchestrator v0.5 是一个 CLI 原生、ZooKeeper 直连的多 Agent 编
 | [`commands.md`](commands.md) | 13 个 CLI 命令、配置分层、任务状态流转 |
 | [`zookeeper-schema.md`](zookeeper-schema.md) | ZK 节点树、数据模型、Watch 策略、节点生命周期 |
 | [`execution-runtime.md`](execution-runtime.md) | ClaudeRunner / execWithStreaming / TemplateEngine / Hooks / `--resume` 会话续接 |
+| [`package-layout.md`](package-layout.md) | 多包工程分层（pnpm workspaces）、包依赖矩阵、dependency-cruiser 规则、关键切分理由 |
+| [`contracts.md`](contracts.md) | `@co/contracts` 完整规范:Branded IDs、Zod Schema、判别联合、跨层接口、角色权重表、错误层级、日志契约、路径函数 |
+| [`protocol.md`](protocol.md) | ZK Wire-Format 协议参考:每个节点的 JSON 形状、Watch 语义、Message envelope 判别规则、多项目命名空间 |
+| [`error-and-recovery.md`](error-and-recovery.md) | 错误模型 + 恢复状态机:错误类层级、稳定错误码、任务/进程/ZK 会话恢复、孤儿回收策略 |
 
 ## 阅读路径
 
@@ -31,6 +35,13 @@ Claude Orchestrator v0.5 是一个 CLI 原生、ZooKeeper 直连的多 Agent 编
 6. [`commands.md`](commands.md) + [`zookeeper-schema.md`](zookeeper-schema.md) — CLI 与协议参考
 7. [`architecture.md`](architecture.md) — 深入参考
 
+**参考契约**（实现 / 评审 v0.5 代码时的权威）
+
+1. [`contracts.md`](contracts.md) — 类型、Schema、跨层接口的"协议字典"
+2. [`protocol.md`](protocol.md) — ZK Wire-Format 形式化规范
+3. [`package-layout.md`](package-layout.md) — 包归属与分层规则
+4. [`error-and-recovery.md`](error-and-recovery.md) — 错误模型与恢复状态机
+
 **问题排查**
 
 - TUI / 键盘交互 → [`leader-design.md`](leader-design.md) §3
@@ -38,7 +49,10 @@ Claude Orchestrator v0.5 是一个 CLI 原生、ZooKeeper 直连的多 Agent 编
 - 合并冲突 → [`leader-design.md`](leader-design.md) §6
 - 启动配置异常 → [`orchestration.md`](orchestration.md) §3
 - ZK 节点状态 → [`zookeeper-schema.md`](zookeeper-schema.md)
-- 错误恢复矩阵 → [`architecture.md`](architecture.md) §5、[`orchestration.md`](orchestration.md) §10
+- 错误恢复矩阵 → [`error-and-recovery.md`](error-and-recovery.md)（权威）、[`architecture.md`](architecture.md) §5、[`orchestration.md`](orchestration.md) §10
+- ZK Wire-Format → [`protocol.md`](protocol.md)（权威）、[`zookeeper-schema.md`](zookeeper-schema.md)（散文背景）
+- 类型 / 接口定义 → [`contracts.md`](contracts.md)（权威）
+- 代码归属（新代码该放哪个包） → [`package-layout.md`](package-layout.md)
 
 ## 实现完成度
 

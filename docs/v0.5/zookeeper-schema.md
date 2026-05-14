@@ -335,6 +335,8 @@ permissions: ALL
 
 配置位置：全局 `~/.claude-orchestrator/config.json` 的 `zookeeper.auth` 字段，格式 `"user:password"`。
 
+> **形式化规范**：本文档的 ZK 节点结构与数据形状已在 [`protocol.md`](protocol.md) 中规范化（含 Zod schema 引用、写入时机、Watch 行为、多项目命名空间）。本文档作为散文背景保留；wire-format 以 `protocol.md` 为准。
+
 ## 7. Schema 在代码中的对应
 
 Zod schema 定义在 [src/models/schemas.ts](../../src/models/schemas.ts)，含 `InstanceSchema` / `TaskSchema` / `MessageSchema` / `ChainDefSchema` / `EvalDecisionSchema` 五个核心 schema。

@@ -448,6 +448,8 @@ check(taskContext, mainSessionId):
 
 ## 5. 错误处理与恢复
 
+> **形式化规范**：本节的错误码、状态机、孤儿回收策略已统一收纳到 [`error-and-recovery.md`](error-and-recovery.md)。本节作为散文背景保留；任何代码实现以 `error-and-recovery.md` 为准。
+
 ### 5.1 ZK 层
 
 | 场景 | 处理 |
