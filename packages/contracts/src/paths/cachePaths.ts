@@ -18,11 +18,11 @@ export function taskLogPath(
   taskId: TaskId,
   ts: string,
 ): string {
-  return `${leaderCacheDir(o)}/logs/task-${taskId}-${ts}.log`;
+  return `${leaderCacheDir(o)}/logs/${taskId}-${ts}.log`;
 }
 
 export function taskResultPath(o: CachePathOptions, taskId: TaskId): string {
-  return `${leaderCacheDir(o)}/results/task-${taskId}.md`;
+  return `${leaderCacheDir(o)}/results/${taskId}.md`;
 }
 
 export function evalLogPath(
@@ -30,11 +30,11 @@ export function evalLogPath(
   taskId: TaskId,
   attempt: number,
 ): string {
-  return `${leaderCacheDir(o)}/evals/task-${taskId}-attempt-${attempt}.log`;
+  return `${leaderCacheDir(o)}/evals/${taskId}-attempt-${attempt}.log`;
 }
 
 export function commitLogPath(o: CachePathOptions, taskId: TaskId): string {
-  return `${leaderCacheDir(o)}/commits/task-${taskId}.log`;
+  return `${leaderCacheDir(o)}/commits/${taskId}.log`;
 }
 
 export function messageLogPath(

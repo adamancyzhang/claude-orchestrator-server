@@ -30,14 +30,14 @@ cd ~/work/co-pagination/.worktrees/Mia
 claude --append-system-prompt '<Mia identity (reviewer)>' \
        -p '<rendered worker-review.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000008-<ts>.log
+  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000008-<ts>.log
 ```
 
 期望生成文件：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000008.md` | review-judgment.md 副本 |
+| `~/.../cache/leader-01/results/task-0000000008.md` | review-judgment.md 副本 |
 | `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/review-judgment.md` | 判断 |
 | `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/CLAUDE.md` | 当日记忆 |
 
@@ -135,7 +135,7 @@ ZK 路径：`/messages/leader-01/msg-0000000005`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000008.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000008.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:11:00.000Z"

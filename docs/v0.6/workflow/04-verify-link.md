@@ -39,14 +39,14 @@ cd ~/work/co-pagination/.worktrees/Lucy
 claude --append-system-prompt '<Lucy identity (verifier)>' \
        -p '<rendered worker-verify.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000007-<ts>.log
+  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000007-<ts>.log
 ```
 
 期望生成文件：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000007.md` | verification-map.md 副本 |
+| `~/.../cache/leader-01/results/task-0000000007.md` | verification-map.md 副本 |
 | `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/verification-map.md` | 验证表 |
 | `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/evidence/*.log` | 测试证据（Lucy 跑的） |
 | `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/CLAUDE.md` | 当日记忆 |
@@ -140,7 +140,7 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000004`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000007.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000007.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:08:30.000Z"

@@ -29,7 +29,7 @@ vars 传入与 Plan 同一组（`task_title / task_description / task_criteria /
 - `task_description` = `"[chain-pagination-001] build"`（fallback msg.content）
 - `task_criteria` = `""`
 - `task_doc_path` = `""`
-- `result_path` = `~/.../cache/leader-01/results/task-task-0000000006.md`
+- `result_path` = `~/.../cache/leader-01/results/task-0000000006.md`
 - `work_dir` = `~/work/co-pagination/.worktrees/Jerry`
 
 **渲染后 prompt 全文**：
@@ -56,7 +56,7 @@ Use the **task-execution** skill ... Follow Trace → Execute → Map → Eviden
 
 ## Outputs
 
-1. Write traceability map to **~/.../cache/leader-01/results/task-task-0000000006.md** (for Leader evaluation)
+1. Write traceability map to **~/.../cache/leader-01/results/task-0000000006.md** (for Leader evaluation)
 2. Write identical copy to **.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/traceability-map.md** (for Verifier)
 3. Save evidence files to **.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/evidence/**
 
@@ -96,14 +96,14 @@ Update `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`. Git commit wit
 调用形态、log/result 路径同 Plan，区别：
 - `cwd = ~/work/co-pagination/.worktrees/Jerry`
 - `system_prompt` = Jerry 的 identity card（builder 身份）
-- `log_path = ~/.../cache/leader-01/logs/task-task-0000000006-<ts>.log`
-- `result_path = ~/.../cache/leader-01/results/task-task-0000000006.md`
+- `log_path = ~/.../cache/leader-01/logs/task-0000000006-<ts>.log`
+- `result_path = ~/.../cache/leader-01/results/task-0000000006.md`
 
 ### 6.5.1 期望生成的文件
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000006.md` | traceability-map.md（Leader 视角） |
+| `~/.../cache/leader-01/results/task-0000000006.md` | traceability-map.md（Leader 视角） |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md` | 同上副本 |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/evidence/*.{md,log,json}` | 测试/构建证据 |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md` | 当日记忆 |
@@ -207,7 +207,7 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000003`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000006.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000006.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:05:00.000Z"

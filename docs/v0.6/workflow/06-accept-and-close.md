@@ -31,14 +31,14 @@ cd ~/work/co-pagination/.worktrees/Leo
 claude --append-system-prompt '<Leo identity (accepter)>' \
        -p '<rendered worker-accept.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000009-<ts>.log
+  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000009-<ts>.log
 ```
 
 期望生成文件：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000009.md` | acceptance-report.md 副本 |
+| `~/.../cache/leader-01/results/task-0000000009.md` | acceptance-report.md 副本 |
 | `~/work/.../worktrees/Leo/.claude-orchestrator/docs/Leo/2026-05-14/acceptance-report.md` | 验收报告 |
 | `~/work/.../worktrees/Leo/.claude-orchestrator/docs/Leo/2026-05-14/CLAUDE.md` | 当日记忆 |
 
@@ -140,7 +140,7 @@ ZK 路径：`/messages/leader-01/msg-0000000006`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000009.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000009.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:14:00.000Z"
@@ -296,30 +296,30 @@ messages/
 
 results/
 ├── task-leader-decompose-msg-0000000001.md   ← ChainDef JSON
-├── task-task-0000000001.md         ← Tom blueprint
-├── task-task-0000000006.md         ← Jerry traceability-map
-├── task-task-0000000007.md         ← Lucy verification-map
-├── task-task-0000000008.md         ← Mia review-judgment
-└── task-task-0000000009.md         ← Leo acceptance-report
+├── task-0000000001.md         ← Tom blueprint
+├── task-0000000006.md         ← Jerry traceability-map
+├── task-0000000007.md         ← Lucy verification-map
+├── task-0000000008.md         ← Mia review-judgment
+└── task-0000000009.md         ← Leo acceptance-report
 
 logs/
-├── task-task-0000000001-<ts>.log   ← Tom 主执行
-├── task-task-0000000006-<ts>.log   ← Jerry 主执行
-├── task-task-0000000007-<ts>.log   ← Lucy 主执行
-├── task-task-0000000008-<ts>.log   ← Mia 主执行
-└── task-task-0000000009-<ts>.log   ← Leo 主执行
+├── task-0000000001-<ts>.log   ← Tom 主执行
+├── task-0000000006-<ts>.log   ← Jerry 主执行
+├── task-0000000007-<ts>.log   ← Lucy 主执行
+├── task-0000000008-<ts>.log   ← Mia 主执行
+└── task-0000000009-<ts>.log   ← Leo 主执行
 
 commits/
-├── task-task-0000000001.log        ← Tom commit message 日志
-├── task-task-0000000006.log
-├── task-task-0000000007.log
-├── task-task-0000000008.log
-└── task-task-0000000009.log
+├── task-0000000001.log        ← Tom commit message 日志
+├── task-0000000006.log
+├── task-0000000007.log
+├── task-0000000008.log
+└── task-0000000009.log
 
 evals/
-├── task-task-0000000001-attempt-0.log[.result.md]
-├── task-task-0000000001-attempt-1.log[.result.md]
-├── task-task-0000000001-attempt-2.log[.result.md]
+├── task-0000000001-attempt-0.log[.result.md]
+├── task-0000000001-attempt-1.log[.result.md]
+├── task-0000000001-attempt-2.log[.result.md]
 ├── (同上 5 个 task × ≤3 attempts，受 schema 不匹配影响多数情况下 3 个 attempt 都生成)
 ```
 

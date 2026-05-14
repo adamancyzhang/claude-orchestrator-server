@@ -86,16 +86,15 @@ const link = (msg.link ?? null) as TaskLink | "decompose" | null;
 const taskId = (msg.task_id as TaskId | null) ?? asTaskId(`adhoc-${msg.id || ...}`);
 //   "task-0000000001"
 const resultPath = cachePaths.taskResultPath(this.opts.cache_paths, taskId);
-//   ~/.claude-orchestrator/cache/leader-01/results/task-task-0000000001.md
-//   ⚠️ 注意 "task-task-" 双前缀，因为 task_id 本身以 "task-" 开头，而 cachePaths 又拼上 "task-"
-//   见 packages/contracts/src/paths/cachePaths.ts:24-26
+//   ~/.claude-orchestrator/cache/leader-01/results/task-0000000001.md
+//   ✅ issue #8 修复后，cachePaths 不再额外拼 "task-" 前缀（taskId 自带）。
 const logPath = cachePaths.taskLogPath(this.opts.cache_paths, taskId, new Date().toISOString());
-//   ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000001-2026-05-14T03:00:03.000Z.log
+//   ~/.claude-orchestrator/cache/leader-01/logs/task-0000000001-2026-05-14T03:00:03.000Z.log
 
 const tplName = LINK_TO_TEMPLATE[link];      // "worker-plan.md"
 ```
 
-⚠️ **双前缀路径**：cachePaths 假定 taskId 不含 "task-" 前缀，但 task_queue 生成的 id 是 `task-0000000001`，最终路径出现 `task-task-0000000001`。保留现状描述。
+✅ **issue #8 修复**：`cachePaths.taskLogPath/taskResultPath/evalLogPath/commitLogPath` 不再额外拼 `task-` 前缀，因为 task_queue 生成的 id 本身就是 `task-NNNNNNNNNN`。修复前路径形如 `logs/task-0000000001-...log`，修复后回到 `logs/task-0000000001-...log`。锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
 
 ## 5.3 Hook: worker_message_start
 
@@ -110,8 +109,8 @@ await this.opts.hooks.fire({
     CO_TASK_ID:     "task-0000000001",
     CO_LINK:        "plan",
     CO_CHAIN_ID:    "chain-pagination-001",
-    CO_LOG_PATH:    "~/.../cache/leader-01/logs/task-task-0000000001-...log",
-    CO_RESULT_PATH: "~/.../cache/leader-01/results/task-task-0000000001.md",
+    CO_LOG_PATH:    "~/.../cache/leader-01/logs/task-0000000001-...log",
+    CO_RESULT_PATH: "~/.../cache/leader-01/results/task-0000000001.md",
   },
 });
 ```
@@ -157,7 +156,7 @@ Use the **task-planning** skill (read `.claude/skills/task-planning/SKILL.md`). 
 
 ## Outputs
 
-1. Write blueprint to **~/.claude-orchestrator/cache/leader-01/results/task-task-0000000001.md** (for Leader evaluation)
+1. Write blueprint to **~/.claude-orchestrator/cache/leader-01/results/task-0000000001.md** (for Leader evaluation)
 2. Write identical copy to **.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/blueprint.md** (for downstream Workers)
 
 Blueprint must be self-contained with architecture, interfaces, data flow, and concrete build steps with verifiable criteria.
@@ -201,7 +200,7 @@ cd ~/work/co-pagination/.worktrees/Tom
 claude --append-system-prompt '<Tom identity card>' \
        -p '<rendered worker-plan.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000001-<ts>.log
+  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000001-<ts>.log
 ```
 
 **session_id 抽取规则**：`execWithStreaming` 解析 stream-json 第一行 `system/init` 事件的 `session_id` 字段，回传给 `ClaudeRunner.run()` 作为 `result.session_id`，供后续 `--resume` 使用。
@@ -220,8 +219,8 @@ claude --append-system-prompt '<Tom identity card>' \
 
 | 路径 | 类型 | 内容 |
 |------|------|------|
-| `~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000001-<ts>.log` | claude-cli stream-json | 完整流（system/init, assistant_message, tool_use 等） |
-| `~/.claude-orchestrator/cache/leader-01/results/task-task-0000000001.md` | markdown | Tom 写入的 blueprint（即"Outputs #1"） |
+| `~/.claude-orchestrator/cache/leader-01/logs/task-0000000001-<ts>.log` | claude-cli stream-json | 完整流（system/init, assistant_message, tool_use 等） |
+| `~/.claude-orchestrator/cache/leader-01/results/task-0000000001.md` | markdown | Tom 写入的 blueprint（即"Outputs #1"） |
 | `~/work/co-pagination/.worktrees/Tom/.claude-orchestrator/docs/Tom/2026-05-14/blueprint.md` | markdown | 同上 blueprint 的副本（Tom 自行替换 `{{name}}` 为自己的名字） |
 | `~/work/co-pagination/.worktrees/Tom/.claude-orchestrator/docs/Tom/2026-05-14/CLAUDE.md` | markdown | 每日 directory memory，记录完成状态 |
 
@@ -288,7 +287,7 @@ if (link && CHAIN_LINKS.includes(link as TaskLink)) {
    - 模板：`templates/agents/worker-commit-message.md`
    - vars: `changed_files / untracked_files / task_title / link`
    - 调 `ClaudeRunner.run({prompt, log_path: commitLogPath, resume_session_id: "sess-tom-plan-001", quiet: true})`
-   - log 路径：`~/.claude-orchestrator/cache/leader-01/commits/task-task-0000000001.log`
+   - log 路径：`~/.claude-orchestrator/cache/leader-01/commits/task-0000000001.log`
    - 读 log 首行截 72 字符 → 假设 `feat(plan): blueprint for /api/users pagination`
 4. `git add -A` + `git commit -m "feat(plan): blueprint for /api/users pagination"`
 5. `git rev-parse HEAD` → `7c4f3a2b...`
@@ -336,7 +335,7 @@ const evalContent = await this.opts.evaluator.evaluate({
 `packages/worker/src/evaluator.ts:54-124` `evaluate()` 流程，循环 ≤ MAX_RETRIES=3 次：
 
 每次 attempt N：
-- `evalLogPath = cachePaths.evalLogPath(cache_paths, taskId, N)` → `~/.../cache/leader-01/evals/task-task-0000000001-attempt-{N}.log`
+- `evalLogPath = cachePaths.evalLogPath(cache_paths, taskId, N)` → `~/.../cache/leader-01/evals/task-0000000001-attempt-{N}.log`
 - `evalResultPath = evalLogPath + ".result.md"`
 - prompt = `template_engine.render("worker-evaluate.md", { ...baseVars, result_path: evalResultPath })`
   - baseVars: `link=plan, task_result_path=results/...md, work_dir=worktree, time=...` + msg_vars
@@ -436,7 +435,7 @@ await this.opts.message_router.send({
   link: "plan",
   task_id: "task-0000000001",
   chain_id: "chain-pagination-001",
-  result_path: resultPath,                        // results/task-task-0000000001.md
+  result_path: resultPath,                        // results/task-0000000001.md
 });
 ```
 
@@ -462,7 +461,7 @@ await this.opts.message_router.send({
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000001.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000001.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:01:30.000Z"
@@ -646,11 +645,11 @@ switch (decision.decision) {
 
 | 路径 | 来源 |
 |------|------|
-| `~/.../cache/leader-01/logs/task-task-0000000001-<ts>.log` | claude-cli 主执行 |
-| `~/.../cache/leader-01/results/task-task-0000000001.md` | blueprint.md（Leader 视角） |
-| `~/.../cache/leader-01/commits/task-task-0000000001.log` | commit message claude 调用日志 |
-| `~/.../cache/leader-01/evals/task-task-0000000001-attempt-{0,1,2}.log` | self-eval claude 调用日志（重试视情况） |
-| `~/.../cache/leader-01/evals/task-task-0000000001-attempt-{N}.log.result.md` | self-eval JSON 输出 |
+| `~/.../cache/leader-01/logs/task-0000000001-<ts>.log` | claude-cli 主执行 |
+| `~/.../cache/leader-01/results/task-0000000001.md` | blueprint.md（Leader 视角） |
+| `~/.../cache/leader-01/commits/task-0000000001.log` | commit message claude 调用日志 |
+| `~/.../cache/leader-01/evals/task-0000000001-attempt-{0,1,2}.log` | self-eval claude 调用日志（重试视情况） |
+| `~/.../cache/leader-01/evals/task-0000000001-attempt-{N}.log.result.md` | self-eval JSON 输出 |
 
 ### Worktree 内文件（Tom 的分支）
 
