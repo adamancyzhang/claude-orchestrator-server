@@ -153,6 +153,40 @@ export class TaskQueue implements ITaskQueue {
     return null;
   }
 
+  async claimById(taskId: TaskId, claimer: InstanceId): Promise<Task | null> {
+    const data = await this.zk.getData(
+      zkPaths.taskPending(taskId, this.paths),
+    );
+    if (!data) return null;
+    const raw = decode<Record<string, unknown>>(data.data);
+    const task = parseTask({ ...raw, id: taskId });
+    const claimedAt = utcNow();
+    const record: ClaimRecord = {
+      task_id: taskId,
+      instance_id: claimer,
+      claimed_at: claimedAt,
+      task_snapshot: task,
+    };
+    try {
+      await this.zk.createEphemeral(
+        zkPaths.taskClaimed(claimer, taskId, this.paths),
+        encode(record),
+      );
+    } catch {
+      return null;
+    }
+    await this.zk
+      .delete(zkPaths.taskPending(taskId, this.paths))
+      .catch(() => {});
+    return {
+      ...task,
+      id: taskId,
+      status: "claimed",
+      claimed_at: claimedAt,
+      claimed_by: claimer,
+    };
+  }
+
   async complete(
     taskId: TaskId,
     result: string,

@@ -42,39 +42,22 @@ WorkerWatcher (Tom) ← msg-0000000001
       → MessageRouter.send → /messages/jerry-01/msg-0000000001
 ```
 
-## 5.1 任务认领（⚠️ 不走 task_queue.claim）
+## 5.1 任务认领 ✅ issue #1 修复
 
-**现状**：`WorkerWatcher` 完全消息驱动。`packages/worker/src/watcher.ts:57-67` `start()` 只注册 `message_router.waitForMessage(instance_id, cb)`，cb 中调 `processMessage(msg)`。整个 worker 代码路径中没有任何 `task_queue.claim()` 调用。
+`WorkerWatcher.processMessage`（`packages/worker/src/watcher.ts`）收到 task_dispatch 消息后，在主任务执行前调用 `task_queue.claimById(task_id, instance_id)`，把 ZK 节点从 `/tasks/pending/task-0000000001` 原子搬到 `/tasks/claimed/tom-01-task-0000000001` (EPHEMERAL)。
 
-**因此**：
-- `/tasks/pending/task-0000000001` **依然在 ZK 中**，没有被移除
-- `/tasks/claimed/` **依然为空**
-- ZK 上看不到 "Tom 正在处理 plan 任务" 这件事，仅能从 `/messages/tom-01/msg-0000000001` 的存在推断
+claimById 实现（`packages/coordination/src/task-queue.ts`）：
+1. `getData("/tasks/pending/task-0000000001")` — 读出 task 快照
+2. `createEphemeral("/tasks/claimed/tom-01-task-0000000001", ClaimRecord)` — 原子接管；失败说明并发抢占 → 返回 null
+3. `delete("/tasks/pending/task-0000000001")` — 移除 pending
+4. 返回 status=claimed 的 Task 对象
 
-`task_queue.claim()` 的代码 (`packages/coordination/src/task-queue.ts:92-153`) 仍然存在，但是 dormant —— 可能未来由 leader recovery / 一致性扫描 / CLI 命令使用。本工作流路径下不调用。
+**因此 ZK 状态**：
+- 处理 plan 时：`/tasks/claimed/tom-01-task-0000000001` 出现（EPHEMERAL，Tom 断线自删）；`/tasks/pending/task-0000000001` 被删
+- 主任务 + commit + 自评估 + 完成报告 完成后 5.8 段：`task_queue.complete(task_id, resultPath, instance_id, name, duration)` 把节点搬到 `/tasks/completed/task-0000000001` (PERSISTENT) 并删除 claimed 节点。
+- `task_queue.claim(claimer, role)` 仍存在，主要被 TaskRecovery / CLI 使用，本工作流不走它。
 
-### 5.1.x 假设走 claim 时的排序逻辑（仅参考）
-
-若有人调用 `claim("tom-01", "planner")`：
-
-`packages/coordination/src/task-queue.ts:92-124`：
-
-1. `getChildren("/tasks/pending")` → `["task-0000000001", ..., "task-0000000005"]`，已按字典序排序
-2. 对每个 task：
-   - `weight = ROLE_WEIGHTS["planner"][link]` →
-     - plan: 100, build: 10, verify: 10, review: 20, accept: 10
-   - `assignedMatch = task.assigned_to === claimer ? 0 : 1` → 全部为 1（5 个 task 都没 assigned_to）
-   - 排序 key: `[assignedMatch, -weight, priority, id]`
-3. 排序后顺序：
-   ```
-   key=[1, -100, 1, task-0000000001]  ← plan，权重 100，最优
-   key=[1, -20,  1, task-0000000004]  ← review，权重 20
-   key=[1, -10,  1, task-0000000002]  ← build
-   key=[1, -10,  1, task-0000000003]  ← verify
-   key=[1, -10,  1, task-0000000005]  ← accept
-   ```
-4. 原子认领：`createEphemeral("/tasks/claimed/tom-01-task-0000000001", record)`；成功后 `delete("/tasks/pending/task-0000000001")`。
-5. 若 createEphemeral 抛冲突（其他 worker 抢先） → continue 下一候选。
+⚠️ Edge case：若 task_id 对应的 pending 节点已不存在（重启重发、leader 自处理 decompose 后回退创建新 task 等），`claimById` 返回 null，Worker 仍继续处理（仅记一条 warn log），保证不阻塞消息处理。
 
 ## 5.2 选择模板
 

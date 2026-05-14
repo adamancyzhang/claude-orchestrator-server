@@ -59,7 +59,7 @@
 
 阅读时留意以下与设计文档不完全一致的现象（都在对应文件里展开）：
 
-1. **`/tasks/*` 是审计型，而非真正的拉取队列** — `WorkerWatcher` 完全靠消息驱动，从不调用 `task_queue.claim()`；`ChainRouter` 把 5 个 task 都 push 进 pending，但只派发首任务，剩余任务沉积。后续每完成一个 link，又会 push 一条新 task。详见 `01` §5 + `02` §5.1。
+1. ✅ **已修复（issue #1）**：`WorkerWatcher.processMessage` 现在在主任务执行前调用 `task_queue.claimById(task_id, instance_id)` 把 ZK 节点从 `/tasks/pending/{task-id}` 原子搬到 `/tasks/claimed/{instance_id}-{task-id}`（EPHEMERAL，断线自删）；执行完成 + 自评估之后调用 `task_queue.complete(task_id, …)` 移到 `/tasks/completed/{task-id}` 并记录 duration。`ChainRouter` 不再向消息驱动派单"绕过" ZK 任务状态机；配合 #4，pending 中的 5 个初始 task 会按链路推进逐个 claim → complete，最终在 `/tasks/completed/` 中留下完整审计。详见 `01` §5 + `02` §5.1。
 2. ✅ **已修复（issue #2）**：模板里 `{{name}}` / `{{role}}` 在 Worker prompt 与自评估 prompt 中现在会被正确替换。原现状下 `WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement`（Leader 自处理 decompose）渲染时都不传 `name/role` 变量，模板里的 `{{name}}` 字面留下。详见 `00` §3。
 3. ✅ **已修复（issue #3）**：`worker-evaluate.md` 与 `worker-evaluate-format-hint.md` 输出字段已与 `EvalDecisionSchema` 对齐——`next_link / feedback_to_worker / suggested_worker / feedback_target` 全部使用 schema 一致的 snake_case；并补充了 `reject` 决策分支。模板示意按 discriminated union 分四个分支列出，避免无关字段污染。详见 `02` §5.7。
 4. ✅ **已修复（issue #4）**：`ChainRouter.handleCompletionReport` 的 activate_next 现在通过 `findOrCreatePendingTask(chain_id, next_link)` **复用** handleTaskDefinitions 初始 push 的 5 个 pending 任务；只有当无法匹配时才回退为创建新任务。链路推进不再产生重复 task，task_dispatch 携带的 description/criteria 直接来源于初始的 ChainDef。详见 `02` §5.9。

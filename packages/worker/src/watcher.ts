@@ -8,6 +8,7 @@ import {
   type IInstanceRegistry,
   type ILogger,
   type IMessageRouter,
+  type ITaskQueue,
   type ITemplateEngine,
   type InstanceId,
   type Message,
@@ -38,6 +39,7 @@ export interface WorkerWatcherOptions {
   worktree_branch: string;
   registry: IInstanceRegistry;
   message_router: IMessageRouter;
+  task_queue: ITaskQueue;
   runner: IClaudeRunner;
   template_engine: ITemplateEngine;
   hooks: IHookEngine;
@@ -81,6 +83,26 @@ export class WorkerWatcher {
       taskId,
       new Date().toISOString(),
     );
+
+    // Claim the task in ZK so the cluster sees this worker as its owner.
+    // Skipped for ad-hoc / decompose messages (no real pending node) and
+    // tolerated when the pending node is gone (e.g. resumed dispatch).
+    const isChainTask = link !== null && CHAIN_LINKS.includes(link as TaskLink);
+    const realTaskId =
+      isChainTask && msg.task_id ? (msg.task_id as TaskId) : null;
+    const taskStart = Date.now();
+    if (realTaskId) {
+      const claimed = await this.opts.task_queue.claimById(
+        realTaskId,
+        this.opts.instance_id,
+      );
+      if (!claimed) {
+        this.opts.logger.warn(
+          `task already claimed/completed, proceeding without ZK claim`,
+          { task_id: realTaskId },
+        );
+      }
+    }
 
     let prompt = msg.content;
     if (link) {
@@ -160,6 +182,26 @@ export class WorkerWatcher {
       );
     } else if (link === "decompose") {
       await this.sendDecomposeReport(msg, resultPath, taskId);
+    }
+
+    // Transition the task from claimed → completed in ZK once the
+    // self-evaluation report is on its way to the leader.
+    if (realTaskId) {
+      const durationSeconds = (Date.now() - taskStart) / 1000;
+      try {
+        await this.opts.task_queue.complete(
+          realTaskId,
+          resultPath,
+          this.opts.instance_id,
+          this.opts.worker_name,
+          durationSeconds,
+        );
+      } catch (err) {
+        this.opts.logger.warn("task completion failed", {
+          task_id: realTaskId,
+          error: String(err),
+        });
+      }
     }
 
     await this.opts.message_router.dismiss(this.opts.instance_id, msg.id);
