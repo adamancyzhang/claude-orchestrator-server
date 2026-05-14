@@ -22,7 +22,8 @@
 Fallback: {{task_doc_path}}. If any is missing → cannot accept, report to Leader.
 ```
 
-⚠️ 同 Verify/Review，跨 worktree 问题最严重——Leo 需要读 4 个不同分支的产出。
+✅ **issue #10 修复**：Leo 通过 chain-shared cache 路径读全部 4 份上游 artifact：
+- `{{upstream_plan_artifact}}` / `{{upstream_build_artifact}}` / `{{upstream_verify_artifact}}` / `{{upstream_review_artifact}}` 分别指向 `{cache_dir}/{leader_id}/chains/{chain_id}/{plan|build|verify|review}.md`。不再依赖各 worktree 的 `.claude-orchestrator/docs/{role}/...`。
 
 ## 9.5 主任务
 

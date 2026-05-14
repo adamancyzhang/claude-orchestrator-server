@@ -21,7 +21,12 @@
 Fallback: `{{task_doc_path}}`. If any is missing → cannot review, report to Leader.
 ```
 
-⚠️ 同 Verify：跨 worktree artifact 传递问题在 Review 进一步累积——Mia 需要看 3 个不同分支的 artifact。
+✅ **issue #10 修复**：Mia 通过 chain-shared cache 路径读 3 份上游 artifact：
+- `{{upstream_plan_artifact}}` ← Tom 的 blueprint
+- `{{upstream_build_artifact}}` ← Jerry 的 traceability-map
+- `{{upstream_verify_artifact}}` ← Lucy 的 verification-map
+
+不再依赖各 worktree 的 `.claude-orchestrator/docs/{planner|builder|verifier}/...` 路径。
 
 ## 8.5 主任务
 

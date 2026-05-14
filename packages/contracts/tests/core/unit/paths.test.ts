@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  asChainId,
   asInstanceId,
   asMessageId,
   asProjectId,
@@ -82,5 +83,11 @@ describe("cachePaths", () => {
     expect(cachePaths.decomposeResultPath(opts, asMessageId("msg-1"))).toBe(
       "/tmp/cache/leader1/decompose/msg-1.md",
     );
+    expect(
+      cachePaths.chainArtifactPath(opts, asChainId("chain-x"), "plan"),
+    ).toBe("/tmp/cache/leader1/chains/chain-x/plan.md");
+    expect(
+      cachePaths.chainArtifactPath(opts, asChainId("chain-x"), "build"),
+    ).toBe("/tmp/cache/leader1/chains/chain-x/build.md");
   });
 });

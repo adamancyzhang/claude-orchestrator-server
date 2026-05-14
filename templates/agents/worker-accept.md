@@ -16,10 +16,10 @@ Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` to restore sessio
 Use the **task-acceptance** skill (read `.claude/skills/task-acceptance/SKILL.md`).
 
 **Read all four upstream artifacts (required)**:
-1. `.claude-orchestrator/docs/{planner_name}/YYYY-MM-DD/blueprint.md`
-2. `.claude-orchestrator/docs/{builder_name}/YYYY-MM-DD/traceability-map.md`
-3. `.claude-orchestrator/docs/{verifier_name}/YYYY-MM-DD/verification-map.md`
-4. `.claude-orchestrator/docs/{reviewer_name}/YYYY-MM-DD/review-judgment.md`
+1. Planner blueprint: `{{upstream_plan_artifact}}`
+2. Builder traceability map: `{{upstream_build_artifact}}`
+3. Verifier verification map: `{{upstream_verify_artifact}}`
+4. Reviewer judgment: `{{upstream_review_artifact}}`
 Fallback: `{{task_doc_path}}`. If any is missing → cannot accept, report to Leader.
 
 For each acceptance criterion: does the deliverable exist? Are Verifier FAILUREs resolved? Are Reviewer CONCERNs addressed? Is evidence independently verifiable?

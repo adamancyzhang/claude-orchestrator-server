@@ -81,15 +81,22 @@ Update `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`. Git commit wit
 
 ✅ **issue #2 修复**：`{{name}}` 现在替换为 `Jerry`、`{{role}}` 替换为 `builder`，与 Plan 一致。
 
-### 6.4.1 Jerry 怎么拿到 Tom 的 blueprint
+### 6.4.1 ✅ issue #10 修复：Jerry 通过 chain-shared cache 路径读 Tom 的 blueprint
 
-依现状代码，Jerry 必须：
-1. 在自己的 worktree `~/work/co-pagination/.worktrees/Jerry` 中尝试读 `.claude-orchestrator/docs/Tom/2026-05-14/blueprint.md`
-2. 该文件**不在 Jerry 的 worktree**（Tom 提交在 `co/tom-01` 分支，Jerry 在 `co/jerry-01` 分支）→ 读不到
-3. Jerry 可能尝试 `git fetch origin co/tom-01 && git show co/tom-01:.claude-orchestrator/docs/Tom/2026-05-14/blueprint.md` —— 但模板没指引这么做
-4. 实际效果：Jerry 通常会 **以为没有 blueprint**，按 msg.content `[chain-pagination-001] build` 字面 fallback 自行设计实现
+Tom 完成 plan 时，`WorkerWatcher` 把 `result_path` 设为
+`{cache_dir}/{leader_id}/chains/{chain_id}/plan.md`
+（由 `cachePaths.chainArtifactPath(o, chainId, "plan")` 计算），claude-cli 把蓝图写到这里。`cache_dir` 在所有 Worker 与 Leader 之间共享，因此 Jerry（在 `co/jerry-01` 分支的另一个 worktree）能直接通过 path 读取，不必跨分支 / 不必 `git fetch`。
 
-⚠️ 这是 Plan→Build artifact 跨 worktree 传递的现状缺陷。模板的 "Read planner blueprint" 与实际 worktree 隔离结构存在断链。
+Jerry 的 prompt 通过 `{{upstream_plan_artifact}}` 拿到上述路径。`worker-build.md` 模板已改为：
+
+```
+**Trace** — Read the upstream Plan artifact in this order:
+1. {{upstream_plan_artifact}}  ← chain-shared cache, authoritative
+2. .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/blueprint.md  ← 仅当本 worktree 续做时
+3. {{task_doc_path}}  ← 最后兜底
+```
+
+Worker 在自己的 worktree 仍写一份本地副本到 `.claude-orchestrator/docs/{{name}}/...`（供人审），但跨 worker 的"权威源"是 chain-shared cache 路径。
 
 ## 6.5 claude-cli 主执行
 

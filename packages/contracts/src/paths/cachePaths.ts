@@ -1,4 +1,5 @@
-import type { InstanceId, MessageId, TaskId } from "../ids.js";
+import type { ChainId, InstanceId, MessageId, TaskId } from "../ids.js";
+import type { TaskLink } from "../enums.js";
 
 export interface CachePathOptions {
   cache_dir: string;
@@ -49,4 +50,19 @@ export function decomposeResultPath(
   messageId: MessageId,
 ): string {
   return `${leaderCacheDir(o)}/decompose/${messageId}.md`;
+}
+
+/**
+ * Per-(chain, link) artifact path that lives in the leader's shared cache
+ * directory — readable by every Worker process regardless of which git
+ * worktree they're running in. This is the canonical location Workers
+ * write their link result to and downstream Workers read upstream
+ * artifacts from.
+ */
+export function chainArtifactPath(
+  o: CachePathOptions,
+  chainId: ChainId,
+  link: TaskLink,
+): string {
+  return `${leaderCacheDir(o)}/chains/${chainId}/${link}.md`;
 }

@@ -21,14 +21,11 @@
 Fallback: `{{task_doc_path}}`. If either is missing → BLOCKED, report to Leader.
 ```
 
-⚠️ 跨 worktree artifact 问题在 Verify 更严重：Lucy 在 `~/work/co-pagination/.worktrees/Lucy`，需要看 Tom 的 `blueprint.md`（在 `co/tom-01` 分支）+ Jerry 的 `traceability-map.md`（在 `co/jerry-01` 分支）。两份都不在 Lucy 的 worktree 默认 checkout 中，**且模板没指引怎么 git checkout / fetch**。
+✅ **issue #10 修复**：跨 worktree artifact 现在通过 chain-shared cache 路径传递。Lucy 直接从
+- `{{upstream_plan_artifact}}` = `{cache_dir}/{leader_id}/chains/chain-pagination-001/plan.md`
+- `{{upstream_build_artifact}}` = `{cache_dir}/{leader_id}/chains/chain-pagination-001/build.md`
 
-实际现状：Lucy 可能：
-1. 退化为只看 `task_doc_path`（为空字符串）→ BLOCKED
-2. 主动 `git log --all --oneline` 找到 `co/tom-01` / `co/jerry-01` 分支，用 `git show <branch>:<path>` 取文件
-3. 直接读项目根目录的 `.claude-orchestrator/docs/Tom/...`（如果 worktree 共享主项目根）
-
-⚠️ 现状⚠️ 不确定哪种行为占主导，依赖 Worker prompt 中 Claude 的应变能力。
+读 Tom 与 Jerry 的产物，不再依赖 git 分支跨 worktree 同步。模板里"Fallback: `{{task_doc_path}}`"仍保留，缺少上游 artifact 时 Lucy 仍可标 BLOCKED。
 
 ## 7.5 主任务 claude-cli
 
