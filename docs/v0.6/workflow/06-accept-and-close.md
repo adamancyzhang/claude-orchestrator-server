@@ -172,14 +172,26 @@ this.opts.bus.emit({ type: "chain_closed", chain_id: asChainId(chainId) });
 
 TUI EVENT LOG 显示一条 `Chain closed: chain-pagination-001`。**没有进一步动作**——既不会标记 chain 关联的 tasks 为 `completed`/`failed`，也不会自动触发合并。
 
-## 9.10 MergeValidator（按需触发）
+## 9.10 MergeValidator ✅ issue #7 修复：close_chain 自动触发
 
-⚠️ **现状**：`MergeValidator`（`packages/leader/src/merge-validator.ts`）**没有被 `ChainRouter` 自动调用**。`emitChainClosed` 后没有任何代码路径触发 merge 流程。
+`ChainRouter` 现在维护 `chainCommits: Map<chain_id, CommitInfo[]>`，每收到 completion_report：
 
-`MergeValidator` 的现有触发方式可能是：
-1. 外部 CLI 命令（人工触发）
-2. 其他 leader 子系统（task_orchestrator / recovery 等）—— 经代码检查未发现
-3. 通过 hook `merge_decision_made`（但是反向：merge 触发后才 emit hook）
+```typescript
+if (msg.chain_id && msg.link && raw.commit) {
+  this.recordCommit(msg.chain_id, msg.link, msg.task_title, raw.commit);
+}
+```
+
+`close_chain` 决策走 `runMergeValidation(chain_id)`：按插入序（即 plan→build→verify→review→accept）逐个调用 `merge_validator.validate(commit)`。单个 commit 验证抛错时仅 warn，下一个 commit 继续。
+
+`merge_validator` 在 `packages/orchestrator/src/run.ts` 构造并注入：
+
+```typescript
+const mergeValidator = new MergeValidator({...});
+const chainRouter = new ChainRouter({...others, merge_validator: mergeValidator});
+```
+
+`reject` 决策**不**触发 MergeValidator（语义为彻底退回，不进主线）。`forgetChain` 同时清理 chainWorkers 与 chainCommits 映射。
 
 ### 9.10.1 MergeValidator 行为参考（若被调用）
 
@@ -217,19 +229,19 @@ claude 输出 `MergeDecision` JSON：
 
 `MergeDecisionSchema` 见 `packages/contracts/src/schemas/merge.ts`。
 
-### 9.10.3 整链 5 个 commit 的合并
+### 9.10.3 整链 5 个 commit 的自动合并（修复后）
 
-按现状，假设有人触发 merge validation，逐个对 5 个分支：
+✅ Leo 输出 `close_chain` 后，`ChainRouter.runMergeValidation(chain_id)` 按链路顺序遍历 5 个 commit：
 
-| Worker | 分支 | SHA | 决策（claude） | 实际动作 |
-|--------|------|-----|---------------|---------|
-| Tom | `co/tom-01` | `7c4f3a2b...` | `merge` / `skip` / `review_first` | 视决策合并入 master 或留待人工 |
-| Jerry | `co/jerry-01` | `8d5e4b3c...` | 同上 | 同上 |
-| Lucy | `co/lucy-01` | `9e6f5c4d...` | 同上（通常 skip：纯文档） | 同上 |
-| Mia | `co/mia-01` | `a1b2c3d4...` | 同上（通常 skip：纯文档） | 同上 |
-| Leo | `co/leo-01` | `b2c3d4e5...` | NO-GO 链时通常 `review_first` | 同上 |
+| 顺序 | Worker | 分支 | SHA | 模板调用 | 决策 |
+|------|--------|------|-----|---------|------|
+| 1 | Tom | `co/tom-01` | `7c4f3a2b...` | `worker-merge-decision.md` | `merge` / `skip` / `review_first` |
+| 2 | Jerry | `co/jerry-01` | `8d5e4b3c...` | 同上 | 同上 |
+| 3 | Lucy | `co/lucy-01` | `9e6f5c4d...` | 同上 | 通常 `skip`（纯文档变更） |
+| 4 | Mia | `co/mia-01` | `a1b2c3d4...` | 同上 | 通常 `skip` |
+| 5 | Leo | `co/leo-01` | `b2c3d4e5...` | 同上 | 视 GO/NO-GO |
 
-⚠️ 当前没有"链关闭时自动调用 MergeValidator"的代码路径。
+冲突时 `MergeValidator.validate` 抛 `MergeConflictError`，`ChainRouter.runMergeValidation` 仅 warn 然后继续下一 commit（不阻塞整体合并流程）。
 
 ## 链关闭时 ZK 终态全景
 

@@ -17,11 +17,17 @@ import {
   type InstanceId,
   type LeaderEvent,
   type Message,
+  type MergeDecision,
   type Task,
   type TaskLink,
   cachePaths,
   asChainId,
 } from "@co/contracts";
+import type { CommitInfo } from "./merge-validator.js";
+
+export interface IMergeValidator {
+  validate(commit: CommitInfo): Promise<MergeDecision>;
+}
 
 const NEXT_LINKS: Record<TaskLink, TaskLink | null> = {
   plan: "build",
@@ -59,6 +65,13 @@ export interface ChainRouterOptions {
   leader_id: InstanceId;
   leader_name: string;
   cache_paths: cachePaths.CachePathOptions;
+  /**
+   * Optional. When provided, ChainRouter calls `validate` for every
+   * commit it has collected on `close_chain`, in plan→build→verify→
+   * review→accept order. Omitted in tests and CLI flows that do not
+   * want to touch git.
+   */
+  merge_validator?: IMergeValidator;
 }
 
 export class ChainRouter {
@@ -74,7 +87,38 @@ export class ChainRouter {
    */
   private readonly chainWorkers = new Map<ChainId, Map<TaskLink, InstanceId>>();
 
+  /**
+   * Per-chain commit log accumulated from completion_report messages.
+   * Insertion order is the link order in which reports arrive — used
+   * to drive MergeValidator on chain close in P→B→V→R→A sequence.
+   */
+  private readonly chainCommits = new Map<ChainId, CommitInfo[]>();
+
   constructor(private readonly opts: ChainRouterOptions) {}
+
+  private recordCommit(
+    chainId: ChainId,
+    link: TaskLink,
+    title: string | null,
+    commit: {
+      sha: string;
+      message: string;
+      branch?: string;
+    },
+  ): void {
+    let log = this.chainCommits.get(chainId);
+    if (!log) {
+      log = [];
+      this.chainCommits.set(chainId, log);
+    }
+    log.push({
+      sha: commit.sha,
+      message: commit.message,
+      branch: commit.branch ?? "",
+      task_title: title ?? "",
+      task_link: link,
+    });
+  }
 
   private rememberDispatch(
     chainId: ChainId,
@@ -91,6 +135,7 @@ export class ChainRouter {
 
   private forgetChain(chainId: ChainId): void {
     this.chainWorkers.delete(chainId);
+    this.chainCommits.delete(chainId);
   }
 
   async route(msg: Message): Promise<void> {
@@ -223,13 +268,27 @@ export class ChainRouter {
   }
 
   private async handleCompletionReport(msg: Message): Promise<void> {
-    const parsed = EvalDecisionSchema.safeParse(
-      JSON.parse(extractJson(msg.content)),
-    );
+    const raw = JSON.parse(extractJson(msg.content)) as Record<string, unknown>;
+    const parsed = EvalDecisionSchema.safeParse(raw);
     if (!parsed.success) {
       throw new ValidationError("invalid EvalDecision", parsed.error);
     }
     const decision: EvalDecision = parsed.data;
+
+    // Capture the optional `commit` envelope the Worker may attach
+    // alongside the EvalDecision (see worker/watcher.ts sendCompletionReport).
+    // Recorded per (chain_id, link) for MergeValidator to consume on
+    // chain_closed.
+    if (msg.chain_id && msg.link && raw.commit && typeof raw.commit === "object") {
+      const c = raw.commit as Record<string, unknown>;
+      if (typeof c.sha === "string" && typeof c.message === "string") {
+        this.recordCommit(msg.chain_id, msg.link, msg.task_title ?? null, {
+          sha: c.sha,
+          message: c.message,
+          branch: typeof c.branch === "string" ? c.branch : undefined,
+        });
+      }
+    }
 
     switch (decision.decision) {
       case "activate_next": {
@@ -274,13 +333,45 @@ export class ChainRouter {
         });
         break;
       }
-      case "reject":
       case "close_chain": {
+        if (msg.chain_id) {
+          await this.runMergeValidation(msg.chain_id);
+          this.emitChainClosed(msg.chain_id);
+          this.forgetChain(msg.chain_id);
+        }
+        break;
+      }
+      case "reject": {
         if (msg.chain_id) {
           this.emitChainClosed(msg.chain_id);
           this.forgetChain(msg.chain_id);
         }
         break;
+      }
+    }
+  }
+
+  /**
+   * Walk the per-chain commit log in P→B→V→R→A order, asking the
+   * MergeValidator for a merge / skip / review_first decision per
+   * commit. Errors from a single commit (e.g. merge conflict) are
+   * logged and swallowed so subsequent commits still get a chance.
+   * Skipped silently when no validator is configured.
+   */
+  private async runMergeValidation(chainId: ChainId): Promise<void> {
+    if (!this.opts.merge_validator) return;
+    const commits = this.chainCommits.get(chainId);
+    if (!commits || commits.length === 0) return;
+    for (const commit of commits) {
+      try {
+        await this.opts.merge_validator.validate(commit);
+      } catch (err) {
+        this.opts.logger.warn("merge validation failed", {
+          chain_id: chainId,
+          branch: commit.branch,
+          sha: commit.sha,
+          error: String(err),
+        });
       }
     }
   }

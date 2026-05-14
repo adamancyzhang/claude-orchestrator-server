@@ -598,3 +598,154 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     expect(last.to_instance).toBe(asInstanceId("tom-01"));
   });
 });
+
+describe("ChainRouter.handleCompletionReport — merge validation on close_chain", () => {
+  it("invokes MergeValidator.validate for every commit collected during the chain, in arrival order", async () => {
+    const validated: { branch: string; sha: string; task_link: string }[] = [];
+    const mergeValidator = {
+      async validate(commit: {
+        branch: string;
+        sha: string;
+        task_link: string;
+      }): Promise<{ decision: "merge"; reason: string }> {
+        validated.push({
+          branch: commit.branch,
+          sha: commit.sha,
+          task_link: commit.task_link,
+        });
+        return { decision: "merge", reason: "ok" };
+      },
+    };
+    const zk = new MemoryZk();
+    const queue = new TaskQueue({ zk: zk as never });
+    const bus = new FakeBus();
+    const msg = new FakeMessageRouter();
+    const registry = new FakeRegistry([]);
+    const router = new ChainRouter({
+      task_queue: queue,
+      message_router: msg,
+      registry,
+      bus,
+      runner: new FakeRunner(),
+      template_engine: new FakeTemplateEngine(),
+      logger: new SilentLogger(),
+      leader_id: LEADER_ID,
+      leader_name: "Leader",
+      cache_paths: {
+        cache_dir: "/tmp/co-test",
+        leader_instance_id: LEADER_ID,
+      },
+      merge_validator: mergeValidator,
+    });
+
+    // Feed three completion reports — each carrying a commit envelope —
+    // then close the chain on the fourth (accept).
+    const reports: [TaskLink, string][] = [
+      ["plan", "aaaaaaa"],
+      ["build", "bbbbbbb"],
+      ["verify", "ccccccc"],
+      ["review", "ddddddd"],
+    ];
+    for (const [link, sha] of reports) {
+      await router.route(
+        completionMessage(
+          link,
+          JSON.stringify({
+            decision: "activate_next",
+            reason: "ok",
+            next_link: NEXT_LINK[link],
+            commit: {
+              sha,
+              message: `${link}: change`,
+              branch: `co/${link}-1`,
+            },
+          }),
+          asInstanceId(`${link}-worker-1`),
+        ),
+      );
+    }
+    expect(validated).toHaveLength(0); // not yet — only on close_chain
+
+    await router.route(
+      completionMessage(
+        "accept",
+        JSON.stringify({
+          decision: "close_chain",
+          reason: "all good",
+          commit: {
+            sha: "eeeeeee",
+            message: "accept: sign off",
+            branch: "co/accept-1",
+          },
+        }),
+        asInstanceId("leo-01"),
+      ),
+    );
+
+    expect(validated.map((v) => v.task_link)).toEqual([
+      "plan",
+      "build",
+      "verify",
+      "review",
+      "accept",
+    ]);
+    expect(validated.map((v) => v.sha)).toEqual([
+      "aaaaaaa",
+      "bbbbbbb",
+      "ccccccc",
+      "ddddddd",
+      "eeeeeee",
+    ]);
+  });
+
+  it("does not invoke MergeValidator on reject", async () => {
+    const validated: unknown[] = [];
+    const mergeValidator = {
+      async validate(c: unknown) {
+        validated.push(c);
+        return { decision: "merge" as const, reason: "" };
+      },
+    };
+    const zk = new MemoryZk();
+    const queue = new TaskQueue({ zk: zk as never });
+    const router = new ChainRouter({
+      task_queue: queue,
+      message_router: new FakeMessageRouter(),
+      registry: new FakeRegistry([]),
+      bus: new FakeBus(),
+      runner: new FakeRunner(),
+      template_engine: new FakeTemplateEngine(),
+      logger: new SilentLogger(),
+      leader_id: LEADER_ID,
+      leader_name: "Leader",
+      cache_paths: {
+        cache_dir: "/tmp/co-test",
+        leader_instance_id: LEADER_ID,
+      },
+      merge_validator: mergeValidator,
+    });
+    await router.route(
+      completionMessage(
+        "review",
+        JSON.stringify({
+          decision: "reject",
+          reason: "fundamental",
+          commit: {
+            sha: "ffffffff",
+            message: "wip",
+            branch: "co/r-1",
+          },
+        }),
+        asInstanceId("mia-01"),
+      ),
+    );
+    expect(validated).toHaveLength(0);
+  });
+});
+
+const NEXT_LINK: Record<string, TaskLink> = {
+  plan: "build",
+  build: "verify",
+  verify: "review",
+  review: "accept",
+};
