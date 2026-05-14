@@ -34,18 +34,21 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 
 `ClaudeRunner.buildIdentityPrompt()` 替换 5 个占位符（驼峰）：`{{name}} / {{role}} / {{worktreePath}} / {{worktreeBranch}} / {{instanceId}}`。
 
-## 3. ⚠️ 模板里的 `{{name}}` 占位符与 Worker prompt 的语义不同
+## 3. ✅ 模板里的 `{{name}}` 占位符（已统一替换）
 
-`worker-identity.md` 中的 `{{name}}` 由 `ClaudeRunner.buildIdentityPrompt()` 替换（驼峰键 `name`）。**但** `templates/agents/worker-plan.md`、`worker-build.md` 等 worker 模板中也大量出现 `{{name}}` 文本（例如 `Read .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`）。这些 worker 任务模板由 `WorkerWatcher.processMessage()`（`packages/worker/src/watcher.ts:89-98`）渲染，传入的 vars 是：
+`worker-identity.md` 中的 `{{name}}` 由 `ClaudeRunner.buildIdentityPrompt()` 替换（驼峰键 `name`）。`templates/agents/worker-plan.md`、`worker-build.md`、`worker-verify.md`、`worker-review.md`、`worker-accept.md`、`worker-decompose.md`、`worker-evaluate.md` 等中也使用 `{{name}}`（例如 `Read .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`）。
 
-```
-task_title, task_description, task_criteria, task_doc_path,
-result_path, work_dir, time, content
-```
+**✅ issue #2 修复**：在 `WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement` 的 render vars 中都补传了 `name` 与 `role`：
 
-**`name` 不在 vars 里**，所以 `{{name}}` 字面留在 prompt 中。Worker 实际上是依赖 system prompt 中注入的"You are **Tom**"来识别自己的名字，并在执行时把 `{{name}}` 替换成自己。这是当前实现的现状，未来若改造为变量替换需注意双重渲染。
+| 调用点 | name 来源 | role 来源 |
+|--------|----------|----------|
+| `WorkerWatcher.processMessage` | `this.opts.worker_name` | `this.opts.worker_role` |
+| `SelfEvaluator.evaluate` | `this.opts.worker_name` | `this.opts.worker_role` |
+| `ChainRouter.handleRequirement`（Leader 自处理 decompose） | `this.opts.leader_name` | 字面 `"leader"` |
 
-`personal-claude-{role}.md` 中的 `{{name}}` 同理 —— 是否被替换取决于 orchestrator 拼接进 identity prompt 时是否做了替换。当前实现下，整段 `personal-claude-*.md` 拼接进 identity 之后，body 里的 `{{name}}` 也不会被 `buildIdentityPrompt` 替换（它只识别驼峰 5 个键），所以同样依赖 Claude 上下文推理。
+Worker 任务模板和自评估模板里的 `{{name}}` / `{{role}}` 现在会被实际替换，不再依赖 Claude 上下文推理。锁定行为见 `packages/worker/tests/core/unit/evaluator.test.ts` "substitutes {{name}} and {{role}}"。
+
+⚠️ 残留点：`personal-claude-{role}.md` 内容被 orchestrator 直接拼接进 identity prompt 后，body 里的 `{{name}}` 不会被 `buildIdentityPrompt` 替换（它只识别驼峰 5 个键）。这层目前仍依赖 Claude 上下文推理。后续若需要彻底治理，可让 orchestrator 在拼接前先 render `personal-claude-{role}.md`。
 
 ## 4. role → skill / 模板 / 产出 / 权重 总览表
 

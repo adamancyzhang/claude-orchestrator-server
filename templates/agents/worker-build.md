@@ -15,7 +15,13 @@ Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` to restore sessio
 
 Use the **task-execution** skill (read `.claude/skills/task-execution/SKILL.md`). Use **task-traceability** (`.claude/skills/task-traceability/SKILL.md`) as the foundational layer. Follow Trace → Execute → Map → Evidence → Record.
 
-**Trace**: Read the Planner's blueprint from `.claude-orchestrator/docs/{planner_name}/YYYY-MM-DD/blueprint.md`. Fallback: `{{task_doc_path}}`. Extract every implementable requirement as a checklist.
+**Trace** — Read the upstream Plan artifact in this order:
+
+1. `{{upstream_plan_artifact}}` (chain-shared cache, authoritative cross-worktree source)
+2. `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/blueprint.md` if a previous build attempt is being resumed in this worktree
+3. `{{task_doc_path}}` as a final fallback
+
+Extract every implementable requirement as a checklist.
 
 ## Outputs
 

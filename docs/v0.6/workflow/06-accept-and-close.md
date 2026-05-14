@@ -22,7 +22,8 @@
 Fallback: {{task_doc_path}}. If any is missing → cannot accept, report to Leader.
 ```
 
-⚠️ 同 Verify/Review，跨 worktree 问题最严重——Leo 需要读 4 个不同分支的产出。
+✅ **issue #10 修复**：Leo 通过 chain-shared cache 路径读全部 4 份上游 artifact：
+- `{{upstream_plan_artifact}}` / `{{upstream_build_artifact}}` / `{{upstream_verify_artifact}}` / `{{upstream_review_artifact}}` 分别指向 `{cache_dir}/{leader_id}/chains/{chain_id}/{plan|build|verify|review}.md`。不再依赖各 worktree 的 `.claude-orchestrator/docs/{role}/...`。
 
 ## 9.5 主任务
 
@@ -31,14 +32,14 @@ cd ~/work/co-pagination/.worktrees/Leo
 claude --append-system-prompt '<Leo identity (accepter)>' \
        -p '<rendered worker-accept.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000009-<ts>.log
+  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000009-<ts>.log
 ```
 
 期望生成文件：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000009.md` | acceptance-report.md 副本 |
+| `~/.../cache/leader-01/results/task-0000000009.md` | acceptance-report.md 副本 |
 | `~/work/.../worktrees/Leo/.claude-orchestrator/docs/Leo/2026-05-14/acceptance-report.md` | 验收报告 |
 | `~/work/.../worktrees/Leo/.claude-orchestrator/docs/Leo/2026-05-14/CLAUDE.md` | 当日记忆 |
 
@@ -113,9 +114,9 @@ Failed criteria:
 }
 ```
 
-⚠️ 同 Verify/Review，feedback_target=null → 回发 Leo 自己；且字段名 `feedback` 与 schema `feedback_to_worker` 不匹配 → schema fail → fallback `close_chain`。
+✅ **issue #3 修复**：模板字段名 `feedback_to_worker / feedback_target` 已对齐 schema，feedback 分支现在能被 schema 接受。
 
-⚠️ **实际现状**：NO-GO 决策在当前实现下**几乎无法可靠表达**，会被 fallback 转为 `close_chain`，**链将被关闭，且没有任何后续修复动作**。这是现状最严重的设计缺陷⚠️。
+✅ **issue #6 修复**：Leo 不指定 `feedback_target` 时，按 PREV_LINKS["accept"]="review" 默认发给 Mia（reviewer）。若要直接退到 Builder（Jerry），Leo 需在 EvalDecision 中显式 `feedback_target = jerry-01`。NO-GO 决策现在能在 schema 内直接表达——选 `feedback`（含 `feedback_target`）或 `reject`（彻底拒收）。
 
 本贯穿样例选择走 9.7.A，最终决策 `close_chain` —— 不严格区分 GO/NO-GO 时的差异，链都会以 `close_chain` 落地。
 
@@ -140,7 +141,7 @@ ZK 路径：`/messages/leader-01/msg-0000000006`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000009.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000009.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:14:00.000Z"
@@ -171,14 +172,26 @@ this.opts.bus.emit({ type: "chain_closed", chain_id: asChainId(chainId) });
 
 TUI EVENT LOG 显示一条 `Chain closed: chain-pagination-001`。**没有进一步动作**——既不会标记 chain 关联的 tasks 为 `completed`/`failed`，也不会自动触发合并。
 
-## 9.10 MergeValidator（按需触发）
+## 9.10 MergeValidator ✅ issue #7 修复：close_chain 自动触发
 
-⚠️ **现状**：`MergeValidator`（`packages/leader/src/merge-validator.ts`）**没有被 `ChainRouter` 自动调用**。`emitChainClosed` 后没有任何代码路径触发 merge 流程。
+`ChainRouter` 现在维护 `chainCommits: Map<chain_id, CommitInfo[]>`，每收到 completion_report：
 
-`MergeValidator` 的现有触发方式可能是：
-1. 外部 CLI 命令（人工触发）
-2. 其他 leader 子系统（task_orchestrator / recovery 等）—— 经代码检查未发现
-3. 通过 hook `merge_decision_made`（但是反向：merge 触发后才 emit hook）
+```typescript
+if (msg.chain_id && msg.link && raw.commit) {
+  this.recordCommit(msg.chain_id, msg.link, msg.task_title, raw.commit);
+}
+```
+
+`close_chain` 决策走 `runMergeValidation(chain_id)`：按插入序（即 plan→build→verify→review→accept）逐个调用 `merge_validator.validate(commit)`。单个 commit 验证抛错时仅 warn，下一个 commit 继续。
+
+`merge_validator` 在 `packages/orchestrator/src/run.ts` 构造并注入：
+
+```typescript
+const mergeValidator = new MergeValidator({...});
+const chainRouter = new ChainRouter({...others, merge_validator: mergeValidator});
+```
+
+`reject` 决策**不**触发 MergeValidator（语义为彻底退回，不进主线）。`forgetChain` 同时清理 chainWorkers 与 chainCommits 映射。
 
 ### 9.10.1 MergeValidator 行为参考（若被调用）
 
@@ -216,19 +229,19 @@ claude 输出 `MergeDecision` JSON：
 
 `MergeDecisionSchema` 见 `packages/contracts/src/schemas/merge.ts`。
 
-### 9.10.3 整链 5 个 commit 的合并
+### 9.10.3 整链 5 个 commit 的自动合并（修复后）
 
-按现状，假设有人触发 merge validation，逐个对 5 个分支：
+✅ Leo 输出 `close_chain` 后，`ChainRouter.runMergeValidation(chain_id)` 按链路顺序遍历 5 个 commit：
 
-| Worker | 分支 | SHA | 决策（claude） | 实际动作 |
-|--------|------|-----|---------------|---------|
-| Tom | `co/tom-01` | `7c4f3a2b...` | `merge` / `skip` / `review_first` | 视决策合并入 master 或留待人工 |
-| Jerry | `co/jerry-01` | `8d5e4b3c...` | 同上 | 同上 |
-| Lucy | `co/lucy-01` | `9e6f5c4d...` | 同上（通常 skip：纯文档） | 同上 |
-| Mia | `co/mia-01` | `a1b2c3d4...` | 同上（通常 skip：纯文档） | 同上 |
-| Leo | `co/leo-01` | `b2c3d4e5...` | NO-GO 链时通常 `review_first` | 同上 |
+| 顺序 | Worker | 分支 | SHA | 模板调用 | 决策 |
+|------|--------|------|-----|---------|------|
+| 1 | Tom | `co/tom-01` | `7c4f3a2b...` | `worker-merge-decision.md` | `merge` / `skip` / `review_first` |
+| 2 | Jerry | `co/jerry-01` | `8d5e4b3c...` | 同上 | 同上 |
+| 3 | Lucy | `co/lucy-01` | `9e6f5c4d...` | 同上 | 通常 `skip`（纯文档变更） |
+| 4 | Mia | `co/mia-01` | `a1b2c3d4...` | 同上 | 通常 `skip` |
+| 5 | Leo | `co/leo-01` | `b2c3d4e5...` | 同上 | 视 GO/NO-GO |
 
-⚠️ 当前没有"链关闭时自动调用 MergeValidator"的代码路径。
+冲突时 `MergeValidator.validate` 抛 `MergeConflictError`，`ChainRouter.runMergeValidation` 仅 warn 然后继续下一 commit（不阻塞整体合并流程）。
 
 ## 链关闭时 ZK 终态全景
 
@@ -238,16 +251,12 @@ claude 输出 `MergeDecision` JSON：
 ├── instances/
 │   ├── leader-01, tom-01, jerry-01, lucy-01, mia-01, leo-01   [EPHEMERAL] {status:"idle"}
 ├── tasks/
-│   ├── pending/                             ⚠️ 总计 9 个沉积任务
-│   │   ├── task-0000000001 (初始 plan)
-│   │   ├── task-0000000002 (初始 build)
-│   │   ├── task-0000000003 (初始 verify)
-│   │   ├── task-0000000004 (初始 review)
-│   │   ├── task-0000000005 (初始 accept)
-│   │   ├── task-0000000006 (activate_next plan→build)
-│   │   ├── task-0000000007 (activate_next build→verify)
-│   │   ├── task-0000000008 (activate_next verify→review)
-│   │   └── task-0000000009 (activate_next review→accept)
+│   ├── pending/                             ⚠️ 5 个初始 task 未被 complete（在 #1 落地前依然沉积）
+│   │   ├── task-0000000001 (plan，handleTaskDefinitions 初始 push)
+│   │   ├── task-0000000002 (build，#4 修复后被 activate_next 复用 dispatch)
+│   │   ├── task-0000000003 (verify，同上)
+│   │   ├── task-0000000004 (review，同上)
+│   │   └── task-0000000005 (accept，同上)
 │   ├── claimed/                             (空)
 │   └── completed/                           (空)
 └── messages/
@@ -295,31 +304,31 @@ messages/
 └── msg-0000000001.log              ← decompose claude-cli 日志
 
 results/
-├── task-leader-decompose-msg-0000000001.md   ← ChainDef JSON
-├── task-task-0000000001.md         ← Tom blueprint
-├── task-task-0000000006.md         ← Jerry traceability-map
-├── task-task-0000000007.md         ← Lucy verification-map
-├── task-task-0000000008.md         ← Mia review-judgment
-└── task-task-0000000009.md         ← Leo acceptance-report
+├── decompose/msg-0000000001.md         ← ChainDef JSON
+├── task-0000000001.md         ← Tom blueprint
+├── task-0000000006.md         ← Jerry traceability-map
+├── task-0000000007.md         ← Lucy verification-map
+├── task-0000000008.md         ← Mia review-judgment
+└── task-0000000009.md         ← Leo acceptance-report
 
 logs/
-├── task-task-0000000001-<ts>.log   ← Tom 主执行
-├── task-task-0000000006-<ts>.log   ← Jerry 主执行
-├── task-task-0000000007-<ts>.log   ← Lucy 主执行
-├── task-task-0000000008-<ts>.log   ← Mia 主执行
-└── task-task-0000000009-<ts>.log   ← Leo 主执行
+├── task-0000000001-<ts>.log   ← Tom 主执行
+├── task-0000000006-<ts>.log   ← Jerry 主执行
+├── task-0000000007-<ts>.log   ← Lucy 主执行
+├── task-0000000008-<ts>.log   ← Mia 主执行
+└── task-0000000009-<ts>.log   ← Leo 主执行
 
 commits/
-├── task-task-0000000001.log        ← Tom commit message 日志
-├── task-task-0000000006.log
-├── task-task-0000000007.log
-├── task-task-0000000008.log
-└── task-task-0000000009.log
+├── task-0000000001.log        ← Tom commit message 日志
+├── task-0000000006.log
+├── task-0000000007.log
+├── task-0000000008.log
+└── task-0000000009.log
 
 evals/
-├── task-task-0000000001-attempt-0.log[.result.md]
-├── task-task-0000000001-attempt-1.log[.result.md]
-├── task-task-0000000001-attempt-2.log[.result.md]
+├── task-0000000001-attempt-0.log[.result.md]
+├── task-0000000001-attempt-1.log[.result.md]
+├── task-0000000001-attempt-2.log[.result.md]
 ├── (同上 5 个 task × ≤3 attempts，受 schema 不匹配影响多数情况下 3 个 attempt 都生成)
 ```
 

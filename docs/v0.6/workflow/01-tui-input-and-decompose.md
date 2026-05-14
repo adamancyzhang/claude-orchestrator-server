@@ -19,7 +19,7 @@ ZK: /messages/leader-01/msg-0001  claude-cli (无 system prompt)
    │                                          │
    ▼                              ┌─── log: messages/msg-0001.log
 LeaderWatcher.processMessage     │
-   │                              └─── result: results/task-leader-decompose-xxx.md
+   │                              └─── result: decompose/msg-NNNN.md
    ▼                                          │
 ChainRouter.route()                           ▼
    │                                ChainDefSchema.parse()
@@ -204,19 +204,17 @@ async route(msg: Message): Promise<void> {
 `packages/leader/src/chain-router.ts:85-91`：
 
 ```typescript
-const logKey = `leader-decompose-${msg.id || Date.now().toString(36)}`;
-//   logKey = "leader-decompose-msg-0000000001"
 const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
 //   logPath = ~/.claude-orchestrator/cache/leader-01/messages/msg-0000000001.log
-const resultPath = cachePaths.taskResultPath(
+const resultPath = cachePaths.decomposeResultPath(
   this.opts.cache_paths,
-  msg.task_id ?? (logKey as never),    // ⚠️ msg.task_id 为 null → 用 logKey 字符串
+  msg.id,
 );
-//   resultPath = ~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md
+//   resultPath = ~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md
 await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
 ```
 
-⚠️ `taskResultPath` 第二参数原本是 `TaskId`，这里被强转为 `(logKey as never)`，路径里会出现非标准的 `task-leader-decompose-...` 形态。决策：保留现状描述。
+✅ **issue #5 修复**：原本 Leader 自处理 decompose 时复用 `taskResultPath`，但消息没有 task_id（user_input），代码用 `(logKey as never)` 强转字符串，路径会出现 `decompose/msg-0000000001.md` —— 既污染了 results 目录，又破坏 TaskId 品牌类型。修复后新增 `cachePaths.decomposeResultPath(o, messageId)`，decompose 产物落到独立的 `decompose/{messageId}.md` 路径，不再借道 results。锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
 
 ### 4.3 模板渲染
 
@@ -230,14 +228,14 @@ const prompt = this.opts.template_engine.render("worker-decompose.md", {
   task_criteria: msg.task_criteria ?? "",      // ""
   task_doc_path: msg.task_doc_path ?? "",      // ""
   result_path: resultPath,
-  //   "~/.../results/task-leader-decompose-msg-0000000001.md"
+  //   "~/.../decompose/msg-0000000001.md"
   work_dir: process.cwd(),
   time: new Date().toISOString(),
   content: msg.content,
 });
 ```
 
-`worker-decompose.md` 中只用到 `{{task_description}}`、`{{result_path}}` 两个变量。`{{name}}` 留作字面文本（⚠️ Leader 自处理时也没 name 变量）。
+`worker-decompose.md` 用到 `{{task_description}}`、`{{result_path}}`、`{{name}}` 三个变量。✅ issue #2 修复后，Leader 自处理 decompose 时 `name = leader_name`、`role = "leader"`，`{{name}}` 会被替换为 Leader 自己的名字（例如 `Leader`）。
 
 **渲染后 prompt（关键片段）**：
 
@@ -261,7 +259,7 @@ Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` (use today's date
 
 ## Output
 
-Write the result to ~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md. Also save a copy to `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json`.
+Write the result to ~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md. Also save a copy to `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json`.
 
 ```json
 { ... template skeleton ... }
@@ -290,7 +288,7 @@ Output ONLY the JSON. No explanation.
 | 路径 | 内容 |
 |------|------|
 | `~/.claude-orchestrator/cache/leader-01/messages/msg-0000000001.log` | claude-cli stream-json 完整流（system/init + assistant_message + result） |
-| `~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md` | claude 按 `worker-decompose.md` 指令写入的 ChainDef JSON |
+| `~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md` | claude 按 `worker-decompose.md` 指令写入的 ChainDef JSON |
 | `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json` | ⚠️ 模板要求"也写一份这里"，但 `{{name}}` 未替换 —— claude 自行处理时若按字面创建会得到 `docs/{{name}}/.../chain-def.json` 这样可疑路径；实践中 claude 通常会替换为 `Leader` 或自己的名字 |
 
 ### 4.6 claude-cli 出参 — ChainDef 完整 JSON
@@ -495,13 +493,13 @@ if (firstLink && firstTaskId) {
 }
 ```
 
-⚠️ 注意 `task_description / task_criteria / task_doc_path` **没有** 被写入这条 task_dispatch 消息——Worker 在处理消息时只能从 `msg.content`（即 `firstTitle`）拿到内容，**Plan 任务的详细 description / criteria 在 task_dispatch 消息层级丢失**。Worker 需要去自己读 ZK 的 `/tasks/pending/{task-id}` 才能拿到全量信息，但当前 `WorkerWatcher.processMessage` 没有这段读取逻辑（`packages/worker/src/watcher.ts:73-100`）。因此实际 Plan worker 看到的 prompt 中：
+✅ **issue #9 修复**：handleTaskDefinitions 现在把 ChainDef 中的 `def.description` 与 `def.criteria` 一并写入 task_dispatch 消息（`task_description / task_criteria`），并把 criteria 持久化到 Task 节点。Plan worker 看到的 prompt 中：
 - `task_title` = "设计 /api/users 分页接口蓝图"
-- `task_description` = "设计 /api/users 分页接口蓝图"（fallback 到 `msg.content`，见 watcher.ts:91）
-- `task_criteria` = ""
-- `task_doc_path` = ""
+- `task_description` = "定义 page/page_size 入参约束、默认值、分页响应结构..."（来自 ChainDef）
+- `task_criteria` = "blueprint.md 包含：(1) 接口签名 (2) 入参合法性规则..."（来自 ChainDef）
+- `task_doc_path` = ""（仍未实现 task doc 生成）
 
-这是另一处现状⚠️。
+⚠️ 残留：handleCompletionReport.activate_next 会新建 task（详见 #4），新 task 的 description/criteria 为空字符串——因此当前修复只让"链路首环"携带完整上下文，build/verify/review/accept 在 #4 落地前仍依赖 worktree 上下文恢复。`task_doc_path` 仍为 null（设计文档化任务尚未生成，详见 README ⚠️ 现状⚠️ 待办列表）。
 
 ### 5.6 ZK 写入后的 task_dispatch 消息
 
@@ -559,8 +557,8 @@ if (firstLink && firstTaskId) {
 | 路径 | 大小估计 | 内容 |
 |------|---------|------|
 | `~/.claude-orchestrator/cache/leader-01/messages/msg-0000000001.log` | 数 KB | decompose claude-cli stream-json 完整流 |
-| `~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md` | 数 KB | ChainDef JSON（§4.6） |
-| `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json` | 同上 | ⚠️ claude 自行决定路径（`{{name}}` 不替换） |
+| `~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md` | 数 KB | ChainDef JSON（§4.6） |
+| `.claude-orchestrator/docs/Leader/YYYY-MM-DD/chain-def.json` | 同上 | ✅ issue #2 修复后 `{{name}}` 替换为 `Leader` |
 
 ## TUI EVENT LOG 状态
 

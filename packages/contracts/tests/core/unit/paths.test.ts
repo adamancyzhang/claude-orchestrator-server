@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  asChainId,
   asInstanceId,
   asMessageId,
   asProjectId,
@@ -61,20 +62,32 @@ describe("cachePaths", () => {
     expect(cachePaths.taskDocPath(opts, 1)).toBe(
       "/tmp/cache/leader1/tasks/task-1.md",
     );
-    expect(cachePaths.taskLogPath(opts, asTaskId("t-1"), "ts")).toBe(
-      "/tmp/cache/leader1/logs/task-t-1-ts.log",
+    // Cache path helpers do NOT add an extra "task-" prefix — task ids from
+    // task_queue.push already have it (e.g. "task-0000000001"). This avoids
+    // the historical "task-task-..." double-prefix bug.
+    expect(cachePaths.taskLogPath(opts, asTaskId("task-1"), "ts")).toBe(
+      "/tmp/cache/leader1/logs/task-1-ts.log",
     );
-    expect(cachePaths.taskResultPath(opts, asTaskId("t-1"))).toBe(
-      "/tmp/cache/leader1/results/task-t-1.md",
+    expect(cachePaths.taskResultPath(opts, asTaskId("task-1"))).toBe(
+      "/tmp/cache/leader1/results/task-1.md",
     );
-    expect(cachePaths.evalLogPath(opts, asTaskId("t-1"), 0)).toBe(
-      "/tmp/cache/leader1/evals/task-t-1-attempt-0.log",
+    expect(cachePaths.evalLogPath(opts, asTaskId("task-1"), 0)).toBe(
+      "/tmp/cache/leader1/evals/task-1-attempt-0.log",
     );
-    expect(cachePaths.commitLogPath(opts, asTaskId("t-1"))).toBe(
-      "/tmp/cache/leader1/commits/task-t-1.log",
+    expect(cachePaths.commitLogPath(opts, asTaskId("task-1"))).toBe(
+      "/tmp/cache/leader1/commits/task-1.log",
     );
     expect(cachePaths.messageLogPath(opts, asMessageId("m-1"))).toBe(
       "/tmp/cache/leader1/messages/m-1.log",
     );
+    expect(cachePaths.decomposeResultPath(opts, asMessageId("msg-1"))).toBe(
+      "/tmp/cache/leader1/decompose/msg-1.md",
+    );
+    expect(
+      cachePaths.chainArtifactPath(opts, asChainId("chain-x"), "plan"),
+    ).toBe("/tmp/cache/leader1/chains/chain-x/plan.md");
+    expect(
+      cachePaths.chainArtifactPath(opts, asChainId("chain-x"), "build"),
+    ).toBe("/tmp/cache/leader1/chains/chain-x/build.md");
   });
 });

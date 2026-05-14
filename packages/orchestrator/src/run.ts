@@ -184,7 +184,6 @@ export async function runOrchestrator(
     log_path_for: (key) =>
       path.join(resolved.cache_dir, leaderInstance.id, "merges", `${key}.log`),
   });
-  void mergeValidator;
 
   const chainRouter = new ChainRouter({
     task_queue: taskQueue,
@@ -197,6 +196,7 @@ export async function runOrchestrator(
     leader_id: leaderInstance.id,
     leader_name: leaderInstance.name,
     cache_paths: cachePaths,
+    merge_validator: mergeValidator,
   });
 
   const leaderWatcher = new LeaderWatcher(

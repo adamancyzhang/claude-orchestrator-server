@@ -8,6 +8,7 @@ import {
   type IInstanceRegistry,
   type ILogger,
   type IMessageRouter,
+  type ITaskQueue,
   type ITemplateEngine,
   type InstanceId,
   type Message,
@@ -38,6 +39,7 @@ export interface WorkerWatcherOptions {
   worktree_branch: string;
   registry: IInstanceRegistry;
   message_router: IMessageRouter;
+  task_queue: ITaskQueue;
   runner: IClaudeRunner;
   template_engine: ITemplateEngine;
   hooks: IHookEngine;
@@ -75,18 +77,52 @@ export class WorkerWatcher {
     const taskId =
       (msg.task_id as TaskId | null) ??
       asTaskId(`adhoc-${msg.id || Date.now().toString(36)}`);
-    const resultPath = cachePaths.taskResultPath(this.opts.cache_paths, taskId);
+    // For chain links with a chain_id, route the Worker's output to the
+    // chain-shared cache location so downstream Workers (in different
+    // worktrees) can read it. Ad-hoc / decompose tasks keep the per-task
+    // result path.
+    const isChainLink = link !== null && CHAIN_LINKS.includes(link as TaskLink);
+    const chainArtifacts = this.collectChainArtifacts(msg, link);
+    const resultPath =
+      isChainLink && msg.chain_id
+        ? cachePaths.chainArtifactPath(
+            this.opts.cache_paths,
+            msg.chain_id as ChainId,
+            link as TaskLink,
+          )
+        : cachePaths.taskResultPath(this.opts.cache_paths, taskId);
     const logPath = cachePaths.taskLogPath(
       this.opts.cache_paths,
       taskId,
       new Date().toISOString(),
     );
 
+    // Claim the task in ZK so the cluster sees this worker as its owner.
+    // Skipped for ad-hoc / decompose messages (no real pending node) and
+    // tolerated when the pending node is gone (e.g. resumed dispatch).
+    const realTaskId =
+      isChainLink && msg.task_id ? (msg.task_id as TaskId) : null;
+    const taskStart = Date.now();
+    if (realTaskId) {
+      const claimed = await this.opts.task_queue.claimById(
+        realTaskId,
+        this.opts.instance_id,
+      );
+      if (!claimed) {
+        this.opts.logger.warn(
+          `task already claimed/completed, proceeding without ZK claim`,
+          { task_id: realTaskId },
+        );
+      }
+    }
+
     let prompt = msg.content;
     if (link) {
       const tplName = LINK_TO_TEMPLATE[link];
       if (this.opts.template_engine.has(tplName)) {
         prompt = this.opts.template_engine.render(tplName, {
+          name: this.opts.worker_name,
+          role: this.opts.worker_role,
           task_title: msg.task_title ?? "",
           task_description: msg.task_description ?? msg.content,
           task_criteria: msg.task_criteria ?? "",
@@ -95,6 +131,12 @@ export class WorkerWatcher {
           work_dir: this.opts.worktree_path,
           time: new Date().toISOString(),
           content: msg.content,
+          // Cross-worktree artifact paths — Workers in other worktrees
+          // wrote here; downstream link templates reference these vars.
+          upstream_plan_artifact: chainArtifacts.plan,
+          upstream_build_artifact: chainArtifacts.build,
+          upstream_verify_artifact: chainArtifacts.verify,
+          upstream_review_artifact: chainArtifacts.review,
         });
       }
     }
@@ -160,10 +202,81 @@ export class WorkerWatcher {
       await this.sendDecomposeReport(msg, resultPath, taskId);
     }
 
+    // Transition the task from claimed → completed in ZK once the
+    // self-evaluation report is on its way to the leader.
+    if (realTaskId) {
+      const durationSeconds = (Date.now() - taskStart) / 1000;
+      try {
+        await this.opts.task_queue.complete(
+          realTaskId,
+          resultPath,
+          this.opts.instance_id,
+          this.opts.worker_name,
+          durationSeconds,
+        );
+      } catch (err) {
+        this.opts.logger.warn("task completion failed", {
+          task_id: realTaskId,
+          error: String(err),
+        });
+      }
+    }
+
     await this.opts.message_router.dismiss(this.opts.instance_id, msg.id);
     this.opts.logger.info("message processed", { log_path: logPath });
 
     void ClaudeRunner.buildIdentityPrompt; // keep reference for runtime hint
+  }
+
+  /**
+   * Compute the cache_dir-shared chain artifact paths for every link
+   * upstream of the current one. Empty string when no chain_id is set
+   * (ad-hoc / decompose flows) so template rendering remains stable.
+   */
+  private collectChainArtifacts(
+    msg: Message,
+    link: TaskLink | "decompose" | null,
+  ): {
+    plan: string;
+    build: string;
+    verify: string;
+    review: string;
+  } {
+    const empty = { plan: "", build: "", verify: "", review: "" };
+    if (!msg.chain_id || !link || link === "decompose") return empty;
+    const chainId = msg.chain_id as ChainId;
+    const plan = cachePaths.chainArtifactPath(
+      this.opts.cache_paths,
+      chainId,
+      "plan",
+    );
+    const build = cachePaths.chainArtifactPath(
+      this.opts.cache_paths,
+      chainId,
+      "build",
+    );
+    const verify = cachePaths.chainArtifactPath(
+      this.opts.cache_paths,
+      chainId,
+      "verify",
+    );
+    const review = cachePaths.chainArtifactPath(
+      this.opts.cache_paths,
+      chainId,
+      "review",
+    );
+    switch (link as TaskLink) {
+      case "plan":
+        return empty;
+      case "build":
+        return { plan, build: "", verify: "", review: "" };
+      case "verify":
+        return { plan, build, verify: "", review: "" };
+      case "review":
+        return { plan, build, verify, review: "" };
+      case "accept":
+        return { plan, build, verify, review };
+    }
   }
 
   private async sendCompletionReport(

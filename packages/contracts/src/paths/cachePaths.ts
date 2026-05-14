@@ -1,4 +1,5 @@
-import type { InstanceId, MessageId, TaskId } from "../ids.js";
+import type { ChainId, InstanceId, MessageId, TaskId } from "../ids.js";
+import type { TaskLink } from "../enums.js";
 
 export interface CachePathOptions {
   cache_dir: string;
@@ -18,11 +19,11 @@ export function taskLogPath(
   taskId: TaskId,
   ts: string,
 ): string {
-  return `${leaderCacheDir(o)}/logs/task-${taskId}-${ts}.log`;
+  return `${leaderCacheDir(o)}/logs/${taskId}-${ts}.log`;
 }
 
 export function taskResultPath(o: CachePathOptions, taskId: TaskId): string {
-  return `${leaderCacheDir(o)}/results/task-${taskId}.md`;
+  return `${leaderCacheDir(o)}/results/${taskId}.md`;
 }
 
 export function evalLogPath(
@@ -30,11 +31,11 @@ export function evalLogPath(
   taskId: TaskId,
   attempt: number,
 ): string {
-  return `${leaderCacheDir(o)}/evals/task-${taskId}-attempt-${attempt}.log`;
+  return `${leaderCacheDir(o)}/evals/${taskId}-attempt-${attempt}.log`;
 }
 
 export function commitLogPath(o: CachePathOptions, taskId: TaskId): string {
-  return `${leaderCacheDir(o)}/commits/task-${taskId}.log`;
+  return `${leaderCacheDir(o)}/commits/${taskId}.log`;
 }
 
 export function messageLogPath(
@@ -42,4 +43,26 @@ export function messageLogPath(
   messageId: MessageId,
 ): string {
   return `${leaderCacheDir(o)}/messages/${messageId}.log`;
+}
+
+export function decomposeResultPath(
+  o: CachePathOptions,
+  messageId: MessageId,
+): string {
+  return `${leaderCacheDir(o)}/decompose/${messageId}.md`;
+}
+
+/**
+ * Per-(chain, link) artifact path that lives in the leader's shared cache
+ * directory — readable by every Worker process regardless of which git
+ * worktree they're running in. This is the canonical location Workers
+ * write their link result to and downstream Workers read upstream
+ * artifacts from.
+ */
+export function chainArtifactPath(
+  o: CachePathOptions,
+  chainId: ChainId,
+  link: TaskLink,
+): string {
+  return `${leaderCacheDir(o)}/chains/${chainId}/${link}.md`;
 }

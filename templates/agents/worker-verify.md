@@ -16,8 +16,8 @@ Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` to restore sessio
 Use the **task-verification** skill (read `.claude/skills/task-verification/SKILL.md`). Use **task-traceability** (`.claude/skills/task-traceability/SKILL.md`) as the foundational layer. Follow Trace → Execute → Map → Evidence → Record.
 
 **Trace — Collect upstream artifacts (required)**:
-1. Planner blueprint: `.claude-orchestrator/docs/{planner_name}/YYYY-MM-DD/blueprint.md`
-2. Builder traceability map: `.claude-orchestrator/docs/{builder_name}/YYYY-MM-DD/traceability-map.md`
+1. Planner blueprint: `{{upstream_plan_artifact}}` (chain-shared cache, authoritative)
+2. Builder traceability map: `{{upstream_build_artifact}}` (chain-shared cache, authoritative)
 Fallback: `{{task_doc_path}}`. If either is missing → BLOCKED, report to Leader.
 
 Cross-reference to build a verification checklist. Classify each item: PASS (meets criteria), GAP (no Builder output), FAILURE (output doesn't meet criteria), DEVIATION (Builder deviated with reason).

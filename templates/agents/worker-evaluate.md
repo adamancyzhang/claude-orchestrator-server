@@ -28,7 +28,8 @@ Before evaluating, verify:
 1. **Criteria fully met** AND output artifacts are in place → `activate_next`
 2. **Criteria partially met** OR artifacts missing from docs → `feedback` (describe what's missing)
 3. **Criteria not met** → `feedback` with clear explanation
-4. **Accept link passes** → `close_chain`
+4. **Fundamental failure** (implementation diverges from blueprint, restart required) → `reject`
+5. **Accept link passes** → `close_chain`
 
 For verify/review/accept: if upstream artifacts were missing from `.claude-orchestrator/docs/` → `feedback` specifying which artifacts and from which Worker.
 
@@ -36,14 +37,36 @@ For verify/review/accept: if upstream artifacts were missing from `.claude-orche
 
 Output exactly one JSON. Write to {{result_path}}.
 
+Use **snake_case** field names exactly as listed. The schema is a discriminated union on `decision`; only emit the fields for the selected branch.
+
 ```json
+// decision: "activate_next" — proceed to the next link
 {
-  "decision": "activate_next" | "feedback" | "close_chain",
+  "decision": "activate_next",
   "reason": "<one-line explanation>",
-  "feedback": "<only if feedback: what to improve or which artifact is missing>",
-  "nextLink": "<build|verify|review|accept>",
-  "suggestedWorker": null
+  "next_link": "build" | "verify" | "review" | "accept",
+  "suggested_worker": null
+}
+
+// decision: "feedback" — caller (Leader) routes the message to feedback_target
+{
+  "decision": "feedback",
+  "reason": "<one-line explanation>",
+  "feedback_to_worker": "<what to improve or which artifact is missing>",
+  "feedback_target": null
+}
+
+// decision: "reject" — fundamental failure, no auto-retry
+{
+  "decision": "reject",
+  "reason": "<one-line explanation>"
+}
+
+// decision: "close_chain" — accept passed (or chain consciously aborted)
+{
+  "decision": "close_chain",
+  "reason": "<one-line explanation>"
 }
 ```
 
-Output ONLY the JSON. No explanation.
+Output ONLY the JSON for the selected branch. No explanation, no markdown fences.

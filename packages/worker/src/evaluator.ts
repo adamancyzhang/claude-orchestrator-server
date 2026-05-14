@@ -38,6 +38,8 @@ export interface SelfEvaluatorOptions {
   cache_paths: cachePaths.CachePathOptions;
   worktree_path: string;
   identity_system_prompt: string;
+  worker_name: string;
+  worker_role: string;
 }
 
 export interface EvaluateInput {
@@ -54,6 +56,8 @@ export class SelfEvaluator {
   async evaluate(input: EvaluateInput): Promise<string> {
     let formatHint: string | null = null;
     const baseVars = {
+      name: this.opts.worker_name,
+      role: this.opts.worker_role,
       link: input.link,
       task_result_path: input.task_result_path,
       work_dir: this.opts.worktree_path,

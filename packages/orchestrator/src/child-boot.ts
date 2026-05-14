@@ -16,6 +16,7 @@ import {
 import {
   InstanceRegistry,
   MessageRouter,
+  TaskQueue,
 } from "@co/coordination";
 import {
   CHAIN_LINKS,
@@ -67,6 +68,7 @@ async function boot(config: ChildConfig): Promise<void> {
   void PROTOCOL_VERSION;
 
   const messageRouter = new MessageRouter({ zk });
+  const taskQueue = new TaskQueue({ zk });
 
   const builtinAgentsDir = path.join(resolveTemplateDir(config.worktree_path), "agents");
   const projectAgentsDir = path.join(
@@ -105,6 +107,8 @@ async function boot(config: ChildConfig): Promise<void> {
     cache_paths: cachePathOpts,
     worktree_path: config.worktree_path,
     identity_system_prompt: identitySystemPrompt,
+    worker_name: config.name,
+    worker_role: config.role,
   });
 
   const commitChecker = new CommitChecker({
@@ -127,6 +131,7 @@ async function boot(config: ChildConfig): Promise<void> {
     worktree_branch: config.branch,
     registry,
     message_router: messageRouter,
+    task_queue: taskQueue,
     runner,
     template_engine: templateEngine,
     hooks,

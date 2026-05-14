@@ -167,3 +167,41 @@ describe("TaskQueue.claim sort", () => {
     expect(await queue.claim(asInstanceId("a"), "builder")).toBeNull();
   });
 });
+
+describe("TaskQueue.claimById", () => {
+  it("transitions a specific pending task to claimed without sorting", async () => {
+    const zk = new FakeZkClient();
+    const queue = new TaskQueue({ zk });
+    // Push three tasks; pick the middle one regardless of role weight.
+    await queue.push({ title: "a", link: "build", priority: 1 });
+    const target = await queue.push({
+      title: "b",
+      link: "review",
+      priority: 1,
+    });
+    await queue.push({ title: "c", link: "build", priority: 1 });
+
+    const claimer = asInstanceId("worker-x");
+    const claimed = await queue.claimById(target.id, claimer);
+    expect(claimed?.id).toBe(target.id);
+    expect(claimed?.title).toBe("b");
+    expect(claimed?.status).toBe("claimed");
+    expect(claimed?.claimed_by).toBe(claimer);
+
+    // The pending node is gone and a claimed ephemeral exists.
+    const stillPending = await queue.getPending(target.id);
+    expect(stillPending).toBeNull();
+    const claimedRecords = await queue.listClaimed();
+    expect(claimedRecords.some((r) => r.task_id === target.id)).toBe(true);
+  });
+
+  it("returns null when the task is no longer pending (already claimed / completed)", async () => {
+    const zk = new FakeZkClient();
+    const queue = new TaskQueue({ zk });
+    const t = await queue.push({ title: "a", link: "build", priority: 1 });
+    const me = asInstanceId("worker-x");
+    expect(await queue.claimById(t.id, me)).not.toBeNull();
+    // Second attempt — pending node no longer exists.
+    expect(await queue.claimById(t.id, me)).toBeNull();
+  });
+});

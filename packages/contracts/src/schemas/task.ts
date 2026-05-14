@@ -19,6 +19,7 @@ export const TaskSchema = z.object({
   id: z.string().transform(asTaskId).default(""),
   title: z.string(),
   description: z.string().default(""),
+  criteria: z.string().default(""),
   priority: TaskPrioritySchema.default(1),
   status: TaskStatusSchema.default("pending"),
   link: TaskLinkSchema.nullable().default(null),
@@ -48,6 +49,7 @@ export type Task = z.infer<typeof TaskSchema>;
 export interface CreateTaskInput {
   title: string;
   description?: string;
+  criteria?: string;
   priority?: TaskPriority;
   link?: TaskLink | null;
   chain_id?: ChainId | null;

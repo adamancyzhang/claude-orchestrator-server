@@ -29,7 +29,7 @@ vars 传入与 Plan 同一组（`task_title / task_description / task_criteria /
 - `task_description` = `"[chain-pagination-001] build"`（fallback msg.content）
 - `task_criteria` = `""`
 - `task_doc_path` = `""`
-- `result_path` = `~/.../cache/leader-01/results/task-task-0000000006.md`
+- `result_path` = `~/.../cache/leader-01/results/task-0000000006.md`
 - `work_dir` = `~/work/co-pagination/.worktrees/Jerry`
 
 **渲染后 prompt 全文**：
@@ -56,7 +56,7 @@ Use the **task-execution** skill ... Follow Trace → Execute → Map → Eviden
 
 ## Outputs
 
-1. Write traceability map to **~/.../cache/leader-01/results/task-task-0000000006.md** (for Leader evaluation)
+1. Write traceability map to **~/.../cache/leader-01/results/task-0000000006.md** (for Leader evaluation)
 2. Write identical copy to **.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/traceability-map.md** (for Verifier)
 3. Save evidence files to **.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/evidence/**
 
@@ -75,34 +75,42 @@ Next Link Ready: yes
 Update `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`. Git commit with your name signature.
 ```
 
-⚠️⚠️⚠️ 三处显著退化：
-1. `{{name}}` 不替换（同 Plan）
-2. `task_doc_path` 为空 → "Fallback: `` " 直接是空字符串
-3. `{planner_name}` 在模板里是 placeholder（无大括号），Jerry 需要自行推断 planner 名（从 system prompt 中的 team 信息推断）。当前实现没有提供 planner_name 给 Jerry
+⚠️ 两处显著退化：
+1. `task_doc_path` 为空 → "Fallback: `` " 直接是空字符串
+2. `{planner_name}` 在模板里是 placeholder（无大括号），Jerry 需要自行推断 planner 名（从 system prompt 中的 team 信息推断）。当前实现没有提供 planner_name 给 Jerry
 
-### 6.4.1 Jerry 怎么拿到 Tom 的 blueprint
+✅ **issue #2 修复**：`{{name}}` 现在替换为 `Jerry`、`{{role}}` 替换为 `builder`，与 Plan 一致。
 
-依现状代码，Jerry 必须：
-1. 在自己的 worktree `~/work/co-pagination/.worktrees/Jerry` 中尝试读 `.claude-orchestrator/docs/Tom/2026-05-14/blueprint.md`
-2. 该文件**不在 Jerry 的 worktree**（Tom 提交在 `co/tom-01` 分支，Jerry 在 `co/jerry-01` 分支）→ 读不到
-3. Jerry 可能尝试 `git fetch origin co/tom-01 && git show co/tom-01:.claude-orchestrator/docs/Tom/2026-05-14/blueprint.md` —— 但模板没指引这么做
-4. 实际效果：Jerry 通常会 **以为没有 blueprint**，按 msg.content `[chain-pagination-001] build` 字面 fallback 自行设计实现
+### 6.4.1 ✅ issue #10 修复：Jerry 通过 chain-shared cache 路径读 Tom 的 blueprint
 
-⚠️ 这是 Plan→Build artifact 跨 worktree 传递的现状缺陷。模板的 "Read planner blueprint" 与实际 worktree 隔离结构存在断链。
+Tom 完成 plan 时，`WorkerWatcher` 把 `result_path` 设为
+`{cache_dir}/{leader_id}/chains/{chain_id}/plan.md`
+（由 `cachePaths.chainArtifactPath(o, chainId, "plan")` 计算），claude-cli 把蓝图写到这里。`cache_dir` 在所有 Worker 与 Leader 之间共享，因此 Jerry（在 `co/jerry-01` 分支的另一个 worktree）能直接通过 path 读取，不必跨分支 / 不必 `git fetch`。
+
+Jerry 的 prompt 通过 `{{upstream_plan_artifact}}` 拿到上述路径。`worker-build.md` 模板已改为：
+
+```
+**Trace** — Read the upstream Plan artifact in this order:
+1. {{upstream_plan_artifact}}  ← chain-shared cache, authoritative
+2. .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/blueprint.md  ← 仅当本 worktree 续做时
+3. {{task_doc_path}}  ← 最后兜底
+```
+
+Worker 在自己的 worktree 仍写一份本地副本到 `.claude-orchestrator/docs/{{name}}/...`（供人审），但跨 worker 的"权威源"是 chain-shared cache 路径。
 
 ## 6.5 claude-cli 主执行
 
 调用形态、log/result 路径同 Plan，区别：
 - `cwd = ~/work/co-pagination/.worktrees/Jerry`
 - `system_prompt` = Jerry 的 identity card（builder 身份）
-- `log_path = ~/.../cache/leader-01/logs/task-task-0000000006-<ts>.log`
-- `result_path = ~/.../cache/leader-01/results/task-task-0000000006.md`
+- `log_path = ~/.../cache/leader-01/logs/task-0000000006-<ts>.log`
+- `result_path = ~/.../cache/leader-01/results/task-0000000006.md`
 
 ### 6.5.1 期望生成的文件
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000006.md` | traceability-map.md（Leader 视角） |
+| `~/.../cache/leader-01/results/task-0000000006.md` | traceability-map.md（Leader 视角） |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md` | 同上副本 |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/evidence/*.{md,log,json}` | 测试/构建证据 |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md` | 当日记忆 |
@@ -152,7 +160,7 @@ Deviations: none
 }
 ```
 
-⚠️ commit message 由 claude 生成，可能含中文 / 特殊字符。`commit-checker.ts:58` 用 `replace(/"/g, '\\"')` 转义引号，但其他 shell 元字符（反引号等）未转义——若 commit message 含反引号有注入风险。这是现状⚠️。
+✅ **已修复（issue #11）**：原现状 `commit-checker.ts:58` 用 `` execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`) `` 把 commit message 拼进字符串再交给 shell，仅转义双引号；反引号 / `$()` / 分号等可被 shell 解释，存在命令注入风险。修复改用 `execFileSync("git", ["commit", "-m", message], …)` 把 message 作为单独 argv 元素传给 git，完全跳过 shell 解析。`git add -A` 也一并切换以保持一致。锁定行为见 `packages/worker/tests/core/unit/commit-checker.test.ts`。
 
 ## 6.7 SelfEvaluator
 
@@ -181,7 +189,7 @@ Deviations: none
 }
 ```
 
-⚠️ 但当前模板把字段名写作 `feedback`（不是 `feedback_to_worker`），schema 校验失败 → fallback `activate_next` —— 实际**很难触发** feedback 路径，除非 claude 主动用 snake_case 写法绕过模板。这是 evaluator 模板需要修复的现状⚠️。
+✅ **issue #3 修复**：模板字段名已对齐 schema（`feedback_to_worker / feedback_target` 等），claude 严格按模板输出即可被 `EvalDecisionSchema.safeParse` 接受，feedback 路径现在可被正常触发。
 
 ## 6.8 完成报告
 
@@ -206,7 +214,7 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000003`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000006.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000006.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:05:00.000Z"

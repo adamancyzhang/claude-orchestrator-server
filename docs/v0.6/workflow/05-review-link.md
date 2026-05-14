@@ -21,7 +21,12 @@
 Fallback: `{{task_doc_path}}`. If any is missing → cannot review, report to Leader.
 ```
 
-⚠️ 同 Verify：跨 worktree artifact 传递问题在 Review 进一步累积——Mia 需要看 3 个不同分支的 artifact。
+✅ **issue #10 修复**：Mia 通过 chain-shared cache 路径读 3 份上游 artifact：
+- `{{upstream_plan_artifact}}` ← Tom 的 blueprint
+- `{{upstream_build_artifact}}` ← Jerry 的 traceability-map
+- `{{upstream_verify_artifact}}` ← Lucy 的 verification-map
+
+不再依赖各 worktree 的 `.claude-orchestrator/docs/{planner|builder|verifier}/...` 路径。
 
 ## 8.5 主任务
 
@@ -30,14 +35,14 @@ cd ~/work/co-pagination/.worktrees/Mia
 claude --append-system-prompt '<Mia identity (reviewer)>' \
        -p '<rendered worker-review.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000008-<ts>.log
+  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000008-<ts>.log
 ```
 
 期望生成文件：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000008.md` | review-judgment.md 副本 |
+| `~/.../cache/leader-01/results/task-0000000008.md` | review-judgment.md 副本 |
 | `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/review-judgment.md` | 判断 |
 | `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/CLAUDE.md` | 当日记忆 |
 
@@ -87,11 +92,13 @@ Specific fix: Add `page_size > 100 → 400 INVALID_PAGE_SIZE` in users-service.t
 }
 ```
 
-⚠️ 同 Verify 7.7.B：`feedback_target=null` 兜底为 `msg.from_instance = "mia-01"`，feedback 实际发回 **Mia 自己**而非 Jerry。⚠️ 且模板字段名 `feedback`/`nextLink` 让 schema 几乎不可能命中 feedback 分支，最终多半 fallback 到 activate_next。
+✅ **issue #6 修复**：Mia 写 `feedback_to_worker` 但不指定 `feedback_target` 时，`ChainRouter.resolveFeedbackTarget` 会按 PREV_LINKS["review"]="verify" 查 chain 的 verify worker（Lucy）。✅ **issue #3 修复**：模板字段名已与 schema 对齐，feedback 分支可被 schema 接受。
+
+注：Review 默认 feedback 目标是 Verifier，因为 PREV_LINKS["review"]="verify"——若 Mia 想要 Builder 修复，需显式 `feedback_target = jerry-01` 或借助 Verifier 中转。
 
 ### 8.7.C reject / close_chain
 
-`worker-evaluate.md` 列出的 decisions：`activate_next | feedback | close_chain`（**没有 reject**）。但 `EvalDecisionSchema` 同时支持 `reject` 与 `close_chain`。Review 拒收时输出：
+`worker-evaluate.md` 决策枚举（修复后）现在包含 `reject`；schema 仍同时支持 `reject` 与 `close_chain`。Review 拒收时输出：
 
 ```json
 {
@@ -135,7 +142,7 @@ ZK 路径：`/messages/leader-01/msg-0000000005`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000008.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000008.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:11:00.000Z"

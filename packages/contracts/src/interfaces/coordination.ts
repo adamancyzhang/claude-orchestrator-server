@@ -14,6 +14,14 @@ import type { Message, SendMessageInput } from "../schemas/message.js";
 export interface ITaskQueue {
   push(input: CreateTaskInput): Promise<Task>;
   claim(claimer: InstanceId, role: InstanceRole): Promise<Task | null>;
+  /**
+   * Claim a specific pending task by id (no sort, no role filtering).
+   * Used by Workers that received a directed `task_dispatch` message
+   * and must transition that exact task from pending → claimed.
+   * Returns null when the task is already gone (someone else claimed it
+   * or it was completed).
+   */
+  claimById(taskId: TaskId, claimer: InstanceId): Promise<Task | null>;
   complete(
     taskId: TaskId,
     result: string,

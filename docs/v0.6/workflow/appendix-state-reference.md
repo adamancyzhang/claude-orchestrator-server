@@ -29,13 +29,13 @@ ZK 文件常量：`packages/contracts/src/paths/zkPaths.ts`。
 | 函数 | 路径模板 | 写入方 |
 |------|---------|--------|
 | `taskDocPath(seq)` | `tasks/task-{seq}.md` | ⚠️ 当前 ChainRouter 没有调用（task_doc 未实现） |
-| `taskLogPath(taskId, ts)` | `logs/task-{taskId}-{ts}.log` | `WorkerWatcher.processMessage` |
-| `taskResultPath(taskId)` | `results/task-{taskId}.md` | Worker → claude 写入 |
-| `evalLogPath(taskId, attempt)` | `evals/task-{taskId}-attempt-{N}.log` | `SelfEvaluator.evaluate` |
-| `commitLogPath(taskId)` | `commits/task-{taskId}.log` | `CommitChecker.generateMessage` |
+| `taskLogPath(taskId, ts)` | `logs/{taskId}-{ts}.log` | `WorkerWatcher.processMessage` |
+| `taskResultPath(taskId)` | `results/{taskId}.md` | Worker → claude 写入 |
+| `evalLogPath(taskId, attempt)` | `evals/{taskId}-attempt-{N}.log` | `SelfEvaluator.evaluate` |
+| `commitLogPath(taskId)` | `commits/{taskId}.log` | `CommitChecker.generateMessage` |
 | `messageLogPath(messageId)` | `messages/{messageId}.log` | `ChainRouter.handleRequirement`（Leader 自处理 decompose） |
 
-⚠️ **双前缀**：当 `taskId` 字符串本身以 `task-` 开头时（实际所有 task_queue 生成的 id 都是这样），`taskLogPath`/`taskResultPath`/`evalLogPath`/`commitLogPath` 会产生 `task-task-{seq}` 形态。例如 `task-0000000001` 会出现在路径中变成 `task-task-0000000001`。来源现状不变。
+✅ **issue #8 修复**：cache 路径函数原本在模板里硬编码 `task-` 前缀，叠加 task_queue 生成的 `task-NNNN` 形成双前缀（`task-task-NNNN`）。修复后 cache 函数不再附加 `task-`，直接拼 `${taskId}`；`taskDocPath(seq)` 例外，因为 seq 是数字。锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
 
 ## C. Zod Schema 速查
 
@@ -57,9 +57,9 @@ ZK 文件常量：`packages/contracts/src/paths/zkPaths.ts`。
 | task_id | string → TaskId / null | null | |
 | chain_id | string → ChainId / null | null | |
 | task_title | string / null | null | |
-| task_description | string / null | null | ⚠️ task_dispatch 现状都不填 |
-| task_criteria | string / null | null | ⚠️ task_dispatch 现状都不填 |
-| task_doc_path | string / null | null | ⚠️ 当前未生成 |
+| task_description | string / null | null | ✅ #9 修复后 chain 首环 task_dispatch 携带；activate_next 派发的后续 link 在 #4 落地前为空字符串 |
+| task_criteria | string / null | null | ✅ #9 修复后同 task_description |
+| task_doc_path | string / null | null | ⚠️ 当前 ChainRouter 仍未生成 task 文档，详见现状⚠️ 残留 |
 | result_path | string / null | null | |
 | reply_to | string → MessageId / null | null | |
 | read | boolean | false | poll 时回写 true |
@@ -72,6 +72,7 @@ ZK 文件常量：`packages/contracts/src/paths/zkPaths.ts`。
 | id | string → TaskId | "" |
 | title | string | （必填） |
 | description | string | "" |
+| criteria | string | "" | ✅ #9 新增——把 ChainDef 的 criteria 持久化到 Task |
 | priority | int 0..2 | 1 |
 | status | enum | "pending"（pending / claimed / completed / blocked / failed） |
 | link | enum / null | null |
@@ -129,7 +130,7 @@ Discriminated union by `decision`：
 | { decision: "close_chain",   reason }
 ```
 
-⚠️ 模板 `worker-evaluate.md` 输出 `nextLink/suggestedWorker/feedback`，与 schema 命名冲突，详见 README ⚠️ 3。
+✅ **issue #3 修复**：模板 `worker-evaluate.md` 与 `worker-evaluate-format-hint.md` 已统一为 snake_case (`next_link / suggested_worker / feedback_to_worker / feedback_target`)，并补 `reject` 选项。
 
 ### C.5 CommitResult — `packages/worker/src/commit-checker.ts:13-18`
 
@@ -258,32 +259,33 @@ else                                                        → handleCompletion
 ~/.claude-orchestrator/cache/leader-01/
 ├── messages/
 │   └── msg-0000000001.log
+├── decompose/
+│   └── msg-0000000001.md
 ├── results/
-│   ├── task-leader-decompose-msg-0000000001.md
-│   ├── task-task-0000000001.md
-│   ├── task-task-0000000006.md
-│   ├── task-task-0000000007.md
-│   ├── task-task-0000000008.md
-│   └── task-task-0000000009.md
+│   ├── task-0000000001.md
+│   ├── task-0000000006.md
+│   ├── task-0000000007.md
+│   ├── task-0000000008.md
+│   └── task-0000000009.md
 ├── logs/
-│   ├── task-task-0000000001-<ts>.log
-│   ├── task-task-0000000006-<ts>.log
-│   ├── task-task-0000000007-<ts>.log
-│   ├── task-task-0000000008-<ts>.log
-│   └── task-task-0000000009-<ts>.log
+│   ├── task-0000000001-<ts>.log
+│   ├── task-0000000006-<ts>.log
+│   ├── task-0000000007-<ts>.log
+│   ├── task-0000000008-<ts>.log
+│   └── task-0000000009-<ts>.log
 ├── commits/
-│   ├── task-task-0000000001.log
-│   ├── task-task-0000000006.log
-│   ├── task-task-0000000007.log
-│   ├── task-task-0000000008.log
-│   └── task-task-0000000009.log
+│   ├── task-0000000001.log
+│   ├── task-0000000006.log
+│   ├── task-0000000007.log
+│   ├── task-0000000008.log
+│   └── task-0000000009.log
 └── evals/
-    ├── task-task-0000000001-attempt-{0,1,2}.log
-    ├── task-task-0000000001-attempt-{0,1,2}.log.result.md
-    ├── task-task-0000000006-attempt-{0,1,2}.log[.result.md]
-    ├── task-task-0000000007-attempt-{0,1,2}.log[.result.md]
-    ├── task-task-0000000008-attempt-{0,1,2}.log[.result.md]
-    └── task-task-0000000009-attempt-{0,1,2}.log[.result.md]
+    ├── task-0000000001-attempt-{0,1,2}.log
+    ├── task-0000000001-attempt-{0,1,2}.log.result.md
+    ├── task-0000000006-attempt-{0,1,2}.log[.result.md]
+    ├── task-0000000007-attempt-{0,1,2}.log[.result.md]
+    ├── task-0000000008-attempt-{0,1,2}.log[.result.md]
+    └── task-0000000009-attempt-{0,1,2}.log[.result.md]
 ```
 
 约 35 个文件（按每个 task 最多 6 个 cache 文件 + 全局 decompose 计算）。

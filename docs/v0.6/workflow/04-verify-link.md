@@ -21,14 +21,11 @@
 Fallback: `{{task_doc_path}}`. If either is missing → BLOCKED, report to Leader.
 ```
 
-⚠️ 跨 worktree artifact 问题在 Verify 更严重：Lucy 在 `~/work/co-pagination/.worktrees/Lucy`，需要看 Tom 的 `blueprint.md`（在 `co/tom-01` 分支）+ Jerry 的 `traceability-map.md`（在 `co/jerry-01` 分支）。两份都不在 Lucy 的 worktree 默认 checkout 中，**且模板没指引怎么 git checkout / fetch**。
+✅ **issue #10 修复**：跨 worktree artifact 现在通过 chain-shared cache 路径传递。Lucy 直接从
+- `{{upstream_plan_artifact}}` = `{cache_dir}/{leader_id}/chains/chain-pagination-001/plan.md`
+- `{{upstream_build_artifact}}` = `{cache_dir}/{leader_id}/chains/chain-pagination-001/build.md`
 
-实际现状：Lucy 可能：
-1. 退化为只看 `task_doc_path`（为空字符串）→ BLOCKED
-2. 主动 `git log --all --oneline` 找到 `co/tom-01` / `co/jerry-01` 分支，用 `git show <branch>:<path>` 取文件
-3. 直接读项目根目录的 `.claude-orchestrator/docs/Tom/...`（如果 worktree 共享主项目根）
-
-⚠️ 现状⚠️ 不确定哪种行为占主导，依赖 Worker prompt 中 Claude 的应变能力。
+读 Tom 与 Jerry 的产物，不再依赖 git 分支跨 worktree 同步。模板里"Fallback: `{{task_doc_path}}`"仍保留，缺少上游 artifact 时 Lucy 仍可标 BLOCKED。
 
 ## 7.5 主任务 claude-cli
 
@@ -39,14 +36,14 @@ cd ~/work/co-pagination/.worktrees/Lucy
 claude --append-system-prompt '<Lucy identity (verifier)>' \
        -p '<rendered worker-verify.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-task-0000000007-<ts>.log
+  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000007-<ts>.log
 ```
 
 期望生成文件：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-task-0000000007.md` | verification-map.md 副本 |
+| `~/.../cache/leader-01/results/task-0000000007.md` | verification-map.md 副本 |
 | `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/verification-map.md` | 验证表 |
 | `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/evidence/*.log` | 测试证据（Lucy 跑的） |
 | `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/CLAUDE.md` | 当日记忆 |
@@ -115,7 +112,7 @@ Verifier 自己不发 feedback，而是把 FAILURE 留给 Reviewer 在更高层�
 }
 ```
 
-⚠️ 同 Build 的 6.7.1 ⚠️：模板字段名 `feedback` 与 schema `feedback_to_worker` 不一致，schema 校验失败 → fallback → 仍走 `activate_next`。所以实际 Verify 几乎不会触发 feedback 路径，FAILURE 总是被推到 Review 处理。
+✅ **issue #3 修复**：模板字段名已对齐 schema，feedback 路径现在能正常被 schema 接受。Verify 决定 FAILURE 是否回退 Builder 是模板里 `worker-evaluate.md` 决策树的选择题，不再被字段命名挡住。
 
 本贯穿样例假设 Lucy 走 `activate_next`（决策 A），把 FAILURE 交给 Mia。
 
@@ -140,7 +137,7 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000004`
   "task_description": null,
   "task_criteria": null,
   "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-task-0000000007.md",
+  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000007.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:08:30.000Z"
@@ -156,25 +153,23 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000004`
 
 ### 7.9.1 假设走 feedback 分支会怎样？
 
-如果 Lucy 输出 `decision=feedback`，`ChainRouter.handleCompletionReport()` 走 `packages/leader/src/chain-router.ts:218-230`：
+如果 Lucy 输出 `decision=feedback`，`ChainRouter.handleCompletionReport()` 走 feedback 分支：
 
 ```typescript
-const targetId = decision.feedback_target ?? msg.from_instance;
-//   ⚠️ feedback_target=null → 兜底 msg.from_instance = "lucy-01"
-//   ⚠️⚠️ 这意味着 feedback 实际发回 **Lucy 自己**，而不是 Jerry！
+const targetId = this.resolveFeedbackTarget(msg, decision.feedback_target ?? null);
 await this.opts.message_router.send({
   type: "direct",
   from_instance: leader-01, ...
-  to_instance: targetId,                         // "lucy-01"
+  to_instance: targetId,                         // ✅ #6 修复后默认 Jerry（build worker）
   content: decision.feedback_to_worker,
   link: msg.link,                                // "verify"
   chain_id: msg.chain_id,
 });
 ```
 
-⚠️ **现状重大缺陷**：feedback 默认目标是消息发送者本人（Verifier 自己），不是 Builder！要让 feedback 发回 Jerry 需要 Lucy 显式设置 `feedback_target = "jerry-01"`——但 Verifier 通常不知道 builder 的 instance_id（仅知名字）。
+✅ **issue #6 修复**：`resolveFeedbackTarget` 优先级 = ① `decision.feedback_target` （Lucy 显式指定）→ ② `chainWorkers.get(chain).get(PREV_LINKS["verify"])` = Jerry（build worker）→ ③ `msg.from_instance`。Verify feedback 现在默认会回到 Builder（Jerry），无需 Lucy 自己手动查 instance_id。
 
-此外 `decision=feedback` 时 leader **不会再 push 新 task**——Lucy 会再次收到 link=verify 消息，触发自己重做 verify。这是另一处严重的现状⚠️。
+⚠️ 残留：`decision=feedback` 时 leader 不会重置 task 状态，Worker 收到 feedback 消息后由 Worker 自行决定是否再次走 build 流程；此外 leader 进程重启会丢失 `chainWorkers` 内存映射（持久化策略未实现）。
 
 ## Verify 环节产物清单
 
