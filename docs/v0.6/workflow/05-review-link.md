@@ -87,11 +87,11 @@ Specific fix: Add `page_size > 100 → 400 INVALID_PAGE_SIZE` in users-service.t
 }
 ```
 
-⚠️ 同 Verify 7.7.B：`feedback_target=null` 兜底为 `msg.from_instance = "mia-01"`，feedback 实际发回 **Mia 自己**而非 Jerry。⚠️ 且模板字段名 `feedback`/`nextLink` 让 schema 几乎不可能命中 feedback 分支，最终多半 fallback 到 activate_next。
+⚠️ 同 Verify 7.7.B：`feedback_target=null` 兜底为 `msg.from_instance = "mia-01"`，feedback 实际发回 **Mia 自己**而非 Jerry（详见 #6 修复说明）。✅ **issue #3 修复**：模板字段名已与 schema 对齐，feedback 分支现在可被 schema 接受；feedback 路由问题转入 #6 处理。
 
 ### 8.7.C reject / close_chain
 
-`worker-evaluate.md` 列出的 decisions：`activate_next | feedback | close_chain`（**没有 reject**）。但 `EvalDecisionSchema` 同时支持 `reject` 与 `close_chain`。Review 拒收时输出：
+`worker-evaluate.md` 决策枚举（修复后）现在包含 `reject`；schema 仍同时支持 `reject` 与 `close_chain`。Review 拒收时输出：
 
 ```json
 {

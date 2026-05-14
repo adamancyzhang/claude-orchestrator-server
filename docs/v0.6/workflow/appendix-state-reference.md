@@ -129,7 +129,7 @@ Discriminated union by `decision`：
 | { decision: "close_chain",   reason }
 ```
 
-⚠️ 模板 `worker-evaluate.md` 输出 `nextLink/suggestedWorker/feedback`，与 schema 命名冲突，详见 README ⚠️ 3。
+✅ **issue #3 修复**：模板 `worker-evaluate.md` 与 `worker-evaluate-format-hint.md` 已统一为 snake_case (`next_link / suggested_worker / feedback_to_worker / feedback_target`)，并补 `reject` 选项。
 
 ### C.5 CommitResult — `packages/worker/src/commit-checker.ts:13-18`
 

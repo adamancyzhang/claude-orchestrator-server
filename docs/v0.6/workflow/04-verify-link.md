@@ -115,7 +115,7 @@ Verifier 自己不发 feedback，而是把 FAILURE 留给 Reviewer 在更高层�
 }
 ```
 
-⚠️ 同 Build 的 6.7.1 ⚠️：模板字段名 `feedback` 与 schema `feedback_to_worker` 不一致，schema 校验失败 → fallback → 仍走 `activate_next`。所以实际 Verify 几乎不会触发 feedback 路径，FAILURE 总是被推到 Review 处理。
+✅ **issue #3 修复**：模板字段名已对齐 schema，feedback 路径现在能正常被 schema 接受。Verify 决定 FAILURE 是否回退 Builder 是模板里 `worker-evaluate.md` 决策树的选择题，不再被字段命名挡住。
 
 本贯穿样例假设 Lucy 走 `activate_next`（决策 A），把 FAILURE 交给 Mia。
 

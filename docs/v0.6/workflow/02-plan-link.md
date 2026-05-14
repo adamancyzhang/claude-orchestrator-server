@@ -356,38 +356,17 @@ if (next) return JSON.stringify({
 });
 ```
 
-### 5.7.x ⚠️ 现状：模板字段名与 Schema 不一致
+### 5.7.x ✅ issue #3 修复：模板字段名与 Schema 已对齐
 
-`templates/agents/worker-evaluate.md` 要求 claude 输出：
+原现状下 `templates/agents/worker-evaluate.md` 输出 `nextLink / suggestedWorker / feedback`（camelCase），与 `EvalDecisionSchema`（`packages/contracts/src/schemas/eval.ts`）期待的 `next_link / suggested_worker / feedback_to_worker`（snake_case）冲突，且模板缺 `reject` 选项；`safeParse` 几乎必失败，最终走 SelfEvaluator fallback 自动推进。
 
-```json
-{
-  "decision": "activate_next" | "feedback" | "close_chain",
-  "reason": "...",
-  "feedback": "...",
-  "nextLink": "build",
-  "suggestedWorker": null
-}
-```
+修复后模板：
+- 字段命名统一为 snake_case：`next_link / suggested_worker / feedback_to_worker / feedback_target`；
+- 决策枚举补齐 4 个：`activate_next / feedback / reject / close_chain`；
+- 输出按 discriminated union 分四个分支列出，禁止跨分支污染字段；
+- `worker-evaluate-format-hint.md` 同步更新，并显式列出禁用的旧字段名（`nextLink / feedback / suggestedWorker`）。
 
-但 `EvalDecisionSchema`（`packages/contracts/src/schemas/eval.ts`）要求：
-
-```
-activate_next: {decision, reason, next_link, suggested_worker?}
-feedback:      {decision, reason, feedback_to_worker, feedback_target?}
-reject:        {decision, reason}
-close_chain:   {decision, reason}
-```
-
-字段差异：
-| 模板字段 | Schema 字段 |
-|---------|------------|
-| `nextLink` | `next_link` |
-| `suggestedWorker` | `suggested_worker` |
-| `feedback` | `feedback_to_worker` |
-| `reject` | （模板没有该选项） |
-
-即使 claude 严格按模板输出，`safeParse` 也会失败 → 走重试 → 最终 fallback 到 `activate_next + next_link`。模板上的 `nextLink` 文本实际上**永远不会被 schema 接受**——但 fallback 路径**总能产生正确字段**的 `next_link`。这是一个真实的"靠重试兜底"的现状⚠️。
+`EvalDecisionSchema` 不变（仍在 `packages/contracts/src/schemas/eval.ts:5-34`），现在 claude 严格按模板输出可直接通过 schema 校验，fallback 路径仅在 claude 偏离模板时启用。
 
 ### 5.7.x EvalDecision 最终内容（取自 fallback 或 schema 命中）
 

@@ -182,7 +182,7 @@ Deviations: none
 }
 ```
 
-⚠️ 但当前模板把字段名写作 `feedback`（不是 `feedback_to_worker`），schema 校验失败 → fallback `activate_next` —— 实际**很难触发** feedback 路径，除非 claude 主动用 snake_case 写法绕过模板。这是 evaluator 模板需要修复的现状⚠️。
+✅ **issue #3 修复**：模板字段名已对齐 schema（`feedback_to_worker / feedback_target` 等），claude 严格按模板输出即可被 `EvalDecisionSchema.safeParse` 接受，feedback 路径现在可被正常触发。
 
 ## 6.8 完成报告
 

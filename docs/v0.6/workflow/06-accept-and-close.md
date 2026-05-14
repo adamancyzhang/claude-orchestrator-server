@@ -113,9 +113,9 @@ Failed criteria:
 }
 ```
 
-⚠️ 同 Verify/Review，feedback_target=null → 回发 Leo 自己；且字段名 `feedback` 与 schema `feedback_to_worker` 不匹配 → schema fail → fallback `close_chain`。
+⚠️ 同 Verify/Review，`feedback_target=null` → 回发 Leo 自己（详见 #6 修复说明）。✅ **issue #3 修复**：模板字段名 `feedback_to_worker / feedback_target` 已对齐 schema，feedback 分支现在能被 schema 接受。
 
-⚠️ **实际现状**：NO-GO 决策在当前实现下**几乎无法可靠表达**，会被 fallback 转为 `close_chain`，**链将被关闭，且没有任何后续修复动作**。这是现状最严重的设计缺陷⚠️。
+✅ **issue #3 修复**：NO-GO 决策现在能在 schema 内直接表达——选 `feedback`（带 `feedback_to_worker` 指明缺失项与 `feedback_target` 指定责任 Worker）或 `reject`（彻底拒收）。⚠️ 仍残留：feedback 的接收方默认还是 sender 自己，详见 #6 修复。
 
 本贯穿样例选择走 9.7.A，最终决策 `close_chain` —— 不严格区分 GO/NO-GO 时的差异，链都会以 `close_chain` 落地。
 
