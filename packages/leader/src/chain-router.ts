@@ -17,6 +17,7 @@ import {
   type InstanceId,
   type LeaderEvent,
   type Message,
+  type Task,
   type TaskLink,
   cachePaths,
   asChainId,
@@ -196,14 +197,10 @@ export class ChainRouter {
       case "activate_next": {
         if (!msg.chain_id) break;
         const nextLink = decision.next_link;
-        const newTask = await this.opts.task_queue.push({
-          title: `[${msg.chain_id}] ${nextLink}`,
-          link: nextLink,
-          chain_id: msg.chain_id,
-          priority: 1,
-          created_by: this.opts.leader_id,
-          created_by_name: this.opts.leader_name,
-        });
+        const nextTask = await this.findOrCreatePendingTask(
+          msg.chain_id,
+          nextLink,
+        );
         const worker = await this.findIdleWorkerByRole(LINK_TO_ROLE[nextLink]);
         if (worker) {
           await this.opts.message_router.send({
@@ -212,14 +209,14 @@ export class ChainRouter {
             from_name: this.opts.leader_name,
             from_role: "leader",
             to_instance: worker.id,
-            content: newTask.title,
+            content: nextTask.title,
             link: nextLink,
             chain_id: msg.chain_id,
-            task_id: newTask.id,
-            task_title: newTask.title,
-            task_description: newTask.description,
-            task_criteria: newTask.criteria,
-            task_doc_path: newTask.task_doc_path,
+            task_id: nextTask.id,
+            task_title: nextTask.title,
+            task_description: nextTask.description,
+            task_criteria: nextTask.criteria,
+            task_doc_path: nextTask.task_doc_path,
           });
         }
         break;
@@ -250,6 +247,31 @@ export class ChainRouter {
 
   private emitChainClosed(chainId: ChainId): void {
     this.opts.bus.emit({ type: "chain_closed", chain_id: asChainId(chainId) });
+  }
+
+  /**
+   * Find the pending task already created for (chain_id, link) by
+   * handleTaskDefinitions. Falls back to pushing a fresh task when the
+   * chain's initial set was never populated (e.g. ad-hoc / decompose-skipped
+   * activations or recovery after the original pending task was deleted).
+   */
+  private async findOrCreatePendingTask(
+    chainId: ChainId,
+    link: TaskLink,
+  ): Promise<Task> {
+    const pending = await this.opts.task_queue.listPending();
+    const existing = pending.find(
+      (t) => t.chain_id === chainId && t.link === link,
+    );
+    if (existing) return existing;
+    return this.opts.task_queue.push({
+      title: `[${chainId}] ${link}`,
+      link,
+      chain_id: chainId,
+      priority: 1,
+      created_by: this.opts.leader_id,
+      created_by_name: this.opts.leader_name,
+    });
   }
 
   private async findIdleWorkerByRole(

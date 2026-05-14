@@ -238,16 +238,12 @@ claude 输出 `MergeDecision` JSON：
 ├── instances/
 │   ├── leader-01, tom-01, jerry-01, lucy-01, mia-01, leo-01   [EPHEMERAL] {status:"idle"}
 ├── tasks/
-│   ├── pending/                             ⚠️ 总计 9 个沉积任务
-│   │   ├── task-0000000001 (初始 plan)
-│   │   ├── task-0000000002 (初始 build)
-│   │   ├── task-0000000003 (初始 verify)
-│   │   ├── task-0000000004 (初始 review)
-│   │   ├── task-0000000005 (初始 accept)
-│   │   ├── task-0000000006 (activate_next plan→build)
-│   │   ├── task-0000000007 (activate_next build→verify)
-│   │   ├── task-0000000008 (activate_next verify→review)
-│   │   └── task-0000000009 (activate_next review→accept)
+│   ├── pending/                             ⚠️ 5 个初始 task 未被 complete（在 #1 落地前依然沉积）
+│   │   ├── task-0000000001 (plan，handleTaskDefinitions 初始 push)
+│   │   ├── task-0000000002 (build，#4 修复后被 activate_next 复用 dispatch)
+│   │   ├── task-0000000003 (verify，同上)
+│   │   ├── task-0000000004 (review，同上)
+│   │   └── task-0000000005 (accept，同上)
 │   ├── claimed/                             (空)
 │   └── completed/                           (空)
 └── messages/

@@ -418,12 +418,66 @@ describe("ChainRouter.handleCompletionReport — activate_next", () => {
     expect(dispatch.link).toBe("build");
     expect(dispatch.to_instance).toBe(builder.id);
     expect(dispatch.task_id).toBeTruthy();
-    // task_description / task_criteria / task_doc_path are passed through;
-    // for now they're empty strings until #4 wires them to the existing
-    // chain-level task — but the field must be present, not omitted.
     expect("task_description" in dispatch).toBe(true);
     expect("task_criteria" in dispatch).toBe(true);
     expect("task_doc_path" in dispatch).toBe(true);
+  });
+
+  it("reuses the existing pending task for the chain's next link instead of creating a duplicate", async () => {
+    const planner = makeInstance("tom-01", "Tom", "planner");
+    const builder = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, queue, msg } = setup([planner, builder]);
+
+    // First: seed the chain with handleTaskDefinitions (5 pending tasks
+    // with full description/criteria).
+    await router.route(chainDefMessage(chainDefJson()));
+    const initialPending = await queue.listPending();
+    expect(initialPending).toHaveLength(5);
+    const buildTaskId = initialPending.find((t) => t.link === "build")!.id;
+    const dispatchedToPlannerCount = msg.sent.length;
+
+    // Then: Tom reports activate_next → build.
+    const decision = {
+      decision: "activate_next",
+      reason: "blueprint complete",
+      next_link: "build",
+    };
+    await router.route(
+      completionMessage("plan", JSON.stringify(decision), planner.id),
+    );
+
+    // No duplicate task was pushed — pending count is still 5.
+    const afterPending = await queue.listPending();
+    expect(afterPending).toHaveLength(5);
+
+    // The build dispatch references the **existing** build task id, and
+    // carries the full description / criteria from that task.
+    const buildDispatch = msg.sent[dispatchedToPlannerCount];
+    expect(buildDispatch.task_id).toBe(buildTaskId);
+    expect(buildDispatch.task_description).toBe("build desc");
+    expect(buildDispatch.task_criteria).toBe("build criteria");
+  });
+
+  it("falls back to pushing a new task when no pending task matches the chain/link", async () => {
+    // Activate without ever seeding the chain — e.g. recovery after the
+    // original pending task was cleared.
+    const builder = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, queue, msg } = setup([builder]);
+
+    const decision = {
+      decision: "activate_next",
+      reason: "ad-hoc",
+      next_link: "build",
+    };
+    await router.route(
+      completionMessage("plan", JSON.stringify(decision), asInstanceId("tom-01")),
+    );
+
+    const pending = await queue.listPending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].link).toBe("build");
+    expect(msg.sent).toHaveLength(1);
+    expect(msg.sent[0].task_id).toBe(pending[0].id);
   });
 });
 

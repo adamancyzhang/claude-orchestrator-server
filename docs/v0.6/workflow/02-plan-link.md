@@ -527,15 +527,16 @@ switch (decision.decision) {
 }
 ```
 
-### 5.9.4 ⚠️ 任务沉积现象
+### 5.9.4 ✅ issue #4 修复：activate_next 复用初始 pending task
 
-注意：task-0000000001 (原 plan task) 至今**还在 `/tasks/pending`**！因为：
-- Worker 没 claim 它
-- handleCompletionReport 中 **没有调用 `task_queue.complete(task-0000000001)`**
+原现状下 `activate_next` 每次都新建任务，初始 5 个 pending 任务永远沉积；整链跑完后 `/tasks/pending` 会沉积 5+4=9 个。
 
-所以这个原 plan task 永远沉积在 pending 中。task-0000000002 (原 build task) 同理。仅有新 push 的 task-0000000006 (新 build task) 被 jerry-01 通过 task_dispatch 消息处理。
+修复后引入 `findOrCreatePendingTask(chain_id, link)`（`packages/leader/src/chain-router.ts`）：
+- 先 `task_queue.listPending()` 扫描，找匹配 chain_id + link 的 pending 任务复用；
+- 找到则直接 dispatch 该 task（task_id / description / criteria / task_doc_path 都从已存在的 task 取）；
+- 找不到才回退到 `task_queue.push`（覆盖 decompose 跳过、recovery 后清空等场景）。
 
-整条链跑完后，pending 中会有 5（初始） + 4（每个 link 完成时新 push） = 9 个任务沉积，且全部 status=pending、claimed_by=null。⚠️ 这是一个真实的现状问题，可能影响 TUI 显示与重启恢复。
+正常链路推进不再产生重复 task：贯穿样例中 build 阶段 dispatch 的是初始的 `task-0000000002`（非新建的 `task-0000000006`）。pending 任务在 #1 落地前依然不会被 claim / complete，但至少不再无限堆积。⚠️ 残留：task 完成时仍不会从 pending 移到 completed，这部分由 #1 解决。
 
 ### 5.9.5 新 task 完整 JSON
 
