@@ -1,0 +1,273 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import {
+  loadProjectWorktreeConfig,
+  saveProjectWorktreeConfig,
+  type WorktreeEntry,
+} from "@co/infra";
+import {
+  asInstanceId,
+  type ILogger,
+  type InstanceId,
+  type InstanceRole,
+} from "@co/contracts";
+
+export interface WorktreeConfig {
+  name: string;
+  role: InstanceRole;
+  worktree_path: string;
+  relative_path: string;
+  branch: string;
+  instance_id: InstanceId;
+}
+
+export const BUILTIN_NAMES = [
+  "Tom", "Jerry", "Lucy", "Thomas", "Jack", "Lisa",
+  "Alice", "Bob", "Charlie", "Diana", "Edward", "Fiona",
+  "George", "Helen", "Ivan", "Julia", "Kevin", "Linda",
+  "Mike", "Nancy",
+];
+
+export const ROLE_PRIORITY: InstanceRole[] = [
+  "planner",
+  "builder",
+  "verifier",
+  "reviewer",
+  "accepter",
+];
+
+export function assignRoles(count: number): InstanceRole[] {
+  if (count <= ROLE_PRIORITY.length) return ROLE_PRIORITY.slice(0, count);
+  const roles: InstanceRole[] = [...ROLE_PRIORITY];
+  for (let i = ROLE_PRIORITY.length; i < count; i++) roles.push("builder");
+  return roles;
+}
+
+function getWorktreeBranch(name: string): string {
+  return `claude-orchestrator/${name}-workspace`;
+}
+
+function execGit(args: string, cwd: string): string {
+  return execSync(`git ${args}`, {
+    cwd,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+}
+
+async function scanExistingNames(projectRoot: string): Promise<Set<string>> {
+  const used = new Set<string>();
+  const wtDir = path.join(projectRoot, ".claude-orchestrator", "worktree");
+
+  if (fs.existsSync(wtDir)) {
+    for (const entry of await fs.promises.readdir(wtDir)) used.add(entry);
+  }
+  try {
+    const branches = execGit("branch -a", projectRoot);
+    for (const line of branches.split("\n")) {
+      const m = line.trim().match(/claude-orchestrator\/(.+)-workspace/);
+      if (m) used.add(m[1]);
+    }
+  } catch {
+    // not a git repo or empty; skip
+  }
+  for (const name of Object.keys(loadProjectWorktreeConfig())) used.add(name);
+  return used;
+}
+
+export function generateFallbackNames(
+  count: number,
+  used: string[],
+): string[] {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const result: string[] = [];
+  for (const letter of alphabet) {
+    if (result.length >= count) break;
+    for (const suffix of ["", "ay", "ee", "ie"]) {
+      if (result.length >= count) break;
+      const candidate = `${letter}${suffix}`;
+      if (!used.includes(candidate)) {
+        result.push(candidate);
+        used.push(candidate);
+      }
+    }
+  }
+  return result;
+}
+
+export function generateWorkerNames(
+  count: number,
+  usedNames: Set<string>,
+): Array<{ name: string; role: InstanceRole }> {
+  const roles = assignRoles(count);
+  const available = BUILTIN_NAMES.filter((n) => !usedNames.has(n));
+
+  if (available.length >= count) {
+    return roles.map((role, i) => ({ name: available[i], role }));
+  }
+
+  const result: Array<{ name: string; role: InstanceRole }> = [];
+  for (let i = 0; i < Math.min(count, available.length); i++) {
+    result.push({ name: available[i], role: roles[i] });
+  }
+  const remaining = count - available.length;
+  const fallback = generateFallbackNames(
+    remaining,
+    [...usedNames, ...available, ...result.map((r) => r.name)],
+  );
+  for (let i = 0; i < remaining; i++) {
+    result.push({ name: fallback[i], role: roles[available.length + i] });
+  }
+  return result;
+}
+
+export interface InitializeWorktreesOptions {
+  project_root: string;
+  worker_count: number;
+  template_dir: string;
+  skills_dir: string;
+  logger: ILogger;
+}
+
+export async function initializeWorktrees(
+  opts: InitializeWorktreesOptions,
+): Promise<WorktreeConfig[]> {
+  const usedNames = await scanExistingNames(opts.project_root);
+  const assignments = generateWorkerNames(opts.worker_count, usedNames);
+  const existingConfig = loadProjectWorktreeConfig();
+  const worktreeRoot = path.join(
+    opts.project_root,
+    ".claude-orchestrator",
+    "worktree",
+  );
+
+  const configs: WorktreeConfig[] = [];
+  for (const { name, role } of assignments) {
+    const existing = existingConfig[name];
+    const wtPath = path.join(worktreeRoot, name);
+    const branch = getWorktreeBranch(name);
+    if (existing && fs.existsSync(wtPath)) {
+      configs.push({
+        name,
+        role: existing.role,
+        worktree_path: wtPath,
+        relative_path: `.claude-orchestrator/worktree/${name}`,
+        branch,
+        instance_id: asInstanceId(
+          existing.instance_id || randomUUID().replace(/-/g, ""),
+        ),
+      });
+      opts.logger.info(`reusing worktree ${name} (${role})`);
+      continue;
+    }
+
+    await fs.promises.mkdir(worktreeRoot, { recursive: true });
+    let branchExists = "";
+    try {
+      branchExists = execGit(`rev-parse --verify ${branch}`, opts.project_root);
+    } catch {
+      branchExists = "";
+    }
+    const relative = `.claude-orchestrator/worktree/${name}`;
+    if (branchExists) {
+      execGit(`worktree add ${relative} ${branch}`, opts.project_root);
+    } else {
+      execGit(`worktree add ${relative} -b ${branch}`, opts.project_root);
+    }
+
+    const instanceId = asInstanceId(randomUUID().replace(/-/g, ""));
+    const wtConfigDir = path.join(wtPath, ".claude-orchestrator");
+    await fs.promises.mkdir(wtConfigDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(wtConfigDir, "config.json"),
+      JSON.stringify({ name, role, instance_id: instanceId }, null, 2),
+    );
+
+    seedWorktreeAssets(wtPath, name, role, opts.template_dir, opts.skills_dir);
+
+    configs.push({
+      name,
+      role,
+      worktree_path: wtPath,
+      relative_path: relative,
+      branch,
+      instance_id: instanceId,
+    });
+    opts.logger.info(`created worktree ${name} (${role}) at ${relative}`);
+  }
+
+  if (configs.length > 0) {
+    const record: Record<string, WorktreeEntry> = {};
+    for (const c of configs) {
+      record[c.name] = {
+        name: c.name,
+        role: c.role,
+        path: c.relative_path,
+        branch: c.branch,
+        instance_id: c.instance_id,
+      };
+    }
+    saveProjectWorktreeConfig(record);
+  }
+
+  return configs;
+}
+
+function seedWorktreeAssets(
+  worktreePath: string,
+  name: string,
+  role: InstanceRole,
+  templateDir: string,
+  skillsDir: string,
+): void {
+  if (!fs.existsSync(templateDir)) return;
+
+  const agentsSrc = path.join(templateDir, "agents");
+  const agentsDst = path.join(worktreePath, ".claude-orchestrator", "agents");
+  if (fs.existsSync(agentsSrc)) {
+    fs.mkdirSync(agentsDst, { recursive: true });
+    for (const file of fs.readdirSync(agentsSrc)) {
+      const src = path.join(agentsSrc, file);
+      const dst = path.join(agentsDst, file);
+      if (!fs.existsSync(dst)) fs.copyFileSync(src, dst);
+    }
+  }
+
+  if (fs.existsSync(skillsDir)) {
+    const skillsDst = path.join(worktreePath, ".claude", "skills");
+    for (const skill of fs.readdirSync(skillsDir)) {
+      const srcSkill = path.join(skillsDir, skill, "SKILL.md");
+      const dstDir = path.join(skillsDst, skill);
+      const dstSkill = path.join(dstDir, "SKILL.md");
+      if (!fs.existsSync(srcSkill)) continue;
+      if (fs.existsSync(dstDir)) fs.rmSync(dstDir, { recursive: true, force: true });
+      fs.mkdirSync(dstDir, { recursive: true });
+      fs.copyFileSync(srcSkill, dstSkill);
+    }
+  }
+
+  const memoryDir = path.join(templateDir, "claude-memory");
+  const teamSrc = path.join(memoryDir, "team-claude.md");
+  const teamDst = path.join(worktreePath, "CLAUDE.md");
+  if (fs.existsSync(teamSrc) && !fs.existsSync(teamDst)) {
+    fs.copyFileSync(teamSrc, teamDst);
+  }
+  const personalSrc = path.join(memoryDir, `personal-claude-${role}.md`);
+  const personalDst = path.join(
+    worktreePath,
+    ".claude-orchestrator",
+    "docs",
+    name,
+    "CLAUDE.md",
+  );
+  if (fs.existsSync(personalSrc) && !fs.existsSync(personalDst)) {
+    fs.mkdirSync(path.dirname(personalDst), { recursive: true });
+    let content = fs.readFileSync(personalSrc, "utf-8");
+    content = content
+      .replace(/\{\{name\}\}/g, name)
+      .replace(/\{\{role\}\}/g, role);
+    fs.writeFileSync(personalDst, content, "utf-8");
+  }
+}
