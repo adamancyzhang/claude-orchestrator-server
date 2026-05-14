@@ -513,27 +513,88 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     });
   });
 
-  it("routes feedback to msg.from_instance when feedback_target is unset", async () => {
-    const { router, msg } = setup([]);
-    const decision = {
-      decision: "feedback",
-      reason: "missing artifact",
-      feedback_to_worker: "Please add page_size<=100 validation",
-    };
+  it("routes verifier feedback to the upstream builder via the chain dispatch map (no explicit feedback_target)", async () => {
+    // Set up a chain where Tom (planner) and Jerry (builder) have already
+    // been dispatched tasks for this chain. Then Lucy (verifier) reports
+    // feedback without an explicit feedback_target — it should land in
+    // Jerry's inbox, not Lucy's.
+    const tom = makeInstance("tom-01", "Tom", "planner");
+    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, msg } = setup([tom, jerry]);
+    await router.route(chainDefMessage(chainDefJson()));
+    expect(msg.sent[0].to_instance).toBe(tom.id); // plan dispatched to Tom
+
+    // Tom reports activate_next → build to dispatch to Jerry.
+    await router.route(
+      completionMessage(
+        "plan",
+        JSON.stringify({
+          decision: "activate_next",
+          reason: "ok",
+          next_link: "build",
+        }),
+        tom.id,
+      ),
+    );
+    expect(msg.sent.at(-1)!.to_instance).toBe(jerry.id);
+
+    // Lucy reports feedback.
+    const before = msg.sent.length;
     await router.route(
       completionMessage(
         "verify",
-        JSON.stringify(decision),
+        JSON.stringify({
+          decision: "feedback",
+          reason: "FAILURE: page_size>100 unrejected",
+          feedback_to_worker: "Add page_size<=100 validation",
+        }),
         asInstanceId("lucy-01"),
       ),
     );
-    expect(msg.sent).toHaveLength(1);
-    const m = msg.sent[0];
-    expect(m.type).toBe("direct");
-    // ⚠️ Documented in issue #6 — the default target is the sender (Lucy)
-    // rather than the upstream worker (Jerry). Locking this fallback so
-    // the upcoming fix consciously changes it.
-    expect(m.to_instance).toBe(asInstanceId("lucy-01"));
-    expect(m.content).toBe("Please add page_size<=100 validation");
+    expect(msg.sent.length).toBe(before + 1);
+    const fb = msg.sent.at(-1)!;
+    expect(fb.type).toBe("direct");
+    expect(fb.to_instance).toBe(jerry.id);
+    expect(fb.content).toBe("Add page_size<=100 validation");
+  });
+
+  it("honors explicit feedback_target over the prior-link fallback", async () => {
+    const tom = makeInstance("tom-01", "Tom", "planner");
+    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, msg } = setup([tom, jerry]);
+    await router.route(chainDefMessage(chainDefJson()));
+    const targetOverride = asInstanceId("custom-target-instance");
+
+    await router.route(
+      completionMessage(
+        "verify",
+        JSON.stringify({
+          decision: "feedback",
+          reason: "explicit redirect",
+          feedback_to_worker: "redo",
+          feedback_target: targetOverride,
+        }),
+        asInstanceId("lucy-01"),
+      ),
+    );
+    expect(msg.sent.at(-1)!.to_instance).toBe(targetOverride);
+  });
+
+  it("falls back to msg.from_instance only when neither feedback_target nor a prior-link worker exists", async () => {
+    // Plan link feedback has no prior link to bounce back to.
+    const { router, msg } = setup([]);
+    await router.route(
+      completionMessage(
+        "plan",
+        JSON.stringify({
+          decision: "feedback",
+          reason: "needs more detail",
+          feedback_to_worker: "expand the blueprint",
+        }),
+        asInstanceId("tom-01"),
+      ),
+    );
+    const last = msg.sent.at(-1)!;
+    expect(last.to_instance).toBe(asInstanceId("tom-01"));
   });
 });

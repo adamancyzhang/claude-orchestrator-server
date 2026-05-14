@@ -31,6 +31,14 @@ const NEXT_LINKS: Record<TaskLink, TaskLink | null> = {
   accept: null,
 };
 
+const PREV_LINKS: Record<TaskLink, TaskLink | null> = {
+  plan: null,
+  build: "plan",
+  verify: "build",
+  review: "verify",
+  accept: "review",
+};
+
 const LINK_TO_ROLE: Record<TaskLink | "decompose", string> = {
   plan: "planner",
   build: "builder",
@@ -54,7 +62,36 @@ export interface ChainRouterOptions {
 }
 
 export class ChainRouter {
+  /**
+   * In-memory chain → link → worker_id mapping. Populated whenever the
+   * router dispatches a task to a worker, consulted by the `feedback`
+   * decision branch to route feedback back to the previous-link worker
+   * when the evaluator did not provide an explicit `feedback_target`.
+   *
+   * The map is process-local. If the leader restarts mid-chain, the
+   * mapping is lost — feedback in that window falls back to the
+   * `msg.from_instance` legacy behavior.
+   */
+  private readonly chainWorkers = new Map<ChainId, Map<TaskLink, InstanceId>>();
+
   constructor(private readonly opts: ChainRouterOptions) {}
+
+  private rememberDispatch(
+    chainId: ChainId,
+    link: TaskLink,
+    workerId: InstanceId,
+  ): void {
+    let perChain = this.chainWorkers.get(chainId);
+    if (!perChain) {
+      perChain = new Map();
+      this.chainWorkers.set(chainId, perChain);
+    }
+    perChain.set(link, workerId);
+  }
+
+  private forgetChain(chainId: ChainId): void {
+    this.chainWorkers.delete(chainId);
+  }
 
   async route(msg: Message): Promise<void> {
     if (!msg.link) {
@@ -178,6 +215,7 @@ export class ChainRouter {
           task_description: firstDef.description,
           task_criteria: firstDef.criteria,
         });
+        this.rememberDispatch(chainDef.chain_id, firstLink, worker.id);
       } else {
         this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink]} available — task queued`);
       }
@@ -218,11 +256,12 @@ export class ChainRouter {
             task_criteria: nextTask.criteria,
             task_doc_path: nextTask.task_doc_path,
           });
+          this.rememberDispatch(msg.chain_id, nextLink, worker.id);
         }
         break;
       }
       case "feedback": {
-        const targetId = decision.feedback_target ?? msg.from_instance;
+        const targetId = this.resolveFeedbackTarget(msg, decision.feedback_target ?? null);
         await this.opts.message_router.send({
           type: "direct",
           from_instance: this.opts.leader_id,
@@ -239,10 +278,36 @@ export class ChainRouter {
       case "close_chain": {
         if (msg.chain_id) {
           this.emitChainClosed(msg.chain_id);
+          this.forgetChain(msg.chain_id);
         }
         break;
       }
     }
+  }
+
+  /**
+   * Decide who receives a feedback message.
+   *
+   * Priority:
+   *   1. Explicit `feedback_target` from the EvalDecision (Worker-asserted).
+   *   2. The worker that handled the previous link in this chain (e.g.
+   *      Verifier feedback → Builder), looked up via chainWorkers.
+   *   3. The sender of the completion report (legacy fallback — keeps
+   *      single-worker / ad-hoc flows unblocked).
+   */
+  private resolveFeedbackTarget(
+    msg: Message,
+    explicit: InstanceId | null,
+  ): InstanceId {
+    if (explicit) return explicit;
+    if (msg.chain_id && msg.link) {
+      const prevLink = PREV_LINKS[msg.link];
+      if (prevLink) {
+        const prev = this.chainWorkers.get(msg.chain_id)?.get(prevLink);
+        if (prev) return prev;
+      }
+    }
+    return msg.from_instance;
   }
 
   private emitChainClosed(chainId: ChainId): void {

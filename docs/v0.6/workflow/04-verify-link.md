@@ -156,25 +156,23 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000004`
 
 ### 7.9.1 假设走 feedback 分支会怎样？
 
-如果 Lucy 输出 `decision=feedback`，`ChainRouter.handleCompletionReport()` 走 `packages/leader/src/chain-router.ts:218-230`：
+如果 Lucy 输出 `decision=feedback`，`ChainRouter.handleCompletionReport()` 走 feedback 分支：
 
 ```typescript
-const targetId = decision.feedback_target ?? msg.from_instance;
-//   ⚠️ feedback_target=null → 兜底 msg.from_instance = "lucy-01"
-//   ⚠️⚠️ 这意味着 feedback 实际发回 **Lucy 自己**，而不是 Jerry！
+const targetId = this.resolveFeedbackTarget(msg, decision.feedback_target ?? null);
 await this.opts.message_router.send({
   type: "direct",
   from_instance: leader-01, ...
-  to_instance: targetId,                         // "lucy-01"
+  to_instance: targetId,                         // ✅ #6 修复后默认 Jerry（build worker）
   content: decision.feedback_to_worker,
   link: msg.link,                                // "verify"
   chain_id: msg.chain_id,
 });
 ```
 
-⚠️ **现状重大缺陷**：feedback 默认目标是消息发送者本人（Verifier 自己），不是 Builder！要让 feedback 发回 Jerry 需要 Lucy 显式设置 `feedback_target = "jerry-01"`——但 Verifier 通常不知道 builder 的 instance_id（仅知名字）。
+✅ **issue #6 修复**：`resolveFeedbackTarget` 优先级 = ① `decision.feedback_target` （Lucy 显式指定）→ ② `chainWorkers.get(chain).get(PREV_LINKS["verify"])` = Jerry（build worker）→ ③ `msg.from_instance`。Verify feedback 现在默认会回到 Builder（Jerry），无需 Lucy 自己手动查 instance_id。
 
-此外 `decision=feedback` 时 leader **不会再 push 新 task**——Lucy 会再次收到 link=verify 消息，触发自己重做 verify。这是另一处严重的现状⚠️。
+⚠️ 残留：`decision=feedback` 时 leader 不会重置 task 状态，Worker 收到 feedback 消息后由 Worker 自行决定是否再次走 build 流程；此外 leader 进程重启会丢失 `chainWorkers` 内存映射（持久化策略未实现）。
 
 ## Verify 环节产物清单
 

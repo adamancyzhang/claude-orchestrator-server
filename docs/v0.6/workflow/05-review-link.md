@@ -87,7 +87,9 @@ Specific fix: Add `page_size > 100 → 400 INVALID_PAGE_SIZE` in users-service.t
 }
 ```
 
-⚠️ 同 Verify 7.7.B：`feedback_target=null` 兜底为 `msg.from_instance = "mia-01"`，feedback 实际发回 **Mia 自己**而非 Jerry（详见 #6 修复说明）。✅ **issue #3 修复**：模板字段名已与 schema 对齐，feedback 分支现在可被 schema 接受；feedback 路由问题转入 #6 处理。
+✅ **issue #6 修复**：Mia 写 `feedback_to_worker` 但不指定 `feedback_target` 时，`ChainRouter.resolveFeedbackTarget` 会按 PREV_LINKS["review"]="verify" 查 chain 的 verify worker（Lucy）。✅ **issue #3 修复**：模板字段名已与 schema 对齐，feedback 分支可被 schema 接受。
+
+注：Review 默认 feedback 目标是 Verifier，因为 PREV_LINKS["review"]="verify"——若 Mia 想要 Builder 修复，需显式 `feedback_target = jerry-01` 或借助 Verifier 中转。
 
 ### 8.7.C reject / close_chain
 
