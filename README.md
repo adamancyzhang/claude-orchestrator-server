@@ -20,7 +20,7 @@
 
 ## What is this?
 
-**Claude Orchestrator** runs multiple Claude Code instances as an AI team. Each Worker gets an isolated git worktree with humanized names (Tom, Jerry, Lucy...), auto-processes assigned tasks via `claude -p`, self-evaluates output via `--fork-session`, and sends a 4-variant `EvalDecision` back to the Leader. The Leader runs a read-only TUI and mechanically routes tasks through the **Plan → Build → Verify → Review → Accept** responsibility chain.
+**Claude Orchestrator** runs multiple Claude Code instances as an AI team. Each Worker gets an isolated git worktree with humanized names (Tom, Jerry, Lucy...), auto-processes assigned tasks via `claude -p`, self-evaluates output via `--fork-session`, and sends a 4-variant `EvalDecision` back to the Leader. The Leader runs an interactive TUI (input line + Tab/1–9 worker switching) and mechanically routes tasks through the **Plan → Build → Verify → Review → Accept** responsibility chain.
 
 Under the hood, ZooKeeper handles coordination: ephemeral nodes for heartbeat, sequential nodes for FIFO task ordering, and watches for real-time notification. Zero external database — all state lives in ZooKeeper.
 
@@ -130,7 +130,7 @@ Leader (4a) and Worker (4b) are at the same layer and **must not import each oth
 
 | Component | What it does | ZK magic |
 |-----------|-------------|----------|
-| **Leader** | Read-only TUI, mechanical message/task routing, merge validation, orphan recovery. Self-processes decompose via claude-cli when the `worker-decompose.md` template is loaded; otherwise forwards to Planner. | `/leader` EPHEMERAL — exactly one Leader, carries `protocol_version` |
+| **Leader** | Interactive TUI (input line, Tab/1–9 worker switching), mechanical message/task routing, merge validation, orphan recovery. Self-processes decompose via claude-cli when the `worker-decompose.md` template is loaded; otherwise forwards to Planner. | `/leader` EPHEMERAL — exactly one Leader, carries `protocol_version` |
 | **Worker** | Isolated git worktree, ZK watch loop, auto-processes messages via `claude -p`, self-evaluates output with `--fork-session`, auto-commits changes with `--resume` | `/instances/{id}` EPHEMERAL → auto-cleanup on disconnect |
 | **Task Queue** | Push → Claim → Complete (or Block / Fail / Retry). `ROLE_WEIGHTS`-driven claim sorting. | Sequential nodes for FIFO, ephemeral claims for atomic locks. Claim payload embeds a `task_snapshot` for crash recovery. |
 | **Message Router** | Point-to-point messaging via ZK watches | Persistent-sequential nodes, push notification |

@@ -20,7 +20,7 @@
 
 ## 这是什么？
 
-**Claude Orchestrator** 将多个 Claude Code 实例作为一支 AI 团队运行。每个 Worker 在独立的 git worktree 中以拟人化名称（Tom、Jerry、Lucy 等）运行，通过 `claude -p` 自动处理分配的任务，使用 `--fork-session` 自评估输出，并向 Leader 回报一份 4 态判别联合的 `EvalDecision`。Leader 运行只读 TUI，按 **Plan → Build → Verify → Review → Accept** 责任链机械路由任务。
+**Claude Orchestrator** 将多个 Claude Code 实例作为一支 AI 团队运行。每个 Worker 在独立的 git worktree 中以拟人化名称（Tom、Jerry、Lucy 等）运行，通过 `claude -p` 自动处理分配的任务，使用 `--fork-session` 自评估输出，并向 Leader 回报一份 4 态判别联合的 `EvalDecision`。Leader 运行交互式 TUI（输入行 + Tab/1–9 切换 Worker），按 **Plan → Build → Verify → Review → Accept** 责任链机械路由任务。
 
 底层通过 ZooKeeper 实现分布式协调：临时节点管理心跳，顺序节点保证 FIFO 排序，Watch 机制实现实时通知。零外部数据库 —— 所有状态都在 ZooKeeper 中。
 
@@ -130,7 +130,7 @@ Leader（4a）与 Worker（4b）同层，**互不直接 import**；必须通过 
 
 | 组件 | 功能 | ZK 魔法 |
 |------|------|---------|
-| **Leader** | 只读 TUI，机械消息/任务路由，合并验证，孤儿任务恢复。当 `worker-decompose.md` 模板可用时自行处理需求拆解，否则转发 Planner。 | `/leader` EPHEMERAL —— 同时只有一个 Leader，节点数据含 `protocol_version` |
+| **Leader** | 交互式 TUI（输入行、Tab/1–9 切换 Worker），机械消息/任务路由，合并验证，孤儿任务恢复。当 `worker-decompose.md` 模板可用时自行处理需求拆解，否则转发 Planner。 | `/leader` EPHEMERAL —— 同时只有一个 Leader，节点数据含 `protocol_version` |
 | **Worker** | 独立 git worktree，ZK Watch 循环，通过 `claude -p` 自动处理消息，使用 `--fork-session` 自评估，使用 `--resume` 自动提交 | `/instances/{id}` EPHEMERAL → 断线自动清理 |
 | **任务队列** | 推送 → 认领 → 完成（或阻塞/失败/重试）。基于 `ROLE_WEIGHTS` 的认领排序。 | 顺序节点保证 FIFO，临时节点实现原子锁。Claim 节点数据内嵌 `task_snapshot` 便于崩溃恢复。 |
 | **消息路由** | 点对点消息传递（通过 ZK Watch） | 持久顺序节点 + 推送通知 |
