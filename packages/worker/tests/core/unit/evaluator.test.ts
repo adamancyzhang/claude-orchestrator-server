@@ -65,11 +65,11 @@ class RecordingRunner implements IClaudeRunner {
   }
 }
 
-function makeTemplateEngine(): TemplateEngine {
+function makeTemplateEngine(body?: string): TemplateEngine {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eval-tpl-"));
   fs.writeFileSync(
     path.join(dir, "worker-evaluate.md"),
-    "evaluate {{link}} {{result_path}}",
+    body ?? "evaluate {{link}} {{result_path}}",
   );
   fs.writeFileSync(
     path.join(dir, "worker-evaluate-format-hint.md"),
@@ -78,11 +78,14 @@ function makeTemplateEngine(): TemplateEngine {
   return new TemplateEngine({ primary_dir: dir });
 }
 
-function evaluatorWith(runner: IClaudeRunner): SelfEvaluator {
+function evaluatorWith(
+  runner: IClaudeRunner,
+  template_engine: TemplateEngine = makeTemplateEngine(),
+): SelfEvaluator {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "eval-cache-"));
   return new SelfEvaluator({
     runner,
-    template_engine: makeTemplateEngine(),
+    template_engine,
     logger: new FakeLogger(),
     cache_paths: {
       cache_dir: tmp,
@@ -90,6 +93,8 @@ function evaluatorWith(runner: IClaudeRunner): SelfEvaluator {
     },
     worktree_path: "/wt",
     identity_system_prompt: "id",
+    worker_name: "Tom",
+    worker_role: "planner",
   });
 }
 
@@ -167,5 +172,27 @@ describe("SelfEvaluator", () => {
       task_result_path: "/r/t-4.md",
     });
     expect(JSON.parse(out).decision).toBe("close_chain");
+  });
+
+  it("substitutes {{name}} and {{role}} into the evaluate prompt", async () => {
+    const runner = new RecordingRunner(() =>
+      JSON.stringify({
+        decision: "activate_next",
+        reason: "ok",
+        next_link: "build",
+      }),
+    );
+    const tpl = makeTemplateEngine("hello {{name}} ({{role}}) at {{link}}");
+    const evalr = evaluatorWith(runner, tpl);
+    await evalr.evaluate({
+      link: "plan",
+      task_id: asTaskId("t-name"),
+      msg_vars: {},
+      task_result_path: "/r/t-name.md",
+    });
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0].prompt).toContain("hello Tom (planner) at plan");
+    expect(runner.calls[0].prompt).not.toContain("{{name}}");
+    expect(runner.calls[0].prompt).not.toContain("{{role}}");
   });
 });

@@ -75,10 +75,11 @@ Next Link Ready: yes
 Update `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`. Git commit with your name signature.
 ```
 
-⚠️⚠️⚠️ 三处显著退化：
-1. `{{name}}` 不替换（同 Plan）
-2. `task_doc_path` 为空 → "Fallback: `` " 直接是空字符串
-3. `{planner_name}` 在模板里是 placeholder（无大括号），Jerry 需要自行推断 planner 名（从 system prompt 中的 team 信息推断）。当前实现没有提供 planner_name 给 Jerry
+⚠️ 两处显著退化：
+1. `task_doc_path` 为空 → "Fallback: `` " 直接是空字符串
+2. `{planner_name}` 在模板里是 placeholder（无大括号），Jerry 需要自行推断 planner 名（从 system prompt 中的 team 信息推断）。当前实现没有提供 planner_name 给 Jerry
+
+✅ **issue #2 修复**：`{{name}}` 现在替换为 `Jerry`、`{{role}}` 替换为 `builder`，与 Plan 一致。
 
 ### 6.4.1 Jerry 怎么拿到 Tom 的 blueprint
 

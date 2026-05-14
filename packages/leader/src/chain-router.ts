@@ -91,6 +91,8 @@ export class ChainRouter {
       await fs.promises.mkdir(require("node:path").dirname(resultPath), { recursive: true });
 
       const prompt = this.opts.template_engine.render("worker-decompose.md", {
+        name: this.opts.leader_name,
+        role: "leader",
         task_title: msg.task_title ?? "",
         task_description: msg.task_description ?? msg.content,
         task_criteria: msg.task_criteria ?? "",

@@ -105,6 +105,8 @@ async function boot(config: ChildConfig): Promise<void> {
     cache_paths: cachePathOpts,
     worktree_path: config.worktree_path,
     identity_system_prompt: identitySystemPrompt,
+    worker_name: config.name,
+    worker_role: config.role,
   });
 
   const commitChecker = new CommitChecker({

@@ -60,7 +60,7 @@
 阅读时留意以下与设计文档不完全一致的现象（都在对应文件里展开）：
 
 1. **`/tasks/*` 是审计型，而非真正的拉取队列** — `WorkerWatcher` 完全靠消息驱动，从不调用 `task_queue.claim()`；`ChainRouter` 把 5 个 task 都 push 进 pending，但只派发首任务，剩余任务沉积。后续每完成一个 link，又会 push 一条新 task。详见 `01` §5 + `02` §5.1。
-2. **模板里 `{{name}}` 在 Worker prompt 中不会被替换** — `WorkerWatcher.processMessage` 渲染时不传 `name` 变量；Worker 通过 `--append-system-prompt` 注入的身份卡感知自己的名字。`worker-plan.md` 等模板里的 `{{name}}` 文本会原样留在 prompt 里。详见 `00` §3。
+2. ✅ **已修复（issue #2）**：模板里 `{{name}}` / `{{role}}` 在 Worker prompt 与自评估 prompt 中现在会被正确替换。原现状下 `WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement`（Leader 自处理 decompose）渲染时都不传 `name/role` 变量，模板里的 `{{name}}` 字面留下。详见 `00` §3。
 3. **`worker-evaluate.md` 输出字段命名与 Schema 不一致** — 模板要求 `nextLink / feedback / suggestedWorker`，但 `EvalDecisionSchema` 期待 `next_link / feedback_to_worker / suggested_worker`，且模板缺 `reject` 选项。`SelfEvaluator` 解析失败 3 次后兜底用 `NEXT_LINKS` 自动推进，相当于 Schema 强制纠错。详见 `02` §5.7。
 4. **`ChainRouter.handleCompletionReport` 每次 activate_next 都新建一条 task**，不复用初始 5 个 pending 任务。详见 `02` §5.9。
 5. **Leader 自处理 decompose 时 `task_id` 为 logKey 字符串而不是 TaskId** — 走 `cachePaths.taskResultPath` 时被强转，路径里会出现 `task-leader-decompose-xxx.md`。详见 `01` §4。

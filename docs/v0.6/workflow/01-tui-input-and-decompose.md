@@ -237,7 +237,7 @@ const prompt = this.opts.template_engine.render("worker-decompose.md", {
 });
 ```
 
-`worker-decompose.md` 中只用到 `{{task_description}}`、`{{result_path}}` 两个变量。`{{name}}` 留作字面文本（⚠️ Leader 自处理时也没 name 变量）。
+`worker-decompose.md` 用到 `{{task_description}}`、`{{result_path}}`、`{{name}}` 三个变量。✅ issue #2 修复后，Leader 自处理 decompose 时 `name = leader_name`、`role = "leader"`，`{{name}}` 会被替换为 Leader 自己的名字（例如 `Leader`）。
 
 **渲染后 prompt（关键片段）**：
 

@@ -176,7 +176,9 @@ Blueprint Path: .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/blueprint.md
 Update `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` with completion status.
 ```
 
-⚠️ 注意 **`{{name}}` 字面保留** 与 **Description 退化为 title**、**Criteria/Spec 为空**（见 `01-tui-input-and-decompose.md` §5.5 解释）。Tom 实际看到的 Plan task 信息密度比 ChainDef 中定义的薄得多。
+⚠️ 注意 **Description 退化为 title** 与 **Criteria/Spec 为空**（见 `01-tui-input-and-decompose.md` §5.5 解释）。Tom 实际看到的 Plan task 信息密度比 ChainDef 中定义的薄得多。
+
+✅ **issue #2 修复**：`{{name}}` / `{{role}}` 现在会被替换。Tom 的 prompt 里 "Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`" 实际渲染为 "Read `.claude-orchestrator/docs/Tom/YYYY-MM-DD/CLAUDE.md`"，下游 evaluator 同此。
 
 ## 5.5 主任务执行 claude-cli
 

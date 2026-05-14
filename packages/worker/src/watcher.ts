@@ -87,6 +87,8 @@ export class WorkerWatcher {
       const tplName = LINK_TO_TEMPLATE[link];
       if (this.opts.template_engine.has(tplName)) {
         prompt = this.opts.template_engine.render(tplName, {
+          name: this.opts.worker_name,
+          role: this.opts.worker_role,
           task_title: msg.task_title ?? "",
           task_description: msg.task_description ?? msg.content,
           task_criteria: msg.task_criteria ?? "",
