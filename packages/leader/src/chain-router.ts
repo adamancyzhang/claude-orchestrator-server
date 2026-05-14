@@ -136,12 +136,14 @@ export class ChainRouter {
     let firstTaskId: string | null = null;
     let firstTitle = "";
 
+    let firstDef: ChainDef["tasks"][TaskLink] | null = null;
     for (const link of linkOrder) {
       const def = chainDef.tasks[link];
       if (!def) continue;
       const task = await this.opts.task_queue.push({
         title: def.title,
         description: def.description,
+        criteria: def.criteria,
         priority: def.priority,
         link,
         chain_id: chainDef.chain_id,
@@ -152,12 +154,13 @@ export class ChainRouter {
         firstLink = link;
         firstTaskId = task.id;
         firstTitle = def.title;
+        firstDef = def;
       }
     }
 
     this.opts.bus.emit({ type: "chain_activated", chain_id: chainDef.chain_id });
 
-    if (firstLink && firstTaskId) {
+    if (firstLink && firstTaskId && firstDef) {
       const worker = await this.findIdleWorkerByRole(LINK_TO_ROLE[firstLink]);
       if (worker) {
         await this.opts.message_router.send({
@@ -171,6 +174,8 @@ export class ChainRouter {
           chain_id: chainDef.chain_id,
           task_id: firstTaskId as never,
           task_title: firstTitle,
+          task_description: firstDef.description,
+          task_criteria: firstDef.criteria,
         });
       } else {
         this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink]} available — task queued`);
@@ -212,6 +217,9 @@ export class ChainRouter {
             chain_id: msg.chain_id,
             task_id: newTask.id,
             task_title: newTask.title,
+            task_description: newTask.description,
+            task_criteria: newTask.criteria,
+            task_doc_path: newTask.task_doc_path,
           });
         }
         break;

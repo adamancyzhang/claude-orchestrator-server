@@ -123,10 +123,12 @@ await this.opts.hooks.fire({
 
 ```typescript
 prompt = this.opts.template_engine.render(tplName /* worker-plan.md */, {
+  name:             this.opts.worker_name,                           // "Tom"
+  role:             this.opts.worker_role,                           // "planner"
   task_title:       msg.task_title ?? "",                            // "设计 /api/users 分页接口蓝图"
-  task_description: msg.task_description ?? msg.content,             // ⚠️ msg.task_description=null → fallback msg.content = title
-  task_criteria:    msg.task_criteria ?? "",                         // ""
-  task_doc_path:    msg.task_doc_path ?? "",                         // ""
+  task_description: msg.task_description ?? msg.content,             // ✅ #9 修复后 msg.task_description 携带 ChainDef.description
+  task_criteria:    msg.task_criteria ?? "",                         // ✅ #9 修复后 msg.task_criteria 携带 ChainDef.criteria
+  task_doc_path:    msg.task_doc_path ?? "",                         // ""（task_doc 生成仍未实现）
   result_path:      resultPath,                                      // 见 5.2
   work_dir:         this.opts.worktree_path,                         // "~/work/co-pagination/.worktrees/Tom"
   time:             new Date().toISOString(),

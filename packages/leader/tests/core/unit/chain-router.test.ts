@@ -1,0 +1,485 @@
+// CORE-RETENTION
+// Locks in: ChainRouter.handleTaskDefinitions / handleCompletionReport
+//   observable behavior — what tasks land in TaskQueue and what
+//   task_dispatch messages reach Worker inboxes when:
+//     1. A ChainDef arrives → 5 pending tasks pushed (with description +
+//        criteria) and the first link dispatched with full task context.
+//     2. A Worker reports `activate_next` → next link is dispatched with
+//        task_description / task_criteria / task_doc_path threaded through.
+//     3. Worker reports `feedback` → a direct message is sent (target
+//        defaults to msg.from_instance unless feedback_target overrides).
+//     4. Worker reports `reject` / `close_chain` → chain_closed is emitted
+//        and no further task is dispatched.
+//
+// Core path because: ChainRouter is the only authority that turns ChainDef
+//   JSON and EvalDecision JSON into Worker work. Regressions here either
+//   stall chains, dispatch empty contexts, or send feedback to the wrong
+//   Worker.
+// Owner subsystem: leader.
+// Primary source files exercised:
+//   - packages/leader/src/chain-router.ts
+//   - packages/coordination/src/task-queue.ts (push contract)
+//   - packages/contracts/src/schemas/chain.ts
+//   - packages/contracts/src/schemas/eval.ts
+//
+// TRUST-JUSTIFICATION: this test fakes IZkClient (in-memory map),
+//   IInstanceRegistry, IMessageRouter, IClaudeRunner, ITemplateEngine,
+//   IEventBus. None of the faked collaborators touch ZooKeeper or
+//   claude-cli. Each fake implements the smallest slice of the protocol
+//   contract needed for the assertions:
+//     - registry.list() returns a configured set of instances;
+//     - message_router.send() appends to an in-memory list (sent_messages)
+//       which the test inspects directly.
+//   Real ZK + claude-cli paths are covered downstream by integration tests
+//   under packages/leader/tests/core/integration/ once they exist; here we
+//   verify the public protocol contract — the JSON envelope dispatched to
+//   workers and the events emitted to the bus.
+
+import { describe, expect, it } from "vitest";
+import {
+  asChainId,
+  asInstanceId,
+  asMessageId,
+  type ChainId,
+  type IClaudeRunner,
+  type IEventBus,
+  type IInstanceRegistry,
+  type ILogger,
+  type IMessageRouter,
+  type ITemplateEngine,
+  type Instance,
+  type InstanceId,
+  type LeaderEvent,
+  type Message,
+  type RunOptions,
+  type RunResult,
+  type SendMessageInput,
+  type TaskLink,
+} from "@co/contracts";
+import { TaskQueue } from "@co/coordination";
+import { ChainRouter } from "../../../src/chain-router.js";
+
+class SilentLogger implements ILogger {
+  debug(): void {}
+  info(): void {}
+  warn(): void {}
+  error(): void {}
+  child(): ILogger {
+    return this;
+  }
+}
+
+class FakeRegistry implements IInstanceRegistry {
+  constructor(private readonly instances: Instance[]) {}
+  async register(): Promise<Instance> {
+    throw new Error("not used");
+  }
+  async unregister(): Promise<void> {}
+  async heartbeat(): Promise<void> {}
+  async list(): Promise<Instance[]> {
+    return [...this.instances];
+  }
+  async get(): Promise<Instance | null> {
+    return null;
+  }
+  async watch(): Promise<Instance[]> {
+    return [...this.instances];
+  }
+}
+
+class FakeMessageRouter implements IMessageRouter {
+  sent: SendMessageInput[] = [];
+  async send(input: SendMessageInput): Promise<Message> {
+    this.sent.push(input);
+    return {
+      id: asMessageId(`msg-${String(this.sent.length).padStart(10, "0")}`),
+      type: input.type,
+      from_instance: input.from_instance,
+      from_name: input.from_name,
+      from_role: input.from_role ?? "",
+      to_instance: input.to_instance,
+      to_name: input.to_name ?? null,
+      content: input.content,
+      link: input.link ?? null,
+      task_id: input.task_id ?? null,
+      chain_id: input.chain_id ?? null,
+      task_title: input.task_title ?? null,
+      task_description: input.task_description ?? null,
+      task_criteria: input.task_criteria ?? null,
+      task_doc_path: input.task_doc_path ?? null,
+      result_path: input.result_path ?? null,
+      reply_to: input.reply_to ?? null,
+      read: false,
+      created_at: new Date().toISOString(),
+    };
+  }
+  async poll(): Promise<Message[]> {
+    return [];
+  }
+  async waitForMessage(): Promise<void> {}
+  async dismiss(): Promise<void> {}
+}
+
+class FakeBus implements IEventBus<LeaderEvent> {
+  emitted: LeaderEvent[] = [];
+  emit(event: LeaderEvent): void {
+    this.emitted.push(event);
+  }
+  on(): () => void {
+    return () => {};
+  }
+  onAny(): () => void {
+    return () => {};
+  }
+}
+
+class FakeRunner implements IClaudeRunner {
+  async run(_opts: RunOptions): Promise<RunResult> {
+    return { exit_code: 0, session_id: null, log_path: "/dev/null" };
+  }
+}
+
+class FakeTemplateEngine implements ITemplateEngine {
+  load(): string {
+    return "";
+  }
+  render(): string {
+    return "";
+  }
+  has(): boolean {
+    return false;
+  }
+}
+
+class MemoryZk {
+  private nodes = new Map<string, Buffer>();
+  state = "connected" as const;
+  async connect(): Promise<void> {}
+  async close(): Promise<void> {}
+  async exists(p: string): Promise<boolean> {
+    return this.nodes.has(p);
+  }
+  async createPersistent(p: string, data: Buffer): Promise<string> {
+    this.nodes.set(p, data);
+    return p;
+  }
+  async createPersistentSequential(
+    parent: string,
+    prefix: string,
+    data: Buffer,
+  ): Promise<string> {
+    const seq = String(this.nodes.size + 1).padStart(10, "0");
+    const full = `${parent}/${prefix}${seq}`;
+    this.nodes.set(full, data);
+    return full;
+  }
+  async createEphemeral(p: string, data: Buffer): Promise<string> {
+    this.nodes.set(p, data);
+    return p;
+  }
+  async createEphemeralSequential(
+    parent: string,
+    prefix: string,
+    data: Buffer,
+  ): Promise<string> {
+    return this.createPersistentSequential(parent, prefix, data);
+  }
+  async setData(p: string, data: Buffer): Promise<never> {
+    this.nodes.set(p, data);
+    return { version: 1, ctime: 0, mtime: 0 } as never;
+  }
+  async getData(p: string) {
+    const v = this.nodes.get(p);
+    if (!v) return null;
+    return { data: v, stat: { version: 1, ctime: 0, mtime: 0 } };
+  }
+  async getChildren(p: string): Promise<string[]> {
+    const prefix = `${p}/`;
+    const out: string[] = [];
+    for (const key of this.nodes.keys()) {
+      if (key.startsWith(prefix)) {
+        const rest = key.slice(prefix.length);
+        if (!rest.includes("/")) out.push(rest);
+      }
+    }
+    return out;
+  }
+  async watchChildren(): Promise<string[]> {
+    return [];
+  }
+  async watchData(): Promise<Buffer | null> {
+    return null;
+  }
+  async delete(p: string): Promise<void> {
+    this.nodes.delete(p);
+  }
+  async mkdirp(): Promise<void> {}
+  on(): void {}
+}
+
+function makeInstance(
+  id: string,
+  name: string,
+  role: Instance["role"],
+): Instance {
+  return {
+    id: asInstanceId(id),
+    name,
+    role,
+    status: "idle",
+    current_task_id: null,
+    connected_since: new Date().toISOString(),
+    work_dir: null,
+    worktree_name: null,
+    worktree_path: null,
+    worktree_branch: null,
+    pid: null,
+    protocol_version: "v0.6",
+  };
+}
+
+const LEADER_ID = asInstanceId("leader-1");
+const CHAIN_ID: ChainId = asChainId("chain-test-001");
+
+function setup(instances: Instance[] = []): {
+  router: ChainRouter;
+  queue: TaskQueue;
+  bus: FakeBus;
+  msg: FakeMessageRouter;
+} {
+  const zk = new MemoryZk();
+  const queue = new TaskQueue({ zk: zk as never });
+  const bus = new FakeBus();
+  const msg = new FakeMessageRouter();
+  const registry = new FakeRegistry(instances);
+  const router = new ChainRouter({
+    task_queue: queue,
+    message_router: msg,
+    registry,
+    bus,
+    runner: new FakeRunner(),
+    template_engine: new FakeTemplateEngine(),
+    logger: new SilentLogger(),
+    leader_id: LEADER_ID,
+    leader_name: "Leader",
+    cache_paths: {
+      cache_dir: "/tmp/co-test",
+      leader_instance_id: LEADER_ID,
+    },
+  });
+  return { router, queue, bus, msg };
+}
+
+function chainDefJson(): string {
+  return JSON.stringify({
+    chain_id: CHAIN_ID,
+    chain_title: "Test chain",
+    tasks: {
+      plan: {
+        title: "plan title",
+        description: "plan desc",
+        criteria: "plan criteria",
+        priority: 1,
+      },
+      build: {
+        title: "build title",
+        description: "build desc",
+        criteria: "build criteria",
+        priority: 1,
+      },
+      verify: {
+        title: "verify title",
+        description: "verify desc",
+        criteria: "verify criteria",
+        priority: 1,
+      },
+      review: {
+        title: "review title",
+        description: "review desc",
+        criteria: "review criteria",
+        priority: 1,
+      },
+      accept: {
+        title: "accept title",
+        description: "accept desc",
+        criteria: "accept criteria",
+        priority: 1,
+      },
+    },
+  });
+}
+
+function chainDefMessage(content: string): Message {
+  // ChainRouter.route() reaches handleTaskDefinitions when
+  //   msg.link != null
+  //   AND NOT (link == "plan" && type == "completion_report")
+  //   AND looksLikeChainDef(content) is true.
+  // The natural production path is via handleRequirement → claude-cli
+  // decompose, but the routing branch also covers a direct ChainDef
+  // delivery, which we use here to exercise handleTaskDefinitions
+  // without faking a runner that writes to the decompose result path.
+  return {
+    id: asMessageId("msg-input"),
+    type: "direct",
+    from_instance: LEADER_ID,
+    from_name: "Leader",
+    from_role: "leader",
+    to_instance: LEADER_ID,
+    to_name: null,
+    content,
+    link: "plan",
+    task_id: null,
+    chain_id: null,
+    task_title: null,
+    task_description: null,
+    task_criteria: null,
+    task_doc_path: null,
+    result_path: null,
+    reply_to: null,
+    read: false,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function completionMessage(
+  link: TaskLink,
+  decisionJson: string,
+  from: InstanceId,
+): Message {
+  return {
+    id: asMessageId("msg-completion"),
+    type: "completion_report",
+    from_instance: from,
+    from_name: "Worker",
+    from_role: "builder",
+    to_instance: LEADER_ID,
+    to_name: null,
+    content: decisionJson,
+    link,
+    task_id: null,
+    chain_id: CHAIN_ID,
+    task_title: null,
+    task_description: null,
+    task_criteria: null,
+    task_doc_path: null,
+    result_path: null,
+    reply_to: null,
+    read: false,
+    created_at: new Date().toISOString(),
+  };
+}
+
+describe("ChainRouter.handleTaskDefinitions", () => {
+  it("pushes 5 tasks with description+criteria and dispatches first link with full task context", async () => {
+    const planner = makeInstance("tom-01", "Tom", "planner");
+    const { router, queue, bus, msg } = setup([planner]);
+
+    await router.route(chainDefMessage(chainDefJson()));
+
+    const pending = await queue.listPending();
+    expect(pending).toHaveLength(5);
+    const plan = pending.find((t) => t.link === "plan")!;
+    expect(plan.description).toBe("plan desc");
+    expect(plan.criteria).toBe("plan criteria");
+
+    expect(msg.sent).toHaveLength(1);
+    const dispatch = msg.sent[0];
+    expect(dispatch.type).toBe("task_dispatch");
+    expect(dispatch.link).toBe("plan");
+    expect(dispatch.to_instance).toBe(planner.id);
+    expect(dispatch.task_title).toBe("plan title");
+    expect(dispatch.task_description).toBe("plan desc");
+    expect(dispatch.task_criteria).toBe("plan criteria");
+
+    expect(bus.emitted).toContainEqual({
+      type: "chain_activated",
+      chain_id: CHAIN_ID,
+    });
+  });
+});
+
+describe("ChainRouter.handleCompletionReport — activate_next", () => {
+  it("dispatches next link to a matching idle worker with task context threaded through", async () => {
+    const builder = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, msg } = setup([builder]);
+
+    const decision = {
+      decision: "activate_next",
+      reason: "blueprint complete",
+      next_link: "build",
+    };
+    await router.route(
+      completionMessage("plan", JSON.stringify(decision), asInstanceId("tom-01")),
+    );
+
+    expect(msg.sent).toHaveLength(1);
+    const dispatch = msg.sent[0];
+    expect(dispatch.type).toBe("task_dispatch");
+    expect(dispatch.link).toBe("build");
+    expect(dispatch.to_instance).toBe(builder.id);
+    expect(dispatch.task_id).toBeTruthy();
+    // task_description / task_criteria / task_doc_path are passed through;
+    // for now they're empty strings until #4 wires them to the existing
+    // chain-level task — but the field must be present, not omitted.
+    expect("task_description" in dispatch).toBe(true);
+    expect("task_criteria" in dispatch).toBe(true);
+    expect("task_doc_path" in dispatch).toBe(true);
+  });
+});
+
+describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain", () => {
+  it("emits chain_closed on close_chain and does not dispatch a new task", async () => {
+    const { router, msg, bus } = setup([]);
+    const decision = {
+      decision: "close_chain",
+      reason: "all acceptance criteria met",
+    };
+    await router.route(
+      completionMessage("accept", JSON.stringify(decision), asInstanceId("leo-01")),
+    );
+    expect(msg.sent).toHaveLength(0);
+    expect(bus.emitted).toContainEqual({
+      type: "chain_closed",
+      chain_id: CHAIN_ID,
+    });
+  });
+
+  it("emits chain_closed on reject", async () => {
+    const { router, bus } = setup([]);
+    const decision = {
+      decision: "reject",
+      reason: "fundamentally diverges",
+    };
+    await router.route(
+      completionMessage("review", JSON.stringify(decision), asInstanceId("mia-01")),
+    );
+    expect(bus.emitted).toContainEqual({
+      type: "chain_closed",
+      chain_id: CHAIN_ID,
+    });
+  });
+
+  it("routes feedback to msg.from_instance when feedback_target is unset", async () => {
+    const { router, msg } = setup([]);
+    const decision = {
+      decision: "feedback",
+      reason: "missing artifact",
+      feedback_to_worker: "Please add page_size<=100 validation",
+    };
+    await router.route(
+      completionMessage(
+        "verify",
+        JSON.stringify(decision),
+        asInstanceId("lucy-01"),
+      ),
+    );
+    expect(msg.sent).toHaveLength(1);
+    const m = msg.sent[0];
+    expect(m.type).toBe("direct");
+    // ⚠️ Documented in issue #6 — the default target is the sender (Lucy)
+    // rather than the upstream worker (Jerry). Locking this fallback so
+    // the upcoming fix consciously changes it.
+    expect(m.to_instance).toBe(asInstanceId("lucy-01"));
+    expect(m.content).toBe("Please add page_size<=100 validation");
+  });
+});

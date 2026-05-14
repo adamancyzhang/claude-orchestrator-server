@@ -56,6 +56,7 @@ export class TaskQueue implements ITaskQueue {
     const payload = {
       title: input.title,
       description: input.description ?? "",
+      criteria: input.criteria ?? "",
       priority: input.priority ?? 1,
       status: "pending" as const,
       link: input.link ?? null,

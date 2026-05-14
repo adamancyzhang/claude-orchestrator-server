@@ -493,13 +493,13 @@ if (firstLink && firstTaskId) {
 }
 ```
 
-⚠️ 注意 `task_description / task_criteria / task_doc_path` **没有** 被写入这条 task_dispatch 消息——Worker 在处理消息时只能从 `msg.content`（即 `firstTitle`）拿到内容，**Plan 任务的详细 description / criteria 在 task_dispatch 消息层级丢失**。Worker 需要去自己读 ZK 的 `/tasks/pending/{task-id}` 才能拿到全量信息，但当前 `WorkerWatcher.processMessage` 没有这段读取逻辑（`packages/worker/src/watcher.ts:73-100`）。因此实际 Plan worker 看到的 prompt 中：
+✅ **issue #9 修复**：handleTaskDefinitions 现在把 ChainDef 中的 `def.description` 与 `def.criteria` 一并写入 task_dispatch 消息（`task_description / task_criteria`），并把 criteria 持久化到 Task 节点。Plan worker 看到的 prompt 中：
 - `task_title` = "设计 /api/users 分页接口蓝图"
-- `task_description` = "设计 /api/users 分页接口蓝图"（fallback 到 `msg.content`，见 watcher.ts:91）
-- `task_criteria` = ""
-- `task_doc_path` = ""
+- `task_description` = "定义 page/page_size 入参约束、默认值、分页响应结构..."（来自 ChainDef）
+- `task_criteria` = "blueprint.md 包含：(1) 接口签名 (2) 入参合法性规则..."（来自 ChainDef）
+- `task_doc_path` = ""（仍未实现 task doc 生成）
 
-这是另一处现状⚠️。
+⚠️ 残留：handleCompletionReport.activate_next 会新建 task（详见 #4），新 task 的 description/criteria 为空字符串——因此当前修复只让"链路首环"携带完整上下文，build/verify/review/accept 在 #4 落地前仍依赖 worktree 上下文恢复。`task_doc_path` 仍为 null（设计文档化任务尚未生成，详见 README ⚠️ 现状⚠️ 待办列表）。
 
 ### 5.6 ZK 写入后的 task_dispatch 消息
 

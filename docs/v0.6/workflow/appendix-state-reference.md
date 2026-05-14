@@ -57,9 +57,9 @@ ZK 文件常量：`packages/contracts/src/paths/zkPaths.ts`。
 | task_id | string → TaskId / null | null | |
 | chain_id | string → ChainId / null | null | |
 | task_title | string / null | null | |
-| task_description | string / null | null | ⚠️ task_dispatch 现状都不填 |
-| task_criteria | string / null | null | ⚠️ task_dispatch 现状都不填 |
-| task_doc_path | string / null | null | ⚠️ 当前未生成 |
+| task_description | string / null | null | ✅ #9 修复后 chain 首环 task_dispatch 携带；activate_next 派发的后续 link 在 #4 落地前为空字符串 |
+| task_criteria | string / null | null | ✅ #9 修复后同 task_description |
+| task_doc_path | string / null | null | ⚠️ 当前 ChainRouter 仍未生成 task 文档，详见现状⚠️ 残留 |
 | result_path | string / null | null | |
 | reply_to | string → MessageId / null | null | |
 | read | boolean | false | poll 时回写 true |
@@ -72,6 +72,7 @@ ZK 文件常量：`packages/contracts/src/paths/zkPaths.ts`。
 | id | string → TaskId | "" |
 | title | string | （必填） |
 | description | string | "" |
+| criteria | string | "" | ✅ #9 新增——把 ChainDef 的 criteria 持久化到 Task |
 | priority | int 0..2 | 1 |
 | status | enum | "pending"（pending / claimed / completed / blocked / failed） |
 | link | enum / null | null |
