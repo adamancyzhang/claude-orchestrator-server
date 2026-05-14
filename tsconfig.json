@@ -1,17 +1,13 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "esModuleInterop": true,
-    "declaration": true,
-    "sourceMap": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "files": [],
+  "references": [
+    { "path": "./packages/contracts" },
+    { "path": "./packages/infra" },
+    { "path": "./packages/runtime" },
+    { "path": "./packages/coordination" },
+    { "path": "./packages/leader" },
+    { "path": "./packages/worker" },
+    { "path": "./packages/orchestrator" },
+    { "path": "./packages/cli" }
+  ]
 }

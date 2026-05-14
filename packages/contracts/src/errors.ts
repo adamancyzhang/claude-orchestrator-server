@@ -1,0 +1,80 @@
+export class CoError extends Error {
+  public readonly code: string;
+  public readonly cause?: unknown;
+  constructor(code: string, message: string, cause?: unknown) {
+    super(message);
+    this.code = code;
+    this.cause = cause;
+    this.name = new.target.name;
+  }
+}
+
+// ── ZK ──
+export class ZkError extends CoError {}
+export class ZkSessionExpiredError extends ZkError {
+  constructor(message = "ZK session expired", cause?: unknown) {
+    super("ZK_SESSION_EXPIRED", message, cause);
+  }
+}
+export class ZkNodeExistsError extends ZkError {
+  constructor(message = "ZK node exists", cause?: unknown) {
+    super("ZK_NODE_EXISTS", message, cause);
+  }
+}
+export class ZkNodeNotFoundError extends ZkError {
+  constructor(message = "ZK node not found", cause?: unknown) {
+    super("ZK_NODE_NOT_FOUND", message, cause);
+  }
+}
+
+// ── Protocol / validation ──
+export class ValidationError extends CoError {
+  constructor(message: string, cause?: unknown) {
+    super("VALIDATION_FAILED", message, cause);
+  }
+}
+export class ProtocolVersionMismatchError extends CoError {
+  constructor(expected: string, actual: string) {
+    super(
+      "PROTOCOL_VERSION_MISMATCH",
+      `Protocol version mismatch: expected ${expected}, got ${actual}`,
+    );
+  }
+}
+
+// ── Runtime ──
+export class ClaudeRunnerError extends CoError {
+  constructor(message: string, cause?: unknown) {
+    super("CLAUDE_RUNNER_FAILED", message, cause);
+  }
+}
+export class TemplateNotFoundError extends CoError {
+  constructor(name: string) {
+    super("TEMPLATE_NOT_FOUND", `Template not found: ${name}`);
+  }
+}
+export class HookError extends CoError {
+  constructor(message: string, cause?: unknown) {
+    super("HOOK_FAILED", message, cause);
+  }
+}
+
+// ── Business ──
+export class MergeConflictError extends CoError {
+  constructor(message: string, public readonly conflict_files: string[] = []) {
+    super("MERGE_CONFLICT", message);
+  }
+}
+export class WorktreeError extends CoError {
+  constructor(message: string, cause?: unknown) {
+    super("WORKTREE_FAILED", message, cause);
+  }
+}
+export class OrphanRetryExhaustedError extends CoError {
+  constructor(taskId: string, retryCount: number) {
+    super(
+      "ORPHAN_RETRY_EXHAUSTED",
+      `Task ${taskId} exceeded ${retryCount} retries; archived as failed`,
+    );
+  }
+}
