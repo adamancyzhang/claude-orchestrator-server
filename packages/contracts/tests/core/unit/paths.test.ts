@@ -79,5 +79,8 @@ describe("cachePaths", () => {
     expect(cachePaths.messageLogPath(opts, asMessageId("m-1"))).toBe(
       "/tmp/cache/leader1/messages/m-1.log",
     );
+    expect(cachePaths.decomposeResultPath(opts, asMessageId("msg-1"))).toBe(
+      "/tmp/cache/leader1/decompose/msg-1.md",
+    );
   });
 });

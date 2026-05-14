@@ -258,8 +258,9 @@ else                                                        → handleCompletion
 ~/.claude-orchestrator/cache/leader-01/
 ├── messages/
 │   └── msg-0000000001.log
+├── decompose/
+│   └── msg-0000000001.md
 ├── results/
-│   ├── task-leader-decompose-msg-0000000001.md
 │   ├── task-0000000001.md
 │   ├── task-0000000006.md
 │   ├── task-0000000007.md

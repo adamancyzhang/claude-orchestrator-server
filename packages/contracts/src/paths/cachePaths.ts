@@ -43,3 +43,10 @@ export function messageLogPath(
 ): string {
   return `${leaderCacheDir(o)}/messages/${messageId}.log`;
 }
+
+export function decomposeResultPath(
+  o: CachePathOptions,
+  messageId: MessageId,
+): string {
+  return `${leaderCacheDir(o)}/decompose/${messageId}.md`;
+}

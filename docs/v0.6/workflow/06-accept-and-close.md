@@ -295,7 +295,7 @@ messages/
 └── msg-0000000001.log              ← decompose claude-cli 日志
 
 results/
-├── task-leader-decompose-msg-0000000001.md   ← ChainDef JSON
+├── decompose/msg-0000000001.md         ← ChainDef JSON
 ├── task-0000000001.md         ← Tom blueprint
 ├── task-0000000006.md         ← Jerry traceability-map
 ├── task-0000000007.md         ← Lucy verification-map

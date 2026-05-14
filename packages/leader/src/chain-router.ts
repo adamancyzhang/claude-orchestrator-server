@@ -82,11 +82,10 @@ export class ChainRouter {
 
   private async handleRequirement(msg: Message): Promise<void> {
     if (this.opts.template_engine.has("worker-decompose.md")) {
-      const logKey = `leader-decompose-${msg.id || Date.now().toString(36)}`;
       const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
-      const resultPath = cachePaths.taskResultPath(
+      const resultPath = cachePaths.decomposeResultPath(
         this.opts.cache_paths,
-        msg.task_id ?? (logKey as never),
+        msg.id,
       );
       await fs.promises.mkdir(require("node:path").dirname(resultPath), { recursive: true });
 

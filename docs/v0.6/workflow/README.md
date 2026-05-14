@@ -63,4 +63,4 @@
 2. ✅ **已修复（issue #2）**：模板里 `{{name}}` / `{{role}}` 在 Worker prompt 与自评估 prompt 中现在会被正确替换。原现状下 `WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement`（Leader 自处理 decompose）渲染时都不传 `name/role` 变量，模板里的 `{{name}}` 字面留下。详见 `00` §3。
 3. **`worker-evaluate.md` 输出字段命名与 Schema 不一致** — 模板要求 `nextLink / feedback / suggestedWorker`，但 `EvalDecisionSchema` 期待 `next_link / feedback_to_worker / suggested_worker`，且模板缺 `reject` 选项。`SelfEvaluator` 解析失败 3 次后兜底用 `NEXT_LINKS` 自动推进，相当于 Schema 强制纠错。详见 `02` §5.7。
 4. **`ChainRouter.handleCompletionReport` 每次 activate_next 都新建一条 task**，不复用初始 5 个 pending 任务。详见 `02` §5.9。
-5. **Leader 自处理 decompose 时 `task_id` 为 logKey 字符串而不是 TaskId** — 走 `cachePaths.taskResultPath` 时被强转，路径里会出现 `task-leader-decompose-xxx.md`。详见 `01` §4。
+5. ✅ **已修复（issue #5）**：Leader 自处理 decompose 时不再借用 `taskResultPath`（原代码用 `task_id ?? (logKey as never)` 强转字符串为 TaskId，路径里会出现 `task-leader-decompose-xxx.md`）。改用新的 `cachePaths.decomposeResultPath(o, messageId)` 把 decompose 输出写到 `decompose/{messageId}.md`。详见 `01` §4。

@@ -19,7 +19,7 @@ ZK: /messages/leader-01/msg-0001  claude-cli (无 system prompt)
    │                                          │
    ▼                              ┌─── log: messages/msg-0001.log
 LeaderWatcher.processMessage     │
-   │                              └─── result: results/task-leader-decompose-xxx.md
+   │                              └─── result: decompose/msg-NNNN.md
    ▼                                          │
 ChainRouter.route()                           ▼
    │                                ChainDefSchema.parse()
@@ -204,19 +204,17 @@ async route(msg: Message): Promise<void> {
 `packages/leader/src/chain-router.ts:85-91`：
 
 ```typescript
-const logKey = `leader-decompose-${msg.id || Date.now().toString(36)}`;
-//   logKey = "leader-decompose-msg-0000000001"
 const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
 //   logPath = ~/.claude-orchestrator/cache/leader-01/messages/msg-0000000001.log
-const resultPath = cachePaths.taskResultPath(
+const resultPath = cachePaths.decomposeResultPath(
   this.opts.cache_paths,
-  msg.task_id ?? (logKey as never),    // ⚠️ msg.task_id 为 null → 用 logKey 字符串
+  msg.id,
 );
-//   resultPath = ~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md
+//   resultPath = ~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md
 await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
 ```
 
-⚠️ `taskResultPath` 第二参数原本是 `TaskId`，这里被强转为 `(logKey as never)`，路径里会出现非标准的 `task-leader-decompose-...` 形态。决策：保留现状描述。
+✅ **issue #5 修复**：原本 Leader 自处理 decompose 时复用 `taskResultPath`，但消息没有 task_id（user_input），代码用 `(logKey as never)` 强转字符串，路径会出现 `decompose/msg-0000000001.md` —— 既污染了 results 目录，又破坏 TaskId 品牌类型。修复后新增 `cachePaths.decomposeResultPath(o, messageId)`，decompose 产物落到独立的 `decompose/{messageId}.md` 路径，不再借道 results。锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
 
 ### 4.3 模板渲染
 
@@ -230,7 +228,7 @@ const prompt = this.opts.template_engine.render("worker-decompose.md", {
   task_criteria: msg.task_criteria ?? "",      // ""
   task_doc_path: msg.task_doc_path ?? "",      // ""
   result_path: resultPath,
-  //   "~/.../results/task-leader-decompose-msg-0000000001.md"
+  //   "~/.../decompose/msg-0000000001.md"
   work_dir: process.cwd(),
   time: new Date().toISOString(),
   content: msg.content,
@@ -261,7 +259,7 @@ Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` (use today's date
 
 ## Output
 
-Write the result to ~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md. Also save a copy to `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json`.
+Write the result to ~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md. Also save a copy to `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json`.
 
 ```json
 { ... template skeleton ... }
@@ -290,7 +288,7 @@ Output ONLY the JSON. No explanation.
 | 路径 | 内容 |
 |------|------|
 | `~/.claude-orchestrator/cache/leader-01/messages/msg-0000000001.log` | claude-cli stream-json 完整流（system/init + assistant_message + result） |
-| `~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md` | claude 按 `worker-decompose.md` 指令写入的 ChainDef JSON |
+| `~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md` | claude 按 `worker-decompose.md` 指令写入的 ChainDef JSON |
 | `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json` | ⚠️ 模板要求"也写一份这里"，但 `{{name}}` 未替换 —— claude 自行处理时若按字面创建会得到 `docs/{{name}}/.../chain-def.json` 这样可疑路径；实践中 claude 通常会替换为 `Leader` 或自己的名字 |
 
 ### 4.6 claude-cli 出参 — ChainDef 完整 JSON
@@ -559,8 +557,8 @@ if (firstLink && firstTaskId) {
 | 路径 | 大小估计 | 内容 |
 |------|---------|------|
 | `~/.claude-orchestrator/cache/leader-01/messages/msg-0000000001.log` | 数 KB | decompose claude-cli stream-json 完整流 |
-| `~/.claude-orchestrator/cache/leader-01/results/task-leader-decompose-msg-0000000001.md` | 数 KB | ChainDef JSON（§4.6） |
-| `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json` | 同上 | ⚠️ claude 自行决定路径（`{{name}}` 不替换） |
+| `~/.claude-orchestrator/cache/leader-01/decompose/msg-0000000001.md` | 数 KB | ChainDef JSON（§4.6） |
+| `.claude-orchestrator/docs/Leader/YYYY-MM-DD/chain-def.json` | 同上 | ✅ issue #2 修复后 `{{name}}` 替换为 `Leader` |
 
 ## TUI EVENT LOG 状态
 
