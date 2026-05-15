@@ -11,7 +11,8 @@
 - **需求**：`为 REST API /api/users 增加分页支持，支持 page/page_size 参数，默认 page=1/page_size=20`
 - **chain_id**：`chain-pagination-001`
 - **运行假设**：以 `node dist/index.js run --worker 5` 启动，5 个 Worker 分别担任 5 个角色，名称按 20 人名池抽取为 `Tom / Jerry / Lucy / Mia / Leo`。
-- **Leader 实例**：`name=Leader`, `instance_id=leader-01`, `cache_dir=~/.claude-orchestrator/cache`。
+- **Leader 实例**：`name=Leader`, `instance_id=leader-01`。
+- **持久化根**：`~/.claude-orchestrator/projects/leader-01/` —— 下含 `chains/<chain_id>/`、`tasks/<task_id>/`、`messages/<message_id>/`、`docs/<worker>/<date>/` 四个子目录。路径函数集中在 `packages/contracts/src/paths/cachePaths.ts`。
 
 完整 Worker 实例化见 `00-identity-cards.md`。
 
@@ -55,15 +56,29 @@
 | `core/01~05` | 五条核心链路的抽象描述 | 本目录是 `core/` 的"具体化注释版" |
 | `test-cases/` | 验证策略 | 本目录的步骤可作为人工对照表 |
 
-## 现状基线中的若干⚠️
+## 现状基线 — 全部 ⚠️ 已落地
 
-阅读时留意以下与设计文档不完全一致的现象（都在对应文件里展开）：
+下面这张表对应早期版本里的 11 个 ⚠️ + 6 项后续治理项，全部已在代码或文档层解决。每条都给出"代码位置 / 文档落点"，方便后续 PR 反查或回归测试时锁定。
 
-1. ✅ **已修复（issue #1）**：`WorkerWatcher.processMessage` 现在在主任务执行前调用 `task_queue.claimById(task_id, instance_id)` 把 ZK 节点从 `/tasks/pending/{task-id}` 原子搬到 `/tasks/claimed/{instance_id}-{task-id}`（EPHEMERAL，断线自删）；执行完成 + 自评估之后调用 `task_queue.complete(task_id, …)` 移到 `/tasks/completed/{task-id}` 并记录 duration。`ChainRouter` 不再向消息驱动派单"绕过" ZK 任务状态机；配合 #4，pending 中的 5 个初始 task 会按链路推进逐个 claim → complete，最终在 `/tasks/completed/` 中留下完整审计。详见 `01` §5 + `02` §5.1。
-2. ✅ **已修复（issue #2）**：模板里 `{{name}}` / `{{role}}` 在 Worker prompt 与自评估 prompt 中现在会被正确替换。原现状下 `WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement`（Leader 自处理 decompose）渲染时都不传 `name/role` 变量，模板里的 `{{name}}` 字面留下。详见 `00` §3。
-3. ✅ **已修复（issue #3）**：`worker-evaluate.md` 与 `worker-evaluate-format-hint.md` 输出字段已与 `EvalDecisionSchema` 对齐——`next_link / feedback_to_worker / suggested_worker / feedback_target` 全部使用 schema 一致的 snake_case；并补充了 `reject` 决策分支。模板示意按 discriminated union 分四个分支列出，避免无关字段污染。详见 `02` §5.7。
-4. ✅ **已修复（issue #4）**：`ChainRouter.handleCompletionReport` 的 activate_next 现在通过 `findOrCreatePendingTask(chain_id, next_link)` **复用** handleTaskDefinitions 初始 push 的 5 个 pending 任务；只有当无法匹配时才回退为创建新任务。链路推进不再产生重复 task，task_dispatch 携带的 description/criteria 直接来源于初始的 ChainDef。详见 `02` §5.9。
-5. ✅ **已修复（issue #5）**：Leader 自处理 decompose 时不再借用 `taskResultPath`（原代码用 `task_id ?? (logKey as never)` 强转字符串为 TaskId，路径里会出现 `task-leader-decompose-xxx.md`）。改用新的 `cachePaths.decomposeResultPath(o, messageId)` 把 decompose 输出写到 `decompose/{messageId}.md`。详见 `01` §4。
-6. ✅ **已修复（issue #6）**：`ChainRouter` 现在维护 `chainWorkers: Map<chain_id, Map<link, worker_id>>`，每次 dispatch 都记录；feedback 决策没指定 `feedback_target` 时，按 PREV_LINKS 表回退到 chain 内"前一环 worker"（verify→build worker、review→verify worker、accept→review worker）。Plan link 没有前一环，仍兜底为 `msg.from_instance`。chain_closed/reject 时清理映射。详见 `04/05/06`。
-7. ✅ **已修复（issue #10）**：跨 worktree artifact 传递现在通过 cache_dir 的 chain-scoped 共享路径 `chains/{chain_id}/{link}.md`。`cachePaths.chainArtifactPath(o, chainId, link)` 计算路径；`WorkerWatcher` 在链路任务上把 `result_path` 设为该共享路径（不再是 per-task），并向模板传入 `{{upstream_plan_artifact}} / upstream_build_artifact / upstream_verify_artifact / upstream_review_artifact` 变量。`worker-build.md / worker-verify.md / worker-review.md / worker-accept.md` 改为从这些变量读上游产物，不再依赖 `.claude-orchestrator/docs/{planner_name}/...` 这类无法跨 worktree 解析的路径。详见 `03 / 04 / 05 / 06`。
-8. ✅ **已修复（issue #7）**：`ChainRouter` 现在维护 `chainCommits: Map<chain_id, CommitInfo[]>`，每收到 completion_report 都从 `content.commit` 中抽取 sha/message/branch 入栈；`close_chain` 决策时按 plan→build→verify→review→accept 顺序遍历调用 `MergeValidator.validate`（在 orchestrator/run.ts 中接入）。`reject` 决策仍**不**触发合并（语义为彻底回退、不进主线）。任一 commit 验证失败仅 warn，不阻断后续 commit 的合并。详见 `06` §9.10。
+### 11 个原始 issue（功能修复）
+
+1. ✅ **issue #1 — 任务认领进 ZK 状态机**：`WorkerWatcher.processMessage` 收到 task_dispatch 后调 `task_queue.claimById(task_id, instance_id)` 把节点从 `/tasks/pending/{task-id}` 原子搬到 `/tasks/claimed/{instance_id}-{task-id}`（EPHEMERAL，断线自删）；执行 + 自评估完成后调 `task_queue.complete(task_id, …)` 写 `/tasks/completed/{task-id}` 并记 duration。位置：`packages/worker/src/watcher.ts:processMessage`。详见 `02` §5.1。
+2. ✅ **issue #2 — `{{name}}` / `{{role}}` 占位符替换**：`WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement` 渲染时全部传 `name/role`。位置：`packages/worker/src/watcher.ts:180-200` / `packages/worker/src/evaluator.ts` / `packages/leader/src/chain-router.ts:177-211`。详见 `00` §3。
+3. ✅ **issue #3 — EvalDecision schema 对齐**：`worker-evaluate.md` 与 `worker-evaluate-format-hint.md` 全部 snake_case（`next_link / feedback_to_worker / suggested_worker / feedback_target`），按 discriminated union 列四分支（含 `reject`）。详见 `02` §5.7。
+4. ✅ **issue #4 — activate_next 复用初始 task**：`ChainRouter.handleCompletionReport.activate_next` → `findOrCreatePendingTask(chain_id, next_link)` 复用初始 5 个 pending；只有完全不匹配才回退为新建。位置：`packages/leader/src/chain-router.ts:findOrCreatePendingTask`。详见 `02` §5.9。
+5. ✅ **issue #5 — decompose 独立 cache 路径**：`cachePaths.decomposeResultPath(o, messageId)` 把 decompose 产物落到 `messages/<message_id>/decompose.md`，不再借道 task results 路径。详见 `01` §4。
+6. ✅ **issue #6 — feedback 路由到前一环 worker**：`ChainRouter.resolveFeedbackTarget` 优先级 = ① `decision.feedback_target`（显式指定）→ ② `manifest.link_workers[prev_link]`（持久化到 chain manifest，详见 §"持久化 link_workers"）→ ③ `msg.from_instance`。详见 `04/05/06`。
+7. ✅ **issue #7 — close_chain 自动触发 MergeValidator**：`ChainRouter.chainCommits` 收集每环 commit，`close_chain` 时按 plan→build→verify→review→accept 顺序调 `MergeValidator.validate`；任一失败仅 warn，不阻断后续。详见 `06` §9.10。
+8. ✅ **issue #8 — cachePaths 去 `task-` 双前缀**：`taskLogPath` 等函数不再附加 `task-` 前缀（taskId 自带）。详见 `appendix-state-reference.md` §B。
+9. ✅ **issue #9 — task_dispatch 携带 description/criteria**：`handleTaskDefinitions` 把 ChainDef 中的 `description`/`criteria` 一并写入 task_dispatch 消息及 Task 节点，下游 worker prompt 直接拿到完整上下文。详见 `01` §5.5。
+10. ✅ **issue #10 — 跨 worktree artifact 传递**：链 artifact 通过共享 cache 路径 `tasks/<task_id>/result.md` 传递；下游 worker 通过 `manifest.link_tasks[<prev_link>]` 解析路径，模板变量 `{{upstream_plan_artifact}} / upstream_build_artifact / upstream_verify_artifact / upstream_review_artifact` 在 `WorkerWatcher.collectChainArtifacts` 里组装。详见 `03 / 04 / 05 / 06`。
+11. ✅ **issue #11 — CommitChecker 命令注入**：`packages/worker/src/commit-checker.ts` 切到 `execFileSync("git", ["commit", "-m", message], …)`，message 作为单独 argv 元素传给 git，跳过 shell 解析。
+
+### 6 项后续治理（本轮新增）
+
+12. ✅ **task_doc_path / depends_on / blocked_by / blocked_reason 完全移除**：原设计字段从未落地，全部从 `Task` / `Message` schema、协调层 push、模板渲染变量、模板正文中删除；`TaskStatus.blocked` 与 `ITaskQueue.block()` 一并清理。模板 `worker-task-doc.md` 删除。Zod strip 模式保证旧 ZK 节点反序列化无副作用。详见 `appendix-state-reference.md` §C。
+13. ✅ **Instance status = "busy" 真正写 ZK**：`WorkerWatcher.processMessage` 入口前调 `registry.heartbeat(instance_id, { status: "busy", current_task_id })`；try/finally 末尾回写 `idle`；心跳异常仅 warn 不影响主流程。位置：`packages/worker/src/watcher.ts:processMessage`。这下 `ChainRouter.findIdleWorkerByRole` 真正按 status 筛选，第二条链或并发派发的行为符合预期。
+14. ✅ **chainWorkers Map → ChainAudit 持久化**：内存 `Map<ChainId, Map<TaskLink, InstanceId>>` 删除，统一改写 `chain manifest.link_workers`（新字段）；`ChainAudit.setLinkWorker` 在每次 dispatch 时持久化到 `chains/<chain_id>/manifest.json`。Leader 重启后 feedback 路由依然可恢复。详见 `01` §5 + `appendix-state-reference.md` §B（manifest 表）。
+15. ✅ **feedback decision 现在物化为 retry task**：`ChainRouter.handleCompletionReport(feedback)` 不再只发 `direct` 消息——而是 `task_queue.push()` 一条新的 pending task（同 prev_link、retry_count++、`description = feedback_to_worker`），并 `task_dispatch` 派发给 target worker。Worker 走标准 claimById → run → evaluate 流程；旧 completed task 不被覆盖，审计可追溯。详见 `04` §7.9.1 / `05` §8.x / `06` §9.x。
+16. ✅ **task_claimed / task_completed hook 真正触发**：`WorkerWatcher` 在 `claimById` 成功后 fire `task_claimed`，在 `complete()` 成功后 fire `task_completed`（env 含 `duration_seconds`）。`TaskHookEnv` 同步扩展，加 `CO_WORKER_NAME` / `CO_WORKER_ID`。详见 `appendix-state-reference.md` §hook 表。
+17. ✅ **personal-claude-{role}.md 模板 {{name}} 替换**：`packages/orchestrator/src/worktree-initializer.ts:265-271` 在拷贝 `templates/claude-memory/personal-claude-{role}.md` 到 worker worktree 时先做 `{{name}}`/`{{role}}` 替换再写入。模板正文中的 `{{task_doc_path}}` fallback 已全部删除，改为指向 `{{upstream_*_artifact}}` 变量。详见 `00` §3。

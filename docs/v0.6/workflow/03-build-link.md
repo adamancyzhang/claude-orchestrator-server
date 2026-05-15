@@ -1,19 +1,19 @@
-# 03 — Step 7：Build 链环节（Jerry 处理 task-0000000006）
+# 03 — Step 7：Build 链环节（Jerry 处理 task-0000000002）
 
-> 入口状态：Jerry 收件箱有 `msg-0000000001`（task_dispatch, link=build, task_id=task-0000000006）。
-> 出口状态：Jerry 发完成报告，Leader 激活 Verify，派给 Lucy。
+> 入口状态：Jerry 收件箱有 `msg-0000000001`（task_dispatch, link=build, task_id=task-0000000002, assigned_to=jerry-01）；`/tasks/pending/task-0000000002` 已被 leader 在 5.9 中 assign 给 jerry-01。
+> 出口状态：Jerry 发完成报告，Leader 复用 `task-0000000003`（verify link），更新 manifest.link_workers，并派给 Lucy。
 >
 > 本文档只描述与 Plan link 不同的差异化内容；流程结构完全复用 `02-plan-link.md` 的 5.1–5.9。请配合阅读。
 
 ## 6.1 任务认领
 
-同 Plan：⚠️ 不走 `task_queue.claim`，纯消息驱动。`task-0000000006` 永远沉积在 pending。
+同 Plan 5.1：`registry.heartbeat(busy)` → `task_queue.claimById(task-0000000002, jerry-01)` → `task_claimed` hook fire。`task-0000000002` 节点从 `/tasks/pending/` 原子搬到 `/tasks/claimed/jerry-01-task-0000000002`（EPHEMERAL）。
 
 ## 6.2 模板选择
 
-`LINK_TO_TEMPLATE["build"]` → `worker-build.md`。
+`LINK_TO_TASK_TEMPLATE["build"]` → `worker-builder-task.md`（per-task wrapper）。Jerry 的常驻 system prompt 是 `worker-builder.md` + `personal-claude-builder.md`（boot 时载入，`{{name}}` 已替换为 Jerry）。
 
-- 模板路径：`templates/agents/worker-build.md`
+- per-task 模板：`templates/agents/worker-builder-task.md`
 - skill：`task-execution`（`.claude/skills/task-execution/SKILL.md`）
 
 ## 6.3 hook worker_message_start
@@ -22,96 +22,72 @@ CO_LINK = `build`，其余与 Plan 一致。
 
 ## 6.4 模板渲染
 
-vars 传入与 Plan 同一组（`task_title / task_description / task_criteria / task_doc_path / result_path / work_dir / time / content`）。
-
-⚠️ 本步 vars 实际值（受 `01` §5.5 信息退化影响）：
-- `task_title` = `"[chain-pagination-001] build"`
-- `task_description` = `"[chain-pagination-001] build"`（fallback msg.content）
-- `task_criteria` = `""`
-- `task_doc_path` = `""`
-- `result_path` = `~/.../cache/leader-01/results/task-0000000006.md`
+✅ **issue #9 修复**：本步 vars 完整来自初始 ChainDef，不再退化：
+- `task_title` = `"实现 /api/users 分页查询"`
+- `task_description` = `"按 Plan 实现 controller / service / repository 三层修改..."`
+- `task_criteria` = `"(1) curl -G /api/users -d 'page=2&page_size=5' 返回 200..."`
+- `result_path` = `~/.../projects/leader-01/tasks/task-0000000002/result.md`
+- `local_doc_path` = `~/.../projects/leader-01/docs/Jerry/2026-05-14/build-chain-pagination-001.md`
 - `work_dir` = `~/work/co-pagination/.worktrees/Jerry`
+- `upstream_plan_artifact` = `~/.../projects/leader-01/tasks/task-0000000001/result.md`（Tom 的 blueprint，由 `WorkerWatcher.collectChainArtifacts` 解析 chain manifest 得到）
+- `upstream_build_artifact / upstream_verify_artifact / upstream_review_artifact` = ""（build 阶段无下游 artifact）
+- `original_requirement_path` = `chains/chain-pagination-001/requirement.md`
 
-**渲染后 prompt 全文**：
+**渲染后 prompt 关键段**（template = `templates/agents/worker-builder-task.md`）：
 
 ```markdown
-Your link in the responsibility chain is **Build** — produce verifiable results according to the Planner's blueprint.
+## Task to Execute
 
-## Step 0: Restore Directory Memory
+**Title**: 实现 /api/users 分页查询
+**Description**: 按 Plan 实现 controller / service / repository 三层修改，加入参数校验，保持现有未带 page 参数时的兼容行为，并补充单元 / 集成测试。
+**Acceptance Criteria**: (1) curl -G /api/users -d 'page=2&page_size=5' 返回 200 且 items.length<=5...
 
-Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` ...
+## Origin
+The user's original requirement is preserved verbatim at `~/.claude-orchestrator/projects/leader-01/chains/chain-pagination-001/requirement.md`. Cross-check the Planner blueprint against this file before implementing — if the blueprint contradicts the original intent, surface the conflict in your output instead of silently following the blueprint.
 
-## Task
+## Upstream Artifacts (read first, in order)
+1. Planner blueprint (authoritative): `~/.claude-orchestrator/projects/leader-01/tasks/task-0000000001/result.md`
+2. In-worktree resume copy (only if a previous build attempt exists): `~/.claude-orchestrator/projects/leader-01/docs/Jerry/2026-05-14/build-chain-pagination-001.md`
+3. If both are missing → BLOCK and report to Leader via the completion report.
 
-- **Title**: [chain-pagination-001] build
-- **Description**: [chain-pagination-001] build
-- **Criteria**:
-- **Spec**:
+Extract every implementable requirement as a checklist before writing code.
 
-## Process
+## Intent
+Implement the requirements in the Planner's blueprint, leaving an evidence trail the Verifier can independently re-walk. ...
 
-Use the **task-execution** skill ... Follow Trace → Execute → Map → Evidence → Record.
-
-**Trace**: Read the Planner's blueprint from `.claude-orchestrator/docs/{planner_name}/YYYY-MM-DD/blueprint.md`. Fallback: ``. Extract every implementable requirement as a checklist.
-
-## Outputs
-
-1. Write traceability map to **~/.../cache/leader-01/results/task-0000000006.md** (for Leader evaluation)
-2. Write identical copy to **.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/traceability-map.md** (for Verifier)
-3. Save evidence files to **.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/evidence/**
-
-## Completion Report
-
-```
-Link: build
-Status: completed
-Implemented: <count> items
-Deviations: <count> items (list each with reason)
-Evidence: .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/evidence/
-Traceability Map: .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/traceability-map.md
-Next Link Ready: yes
+## Required Output Files
+- `result_path`:  ~/.claude-orchestrator/projects/leader-01/tasks/task-0000000002/result.md
+- `local_doc_path`: ~/.claude-orchestrator/projects/leader-01/docs/Jerry/2026-05-14/build-chain-pagination-001.md
+...
 ```
 
-Update `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`. Git commit with your name signature.
-```
+✅ **issue #2 修复**：`{{name}}` 渲染为 `Jerry`、`{{role}}` 渲染为 `builder`。
 
-⚠️ 两处显著退化：
-1. `task_doc_path` 为空 → "Fallback: `` " 直接是空字符串
-2. `{planner_name}` 在模板里是 placeholder（无大括号），Jerry 需要自行推断 planner 名（从 system prompt 中的 team 信息推断）。当前实现没有提供 planner_name 给 Jerry
+✅ **issue #10 修复 + 本轮巩固（cross-worktree artifact）**：原现状下 Jerry 跨 worktree 读 Tom 的 blueprint 需要 git fetch / cherry-pick，存在断链风险；现在通过 chain-shared cache 路径解决：
 
-✅ **issue #2 修复**：`{{name}}` 现在替换为 `Jerry`、`{{role}}` 替换为 `builder`，与 Plan 一致。
+1. Tom 完成 plan 时 `WorkerWatcher` 把 blueprint 写到 `projects/leader-01/tasks/task-0000000001/result.md`（`result_path`，与 Leader / 所有 worker 共享）
+2. ChainAudit `manifest.json.link_tasks.plan = "task-0000000001"`
+3. Jerry 启动任务时，`WorkerWatcher.collectChainArtifacts` 读 chain manifest（`chains/chain-pagination-001/manifest.json`），按 `cachePaths.taskResultPath` 解析出 Tom 的 result.md 路径
+4. 注入到模板 `{{upstream_plan_artifact}}` 变量
+5. Jerry 直接读 chain-shared cache，跨 worktree 完全可解析；本地 worktree 副本只作"续做时的快速恢复"
 
-### 6.4.1 ✅ issue #10 修复：Jerry 通过 chain-shared cache 路径读 Tom 的 blueprint
-
-Tom 完成 plan 时，`WorkerWatcher` 把 `result_path` 设为
-`{cache_dir}/{leader_id}/chains/{chain_id}/plan.md`
-（由 `cachePaths.chainArtifactPath(o, chainId, "plan")` 计算），claude-cli 把蓝图写到这里。`cache_dir` 在所有 Worker 与 Leader 之间共享，因此 Jerry（在 `co/jerry-01` 分支的另一个 worktree）能直接通过 path 读取，不必跨分支 / 不必 `git fetch`。
-
-Jerry 的 prompt 通过 `{{upstream_plan_artifact}}` 拿到上述路径。`worker-build.md` 模板已改为：
-
-```
-**Trace** — Read the upstream Plan artifact in this order:
-1. {{upstream_plan_artifact}}  ← chain-shared cache, authoritative
-2. .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/blueprint.md  ← 仅当本 worktree 续做时
-3. {{task_doc_path}}  ← 最后兜底
-```
-
-Worker 在自己的 worktree 仍写一份本地副本到 `.claude-orchestrator/docs/{{name}}/...`（供人审），但跨 worker 的"权威源"是 chain-shared cache 路径。
+✅ **本轮治理**：`task_doc_path` fallback 已从模板移除（同时从 Task/Message schema 移除），上游 artifact 路径完全依赖 `upstream_*_artifact` 变量。
 
 ## 6.5 claude-cli 主执行
 
 调用形态、log/result 路径同 Plan，区别：
 - `cwd = ~/work/co-pagination/.worktrees/Jerry`
 - `system_prompt` = Jerry 的 identity card（builder 身份）
-- `log_path = ~/.../cache/leader-01/logs/task-0000000006-<ts>.log`
-- `result_path = ~/.../cache/leader-01/results/task-0000000006.md`
+- `log_path = ~/.../projects/leader-01/tasks/task-0000000002/exec-<ts>.log`
+- `result_path = ~/.../projects/leader-01/tasks/task-0000000002/result.md`
 
 ### 6.5.1 期望生成的文件
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-0000000006.md` | traceability-map.md（Leader 视角） |
-| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md` | 同上副本 |
+| `~/.../projects/leader-01/tasks/task-0000000002/result.md` | traceability-map.md（Leader / 下游 worker 视角） |
+| `~/.../projects/leader-01/docs/Jerry/2026-05-14/build-chain-pagination-001.md` | local_doc_path：同上副本 |
+| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md` | 同上 worktree 副本（Builder 可能也写一份） |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/evidence/*.{md,log,json}` | 测试/构建证据 |
 | `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md` | 当日记忆 |
 | `~/work/.../worktrees/Jerry/src/api/users-controller.ts`、`src/api/users-service.ts` 等 | 实际实现代码（贯穿样例） |
@@ -134,7 +110,11 @@ Worker 在自己的 worktree 仍写一份本地副本到 `.claude-orchestrator/d
 Deviations: none
 ```
 
-## 6.6 CommitChecker
+## 6.6 hook worker_message_end
+
+CO_LINK = `build`，env 含 exit_code。
+
+## 6.7 CommitChecker
 
 `git status --porcelain` 此刻应有大量变更（实现文件 + 测试）。生成 commit message 模板调用、commit 同 Plan。
 
@@ -160,11 +140,13 @@ Deviations: none
 }
 ```
 
-✅ **已修复（issue #11）**：原现状 `commit-checker.ts:58` 用 `` execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`) `` 把 commit message 拼进字符串再交给 shell，仅转义双引号；反引号 / `$()` / 分号等可被 shell 解释，存在命令注入风险。修复改用 `execFileSync("git", ["commit", "-m", message], …)` 把 message 作为单独 argv 元素传给 git，完全跳过 shell 解析。`git add -A` 也一并切换以保持一致。锁定行为见 `packages/worker/tests/core/unit/commit-checker.test.ts`。
+commit log 落 `projects/leader-01/tasks/task-0000000002/commit.log`。
 
-## 6.7 SelfEvaluator
+✅ **issue #11 修复**：`execFileSync("git", ["commit", "-m", message], …)` 跳过 shell 解析，message 作为单独 argv 传递。锁定行为见 `packages/worker/tests/core/unit/commit-checker.test.ts`。
 
-同 Plan。`NEXT_LINKS["build"] = "verify"`，所以 fallback 输出 `next_link = "verify"`。
+## 6.8 SelfEvaluator
+
+同 Plan，eval log 落 `projects/leader-01/tasks/task-0000000002/eval-<N>.log`。`NEXT_LINKS["build"] = "verify"`，fallback 输出 `next_link = "verify"`。
 
 **EvalDecision 最终内容**：
 
@@ -176,9 +158,9 @@ Deviations: none
 }
 ```
 
-### 6.7.1 ⚠️ Verify 的 feedback 备选
+### 6.8.1 Verify 的 feedback 备选（Builder 自评不通过的情形）
 
-如果 Builder 自评不通过（criteria 部分未满足），Worker 输出（自评 schema 命中时）：
+如果 Builder 自评不通过（criteria 部分未满足），EvalDecision schema 命中时输出：
 
 ```json
 {
@@ -189,9 +171,13 @@ Deviations: none
 }
 ```
 
-✅ **issue #3 修复**：模板字段名已对齐 schema（`feedback_to_worker / feedback_target` 等），claude 严格按模板输出即可被 `EvalDecisionSchema.safeParse` 接受，feedback 路径现在可被正常触发。
+✅ **issue #3 修复**：模板字段名已对齐 schema（`feedback_to_worker / feedback_target` 等）。
 
-## 6.8 完成报告
+✅ **本轮治理（feedback 物化为 retry task）**：Leader 收到 build 自评 feedback 后，`ChainRouter.dispatchFeedbackAsRetry` 会 push 一条 retry build task（retry_count++、`description = feedback_to_worker`、`assigned_to = msg.from_instance` 即 jerry-01），通过 `task_dispatch` 派回给 Jerry，Worker 走标准 claimById → run → evaluate 循环。旧 `tasks/task-0000000002/result.md` 不被覆盖，审计可追溯。详情见 `04` §7.9.1（Verifier feedback 同一机制）。
+
+## 6.9 完成报告 + 收尾
+
+`task_queue.complete` → `/tasks/completed/task-0000000002`，`task_completed` hook fire（env 含 `duration_seconds`）。`processMessage` finally 写回 idle 心跳。
 
 ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000003`
 
@@ -208,29 +194,31 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000003`
   "to_name": null,
   "content": "{\"decision\":\"activate_next\",\"reason\":\"all plan requirements implemented; tests passing 0 failures\",\"next_link\":\"verify\",\"commit\":{\"sha\":\"8d5e4b3c0a2f6e7d9c5b4a3e2f1098765432bcde\",\"message\":\"feat(users): paginate /api/users with page/page_size\",\"branch\":\"co/jerry-01\",\"changed_files\":[\" M src/api/users-controller.ts\",\" M src/api/users-service.ts\"],\"untracked_files\":[\"tests/users.test.ts\",\".claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md\",\".claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md\"]}}",
   "link": "build",
-  "task_id": "task-0000000006",
+  "task_id": "task-0000000002",
   "chain_id": "chain-pagination-001",
   "task_title": null,
   "task_description": null,
   "task_criteria": null,
-  "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000006.md",
+  "result_path": "~/.claude-orchestrator/projects/leader-01/tasks/task-0000000002/result.md",
+  "original_requirement_path": null,
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:05:00.000Z"
 }
 ```
 
-## 6.9 Leader 路由 → 激活 Verify
+## 6.10 Leader 路由 → 激活 Verify
 
-`ChainRouter.route()` 判定：`msg.link === "build"`（非 plan/completion_report 短路）+ 内容不像 ChainDef → `handleCompletionReport(msg)`（`packages/leader/src/chain-router.ts:71`）。
+`ChainRouter.route()` 判定：`msg.link === "build"`（非 plan/completion_report 短路）+ 内容不像 ChainDef → `handleCompletionReport(msg)`。
 
 decision = `activate_next`, next_link = `verify`：
-- `task_queue.push({title: "[chain-pagination-001] verify", link: "verify", ...})` → `task-0000000007`
+- `findOrCreatePendingTask("chain-pagination-001", "verify")` → 复用初始 `task-0000000003`
 - `findIdleWorkerByRole("verifier")` → Lucy
+- `task_queue.assign(task-0000000003, lucy-01, "Lucy")`
+- `chain_audit.setLinkTask("verify", task-0000000003)` + `setLinkWorker("verify", lucy-01)` + record `task_dispatch`
 - `message_router.send(task_dispatch → lucy-01)` → `/messages/lucy-01/msg-0000000001`
 
-### 6.9.1 派发给 Lucy 的 task_dispatch
+### 6.10.1 派发给 Lucy 的 task_dispatch
 
 ```json
 {
@@ -241,15 +229,15 @@ decision = `activate_next`, next_link = `verify`：
   "from_role": "leader",
   "to_instance": "lucy-01",
   "to_name": null,
-  "content": "[chain-pagination-001] verify",
+  "content": "独立验证分页实现与蓝图一致",
   "link": "verify",
-  "task_id": "task-0000000007",
+  "task_id": "task-0000000003",
   "chain_id": "chain-pagination-001",
-  "task_title": "[chain-pagination-001] verify",
-  "task_description": null,
-  "task_criteria": null,
-  "task_doc_path": null,
+  "task_title": "独立验证分页实现与蓝图一致",
+  "task_description": "对照 Plan 的 5 条以上测试用例逐项执行；逐字段比对响应 schema...",
+  "task_criteria": "verification-map.md 列出全部 Plan 条目的 PASS/GAP/FAILURE/DEVIATION 分类...",
   "result_path": null,
+  "original_requirement_path": "~/.claude-orchestrator/projects/leader-01/chains/chain-pagination-001/requirement.md",
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:05:01.000Z"
@@ -262,20 +250,32 @@ decision = `activate_next`, next_link = `verify`：
 
 | 路径 | 备注 |
 |------|------|
+| `/tasks/claimed/jerry-01-task-0000000002` | EPHEMERAL（短暂）|
+| `/tasks/completed/task-0000000002` | PERSISTENT |
 | `/messages/leader-01/msg-0000000003` | Jerry 完成报告 |
-| `/tasks/pending/task-0000000007` | 新 verify task ⚠️ 沉积 |
 | `/messages/lucy-01/msg-0000000001` | task_dispatch → Lucy |
 
 ### ZK 修改
 
 | 路径 | 修改 |
 |------|------|
+| `/tasks/pending/task-0000000002` | 5.9 删除（claim 时）|
+| `/tasks/pending/task-0000000003` | `assigned_to` 设为 `lucy-01` |
 | `/messages/jerry-01/msg-0000000001` | **删除** |
 | `/messages/leader-01/msg-0000000003` | `read=true` |
+| `/instances/jerry-01` | status: idle → busy → idle |
 
-### Cache 文件
+### Cache 文件（projects/leader-01/）
 
-同 Plan 五类，task_id 替换为 `task-0000000006`。
+| 路径 | 来源 |
+|------|------|
+| `tasks/task-0000000002/exec-<ts>.log` | claude-cli 主执行 stream-json |
+| `tasks/task-0000000002/result.md` | traceability-map.md |
+| `tasks/task-0000000002/commit.log` | commit message claude 调用日志 |
+| `tasks/task-0000000002/eval-{0,1,2}.log` | self-eval claude 调用日志（视重试） |
+| `docs/Jerry/2026-05-14/build-chain-pagination-001.md` | local_doc_path 副本 |
+| `chains/chain-pagination-001/manifest.json` | `link_tasks.verify = task-0000000003`、`link_workers.verify = lucy-01` 更新 |
+| `chains/chain-pagination-001/audit.jsonl` | append `completion_report`（build）+ `task_dispatch`（verify）两行 |
 
 ### Worktree 内文件（Jerry 分支）
 
@@ -296,4 +296,4 @@ decision = `activate_next`, next_link = `verify`：
 
 ## 衔接到 Step 8
 
-Lucy 的 `WorkerWatcher` 触发，开始处理 `msg-0000000001`。流程结构同 Build，差异点在 [`04-verify-link.md`](./04-verify-link.md) 展开，重点关注**跨 worktree 读 artifact** 与 **Verify feedback 决策**。
+Lucy 的 `WorkerWatcher` 触发，开始处理 `msg-0000000001`。流程结构同 Build，差异点在 [`04-verify-link.md`](./04-verify-link.md) 展开，重点关注**chain-shared cache 读 artifact** 与 **Verify feedback 物化为 retry task** 的语义。

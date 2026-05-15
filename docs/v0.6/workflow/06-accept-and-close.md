@@ -1,46 +1,56 @@
 # 06 — Step 10：Accept 链环节 + 链关闭 + MergeValidator
 
-> 入口状态：Leo 收件箱有 `msg-0000000001`（task_dispatch, link=accept, task_id=task-0000000009）。
-> 出口状态：Leo 发完成报告（含 `close_chain` 或 `activate_next`，按其 EvalDecision），Leader emit `chain_closed`，MergeValidator 按需触发合并审查。
+> 入口状态：Leo 收件箱有 `msg-0000000001`（task_dispatch, link=accept, task_id=task-0000000005, assigned_to=leo-01）。
+> 出口状态：Leo 发完成报告（含 `close_chain` 或 `feedback` 或 `reject`），Leader 在 close_chain 时自动跑 MergeValidator + ChainAudit `closeChain('completed')`，emit `chain_closed`。
 
 ## 9.1–9.3 同前
 
-- 不走 claim
-- 模板：`templates/agents/worker-accept.md`，skill：`task-acceptance`
+- `registry.heartbeat(busy)` + `task_queue.claimById(task-0000000005, leo-01)` + `task_claimed` hook fire
+- 模板：`templates/agents/worker-accepter-task.md`（per-task wrapper），system prompt = `worker-accepter.md` + `personal-claude-accepter.md`（boot 时载入并已渲染 `{{name}}`）
+- skill：`task-acceptance`
 - hook CO_LINK=`accept`
 
 ## 9.4 模板渲染差异
 
-上游 artifact 要求**全部四份**（`templates/agents/worker-accept.md:18-23`）：
+上游 artifact 要求**全部四份**（`templates/agents/worker-accepter-task.md`）：
 
-```
-**Read all four upstream artifacts (required)**:
-1. .claude-orchestrator/docs/{planner_name}/YYYY-MM-DD/blueprint.md
-2. .claude-orchestrator/docs/{builder_name}/YYYY-MM-DD/traceability-map.md
-3. .claude-orchestrator/docs/{verifier_name}/YYYY-MM-DD/verification-map.md
-4. .claude-orchestrator/docs/{reviewer_name}/YYYY-MM-DD/review-judgment.md
-Fallback: {{task_doc_path}}. If any is missing → cannot accept, report to Leader.
+```markdown
+## Upstream Artifacts (read first, in order)
+1. Planner blueprint: `{{upstream_plan_artifact}}`
+2. Builder traceability map: `{{upstream_build_artifact}}`
+3. Verifier verification map: `{{upstream_verify_artifact}}`
+4. Reviewer judgment: `{{upstream_review_artifact}}`
+
+If any of the four upstream artifacts is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop.
 ```
 
 ✅ **issue #10 修复**：Leo 通过 chain-shared cache 路径读全部 4 份上游 artifact：
-- `{{upstream_plan_artifact}}` / `{{upstream_build_artifact}}` / `{{upstream_verify_artifact}}` / `{{upstream_review_artifact}}` 分别指向 `{cache_dir}/{leader_id}/chains/{chain_id}/{plan|build|verify|review}.md`。不再依赖各 worktree 的 `.claude-orchestrator/docs/{role}/...`。
+- `{{upstream_plan_artifact}}` = `~/.../projects/leader-01/tasks/task-0000000001/result.md`
+- `{{upstream_build_artifact}}` = `~/.../projects/leader-01/tasks/task-0000000002/result.md`
+- `{{upstream_verify_artifact}}` = `~/.../projects/leader-01/tasks/task-0000000003/result.md`
+- `{{upstream_review_artifact}}` = `~/.../projects/leader-01/tasks/task-0000000004/result.md`
+
+由 `WorkerWatcher.collectChainArtifacts` 解析 chain manifest 得到。
+
+✅ **本轮治理**：`{{task_doc_path}}` 行已从模板移除。
 
 ## 9.5 主任务
 
 ```bash
 cd ~/work/co-pagination/.worktrees/Leo
 claude --append-system-prompt '<Leo identity (accepter)>' \
-       -p '<rendered worker-accept.md>' \
+       -p '<rendered worker-accepter-task.md>' \
        --output-format stream-json --verbose \
-  > ~/.claude-orchestrator/cache/leader-01/logs/task-0000000009-<ts>.log
+  > ~/.claude-orchestrator/projects/leader-01/tasks/task-0000000005/exec-<ts>.log
 ```
 
 期望生成文件：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../cache/leader-01/results/task-0000000009.md` | acceptance-report.md 副本 |
-| `~/work/.../worktrees/Leo/.claude-orchestrator/docs/Leo/2026-05-14/acceptance-report.md` | 验收报告 |
+| `~/.../projects/leader-01/tasks/task-0000000005/result.md` | acceptance-report.md（Leader 视角） |
+| `~/.../projects/leader-01/docs/Leo/2026-05-14/accept-chain-pagination-001.md` | local_doc_path 副本 |
+| `~/work/.../worktrees/Leo/.claude-orchestrator/docs/Leo/2026-05-14/acceptance-report.md` | worktree 副本 |
 | `~/work/.../worktrees/Leo/.claude-orchestrator/docs/Leo/2026-05-14/CLAUDE.md` | 当日记忆 |
 
 **acceptance-report.md 内容示意**（贯穿样例 NO-GO 情形）：
@@ -73,9 +83,9 @@ Failed criteria:
 
 按 `personal-claude-accepter.md` 规则："No conditional GO — zero issues is the only standard"，本样例严格走 NO-GO。
 
-## 9.6 CommitChecker
+## 9.6 hook worker_message_end + CommitChecker
 
-只产出 markdown。
+只产出 markdown。commit log 落 `projects/leader-01/tasks/task-0000000005/commit.log`。
 
 ## 9.7 SelfEvaluator — Accept 的决策
 
@@ -88,7 +98,7 @@ Failed criteria:
 }
 ```
 
-（见 `packages/worker/src/evaluator.ts:120-123`）
+（见 `packages/worker/src/evaluator.ts` fallback 分支）
 
 ### 9.7.A GO 时（schema 命中场景）
 
@@ -103,7 +113,7 @@ Failed criteria:
 
 ### 9.7.B NO-GO 时（schema 命中场景）
 
-模板没有给 NO-GO 明确决策。逻辑上应是 `feedback`（要 Builder 修）或 `reject`（restart）。Accept 通常输出：
+模板没有给 NO-GO 明确决策。Accept 通常输出 `feedback`（要 Builder 修）或 `reject`（restart）：
 
 ```json
 {
@@ -114,13 +124,19 @@ Failed criteria:
 }
 ```
 
-✅ **issue #3 修复**：模板字段名 `feedback_to_worker / feedback_target` 已对齐 schema，feedback 分支现在能被 schema 接受。
+✅ **issue #3 修复 + 本轮治理**：模板字段名对齐 schema；feedback 现在物化为 retry task：
+- 默认 target = `manifest.link_workers[PREV_LINKS["accept"]]` = `link_workers.review` = Mia（reviewer）
+- 若要直接退到 Builder（Jerry），Leo 需 `feedback_target = jerry-01`
+- `dispatchFeedbackAsRetry` 会 push 新 review retry task（retry_count++、description=feedback_to_worker），assign 给 target worker，dispatch 之
+- 旧 task-0000000004 仍在 completed/，可审计
 
-✅ **issue #6 修复**：Leo 不指定 `feedback_target` 时，按 PREV_LINKS["accept"]="review" 默认发给 Mia（reviewer）。若要直接退到 Builder（Jerry），Leo 需在 EvalDecision 中显式 `feedback_target = jerry-01`。NO-GO 决策现在能在 schema 内直接表达——选 `feedback`（含 `feedback_target`）或 `reject`（彻底拒收）。
+`reject` 走 `closeChain("aborted")` —— 与 `close_chain` 同样关闭链，但 manifest.status 标 `aborted`，**不触发 MergeValidator**（语义为彻底退回，不进主线）。
 
-本贯穿样例选择走 9.7.A，最终决策 `close_chain` —— 不严格区分 GO/NO-GO 时的差异，链都会以 `close_chain` 落地。
+本贯穿样例选择走 9.7.A，最终决策 `close_chain` —— 后续走 MergeValidator + ChainAudit closeChain。
 
 ## 9.8 完成报告
+
+`task_queue.complete` → `/tasks/completed/task-0000000005`，`task_completed` hook fire。
 
 ZK 路径：`/messages/leader-01/msg-0000000006`
 
@@ -135,13 +151,13 @@ ZK 路径：`/messages/leader-01/msg-0000000006`
   "to_name": null,
   "content": "{\"decision\":\"close_chain\",\"reason\":\"acceptance review complete — see acceptance-report.md for final verdict\",\"commit\":{\"sha\":\"b2c3d4e5f60718293a4b5c6d7e8f9012345abcde0\",\"message\":\"accept(users): NO-GO — page_size validation gap (responsible: build)\",\"branch\":\"co/leo-01\",\"changed_files\":[],\"untracked_files\":[\".claude-orchestrator/docs/Leo/2026-05-14/acceptance-report.md\",\".claude-orchestrator/docs/Leo/2026-05-14/CLAUDE.md\"]}}",
   "link": "accept",
-  "task_id": "task-0000000009",
+  "task_id": "task-0000000005",
   "chain_id": "chain-pagination-001",
   "task_title": null,
   "task_description": null,
   "task_criteria": null,
-  "task_doc_path": null,
-  "result_path": "~/.claude-orchestrator/cache/leader-01/results/task-0000000009.md",
+  "result_path": "~/.claude-orchestrator/projects/leader-01/tasks/task-0000000005/result.md",
+  "original_requirement_path": null,
   "reply_to": null,
   "read": false,
   "created_at": "2026-05-14T03:14:00.000Z"
@@ -152,29 +168,31 @@ ZK 路径：`/messages/leader-01/msg-0000000006`
 
 `ChainRouter.route()`：`msg.link === "accept"`（非 plan）+ 内容像 EvalDecision → `handleCompletionReport(msg)`。
 
-`packages/leader/src/chain-router.ts:232-238`：
+`packages/leader/src/chain-router.ts` `close_chain` 分支：
 
 ```typescript
-case "reject":
 case "close_chain": {
   if (msg.chain_id) {
-    this.emitChainClosed(msg.chain_id);    // emit { type: "chain_closed", chain_id }
+    await this.runMergeValidation(msg.chain_id);     // ✅ #7 修复：自动跑 MergeValidator
+    if (this.opts.chain_audit) {
+      await this.opts.chain_audit.closeChain(msg.chain_id, "completed");
+    }
+    this.emitChainClosed(msg.chain_id);
+    this.forgetChain(msg.chain_id);
   }
   break;
 }
 ```
 
-`emitChainClosed`（line 242-244）：
-
-```typescript
-this.opts.bus.emit({ type: "chain_closed", chain_id: asChainId(chainId) });
-```
-
-TUI EVENT LOG 显示一条 `Chain closed: chain-pagination-001`。**没有进一步动作**——既不会标记 chain 关联的 tasks 为 `completed`/`failed`，也不会自动触发合并。
+执行顺序：
+1. 跑 `runMergeValidation` 遍历 chainCommits 5 个 commit
+2. ChainAudit `closeChain(chainId, "completed")` —— manifest.status="completed"，completed_at 时间戳，audit.jsonl append `chain_closed` 事件
+3. emit `chain_closed` → TUI 显示链关闭
+4. `forgetChain` 清理 chainCommits 内存映射（chainWorkers 已不在内存中，无需清理）
 
 ## 9.10 MergeValidator ✅ issue #7 修复：close_chain 自动触发
 
-`ChainRouter` 现在维护 `chainCommits: Map<chain_id, CommitInfo[]>`，每收到 completion_report：
+`ChainRouter` 维护 `chainCommits: Map<chain_id, CommitInfo[]>`，每收到 completion_report：
 
 ```typescript
 if (msg.chain_id && msg.link && raw.commit) {
@@ -191,11 +209,11 @@ const mergeValidator = new MergeValidator({...});
 const chainRouter = new ChainRouter({...others, merge_validator: mergeValidator});
 ```
 
-`reject` 决策**不**触发 MergeValidator（语义为彻底退回，不进主线）。`forgetChain` 同时清理 chainWorkers 与 chainCommits 映射。
+`reject` 决策**不**触发 MergeValidator（语义为彻底退回）。`forgetChain` 同时清理 chainCommits 映射。
 
 ### 9.10.1 MergeValidator 行为参考（若被调用）
 
-`packages/leader/src/merge-validator.ts:37-81` `validate(commit)`：
+`packages/leader/src/merge-validator.ts` `validate(commit)`：
 
 1. `git rev-parse --abbrev-ref HEAD` → 取当前主分支名（e.g. `master`）
 2. `git branch --contains <sha>` 检查 commit 是否已合并 → 是则返回 `{decision:"skip", reason:"Already merged"}`
@@ -229,9 +247,9 @@ claude 输出 `MergeDecision` JSON：
 
 `MergeDecisionSchema` 见 `packages/contracts/src/schemas/merge.ts`。
 
-### 9.10.3 整链 5 个 commit 的自动合并（修复后）
+### 9.10.3 整链 5 个 commit 的自动合并
 
-✅ Leo 输出 `close_chain` 后，`ChainRouter.runMergeValidation(chain_id)` 按链路顺序遍历 5 个 commit：
+Leo 输出 `close_chain` 后，`ChainRouter.runMergeValidation(chain_id)` 按链路顺序遍历 5 个 commit：
 
 | 顺序 | Worker | 分支 | SHA | 模板调用 | 决策 |
 |------|--------|------|-----|---------|------|
@@ -251,14 +269,14 @@ claude 输出 `MergeDecision` JSON：
 ├── instances/
 │   ├── leader-01, tom-01, jerry-01, lucy-01, mia-01, leo-01   [EPHEMERAL] {status:"idle"}
 ├── tasks/
-│   ├── pending/                             ⚠️ 5 个初始 task 未被 complete（在 #1 落地前依然沉积）
-│   │   ├── task-0000000001 (plan，handleTaskDefinitions 初始 push)
-│   │   ├── task-0000000002 (build，#4 修复后被 activate_next 复用 dispatch)
-│   │   ├── task-0000000003 (verify，同上)
-│   │   ├── task-0000000004 (review，同上)
-│   │   └── task-0000000005 (accept，同上)
+│   ├── pending/                             (空)
 │   ├── claimed/                             (空)
-│   └── completed/                           (空)
+│   └── completed/                           (5 个完成态 task，按 link 顺序)
+│       ├── task-0000000001 (plan, completed_by=Tom)
+│       ├── task-0000000002 (build, completed_by=Jerry)
+│       ├── task-0000000003 (verify, completed_by=Lucy)
+│       ├── task-0000000004 (review, completed_by=Mia)
+│       └── task-0000000005 (accept, completed_by=Leo)
 └── messages/
     ├── leader-01/
     │   ├── msg-0000000001  read=true   ← TUI 用户输入
@@ -273,6 +291,8 @@ claude 输出 `MergeDecision` JSON：
     ├── mia-01/                          (空)
     └── leo-01/                          (空)
 ```
+
+✅ **本轮治理**：5 个初始 task 经过 claim → complete 完整流转，最终都落到 `/tasks/completed/`；`/tasks/pending/` 在链关闭后为空（无沉积）。
 
 ## TUI EVENT LOG 全程
 
@@ -295,41 +315,87 @@ claude 输出 `MergeDecision` JSON：
 [03:14:01]  message_processed   msg-0000000006
 ```
 
+中间步骤（task_dispatch / completion_report / feedback_sent / task_claimed / task_completed）不直接发到 LeaderEventBus，全部记录在 `chains/chain-pagination-001/audit.jsonl`，需要时可线性回放。
+
 ## 全程产物清单
 
-### Cache 文件（全部位于 `~/.claude-orchestrator/cache/leader-01/`）
+### Cache 文件（全部位于 `~/.claude-orchestrator/projects/leader-01/`）
 
 ```
-messages/
-└── msg-0000000001.log              ← decompose claude-cli 日志
+chains/chain-pagination-001/
+├── requirement.md                     ← 原始用户需求
+├── manifest.json                      ← link_tasks + link_workers + status="completed"
+└── audit.jsonl                        ← 全程事件流（>=15 行）
 
-results/
-├── decompose/msg-0000000001.md         ← ChainDef JSON
-├── task-0000000001.md         ← Tom blueprint
-├── task-0000000006.md         ← Jerry traceability-map
-├── task-0000000007.md         ← Lucy verification-map
-├── task-0000000008.md         ← Mia review-judgment
-└── task-0000000009.md         ← Leo acceptance-report
+messages/msg-0000000001/
+├── inbound.log                        ← decompose claude-cli stream-json
+└── decompose.md                       ← ChainDef JSON
 
-logs/
-├── task-0000000001-<ts>.log   ← Tom 主执行
-├── task-0000000006-<ts>.log   ← Jerry 主执行
-├── task-0000000007-<ts>.log   ← Lucy 主执行
-├── task-0000000008-<ts>.log   ← Mia 主执行
-└── task-0000000009-<ts>.log   ← Leo 主执行
+tasks/task-0000000001/                 ← plan (Tom)
+├── exec-<ts>.log                       ← 主执行 claude-cli 日志
+├── result.md                          ← blueprint.md
+├── commit.log                          ← commit message 日志
+├── eval-{0,1,2}.log[.result.md]       ← self-eval claude 调用日志（视重试）
 
-commits/
-├── task-0000000001.log        ← Tom commit message 日志
-├── task-0000000006.log
-├── task-0000000007.log
-├── task-0000000008.log
-└── task-0000000009.log
+tasks/task-0000000002/                 ← build (Jerry)
+tasks/task-0000000003/                 ← verify (Lucy)
+tasks/task-0000000004/                 ← review (Mia)
+tasks/task-0000000005/                 ← accept (Leo)
+  (结构同 task-0000000001/)
 
-evals/
-├── task-0000000001-attempt-0.log[.result.md]
-├── task-0000000001-attempt-1.log[.result.md]
-├── task-0000000001-attempt-2.log[.result.md]
-├── (同上 5 个 task × ≤3 attempts，受 schema 不匹配影响多数情况下 3 个 attempt 都生成)
+docs/Leader/2026-05-14/                ← Leader 自处理 decompose 留下的 chain-def.json
+docs/Tom/2026-05-14/plan-chain-pagination-001.md
+docs/Jerry/2026-05-14/build-chain-pagination-001.md
+docs/Lucy/2026-05-14/verify-chain-pagination-001.md
+docs/Mia/2026-05-14/review-chain-pagination-001.md
+docs/Leo/2026-05-14/accept-chain-pagination-001.md
+                                       ← 每个 worker 的 local_doc_path 副本
+```
+
+**manifest.json 链关闭时终态（示意）**：
+
+```json
+{
+  "chain_id": "chain-pagination-001",
+  "created_at": "2026-05-14T03:00:01.000Z",
+  "completed_at": "2026-05-14T03:14:00.500Z",
+  "status": "completed",
+  "leader_id": "leader-01",
+  "leader_name": "Leader",
+  "requirement_path": "~/.claude-orchestrator/projects/leader-01/chains/chain-pagination-001/requirement.md",
+  "link_tasks": {
+    "plan":   "task-0000000001",
+    "build":  "task-0000000002",
+    "verify": "task-0000000003",
+    "review": "task-0000000004",
+    "accept": "task-0000000005"
+  },
+  "link_workers": {
+    "plan":   "tom-01",
+    "build":  "jerry-01",
+    "verify": "lucy-01",
+    "review": "mia-01",
+    "accept": "leo-01"
+  }
+}
+```
+
+**audit.jsonl 关键事件（按时间顺序）**：
+
+```jsonl
+{"event":"chain_opened",        "link":null,    "worker_id":null,      "task_id":null,                  "payload":{...}}
+{"event":"requirement_received","link":null,    "worker_id":null,      "task_id":null,                  "payload":{"requirement_path":".../requirement.md"}}
+{"event":"task_dispatch",       "link":"plan",  "worker_id":"tom-01",  "task_id":"task-0000000001",     "payload":null}
+{"event":"completion_report",   "link":"plan",  "worker_id":"tom-01",  "task_id":"task-0000000001",     "payload":{"decision":"activate_next"}}
+{"event":"task_dispatch",       "link":"build", "worker_id":"jerry-01","task_id":"task-0000000002",     "payload":null}
+{"event":"completion_report",   "link":"build", "worker_id":"jerry-01","task_id":"task-0000000002",     "payload":{"decision":"activate_next"}}
+{"event":"task_dispatch",       "link":"verify","worker_id":"lucy-01", "task_id":"task-0000000003",     "payload":null}
+{"event":"completion_report",   "link":"verify","worker_id":"lucy-01", "task_id":"task-0000000003",     "payload":{"decision":"activate_next"}}
+{"event":"task_dispatch",       "link":"review","worker_id":"mia-01",  "task_id":"task-0000000004",     "payload":null}
+{"event":"completion_report",   "link":"review","worker_id":"mia-01",  "task_id":"task-0000000004",     "payload":{"decision":"activate_next"}}
+{"event":"task_dispatch",       "link":"accept","worker_id":"leo-01",  "task_id":"task-0000000005",     "payload":null}
+{"event":"completion_report",   "link":"accept","worker_id":"leo-01",  "task_id":"task-0000000005",     "payload":{"decision":"close_chain"}}
+{"event":"chain_closed",        "link":null,    "worker_id":null,      "task_id":null,                  "payload":{"status":"completed"}}
 ```
 
 ### Worktree 内文件（5 个 worktree 分支）
@@ -371,18 +437,21 @@ evals/
 | `co/mia-01` | `a1b2c3d4...` | `review(users): 5 ACCEPT 1 CONCERN — page_size>100 unrejected` |
 | `co/leo-01` | `b2c3d4e5...` | `accept(users): NO-GO — page_size validation gap (responsible: build)` |
 
-未合并入 `master`（除非外部触发 MergeValidator）。
+`close_chain` 触发 `runMergeValidation`，5 个 commit 按 plan→build→verify→review→accept 顺序由 `worker-merge-decision.md` 判定 `merge / skip / review_first`，决策 `merge` 时合入 `master`。
 
 ## 现状基线总结
 
-本贯穿样例覆盖了所有 5 个链环节，共 10 个步骤；展示了：
+本贯穿样例覆盖了所有 5 个链环节，共 10 个步骤。与早期基线相比，本轮治理后的运行特征：
 
-1. **消息驱动而非任务认领** —— `/tasks/*` 是审计型，Worker 完全靠 task_dispatch 消息工作
-2. **链推进靠 Leader 显式 push 新 task** —— `activate_next` 每次 push 新 task；初始 5 个 task 沉积
-3. **任务上下文逐级稀释** —— task_description/criteria/doc_path 在 task_dispatch 消息中全为 null，Worker prompt 中只剩 title
-4. **跨 worktree artifact 传递断链** —— 模板 "Read planner blueprint" 与 worktree/分支隔离结构冲突
-5. **EvalDecision schema 字段命名错位** —— 模板用 camelCase / `feedback`，schema 用 snake_case / `feedback_to_worker`，导致 schema 校验几乎必失败，落到 fallback 自动推进
-6. **feedback / reject / NO-GO 路径几乎不可达** —— 字段名错位导致 schema fail；feedback_target 兜底为发送者本人；reject/close_chain 等同关闭链且无后续修复
-7. **MergeValidator 未自动触发** —— 链关闭后没有自动合并流程
+1. **任务认领进 ZK 状态机** —— 每个 task 走 pending → claimed → completed 完整生命周期；终态时 `/tasks/completed/` 含 5 条完整审计记录（issue #1）
+2. **链推进显式 dispatch + ChainAudit 持久化** —— Leader 通过 `findOrCreatePendingTask` 复用初始 5 个 task，`task_queue.assign` 派单；每次 dispatch 同步 `chain_audit.setLinkTask` + `setLinkWorker`，写到 `manifest.json`；leader 重启可恢复（issue #4 + 本轮 chainWorkers 持久化）
+3. **task_dispatch 携带完整上下文** —— `task_description / task_criteria / original_requirement_path` 全部由 ChainDef / requirement.md 直传 worker prompt（issue #9）
+4. **跨 worktree artifact 走 chain-shared cache** —— `WorkerWatcher.collectChainArtifacts` 读 chain manifest 解析 `tasks/<task_id>/result.md`，模板变量 `{{upstream_*_artifact}}` 注入，不再依赖 git 跨分支同步（issue #10）
+5. **EvalDecision schema 严格命中** —— 模板字段 snake_case + 4 decision 分支，schema safeParse 通常成功；feedback 路径可达（issue #3）
+6. **feedback / reject / NO-GO 路径完备** —— feedback 物化为 retry task（retry_count++、description=feedback_to_worker、assigned_to=prev-link worker），retry 流转走标准 claim → complete；reject 走 `closeChain('aborted')` 标 manifest 状态 + 跳过 MergeValidator；GO 走 close_chain 触发完整 MergeValidator + `closeChain('completed')`（本轮治理 #15 + issue #6 + #7）
+7. **MergeValidator 自动触发** —— `close_chain` 在 `runMergeValidation` 中按链路顺序遍历 5 个 commit，逐个走 `worker-merge-decision.md` 决策；`reject` 不合并（issue #7）
+8. **Worker 心跳 busy/idle 真正写 ZK** —— `WorkerWatcher.processMessage` 入口/finally 切换 `status` 字段，`findIdleWorkerByRole` 真按 status 过滤；并发派发安全（本轮治理 #13）
+9. **task_claimed / task_completed hook 真正触发** —— Worker 在 `claimById` 成功后 fire `task_claimed`，`complete()` 成功后 fire `task_completed`（env 含 `duration_seconds`）；shell 脚本可观测（本轮治理 #16）
+10. **schema 字段清理** —— `task_doc_path / depends_on / blocked_by / blocked_reason / TaskStatus.blocked / ITaskQueue.block` 全部移除；旧 ZK 节点反序列化时 zod strip 静默丢弃（本轮治理 #12）
 
-这些都是 **现状基线**——未来对 prompt 模板、字段命名、跨 worktree 传递、合并触发等的优化都应基于本基线对照修订。
+未来对模板、调度策略、合并触发的进一步优化，均应基于本基线对照修订。
