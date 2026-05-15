@@ -20,6 +20,7 @@ export interface ChainManifest {
   leader_name: string;
   requirement_path: string;
   link_tasks: Record<TaskLink, TaskId | null>;
+  link_workers: Record<TaskLink, InstanceId | null>;
 }
 
 export interface ChainOpenMeta {
@@ -86,6 +87,13 @@ export class ChainAudit {
         review: null,
         accept: null,
       },
+      link_workers: {
+        plan: null,
+        build: null,
+        verify: null,
+        review: null,
+        accept: null,
+      },
     };
     await fs.promises.writeFile(
       manifestPath,
@@ -116,6 +124,38 @@ export class ChainAudit {
       return;
     }
     manifest.link_tasks[link] = taskId;
+    await fs.promises.writeFile(
+      manifestPath,
+      JSON.stringify(manifest, null, 2),
+      "utf-8",
+    );
+  }
+
+  async setLinkWorker(
+    chainId: ChainId,
+    link: TaskLink,
+    workerId: InstanceId,
+  ): Promise<void> {
+    const manifestPath = cachePaths.chainManifestPath(
+      this.opts.cache_paths,
+      chainId,
+    );
+    const manifest = await this.readManifest(chainId);
+    if (!manifest) {
+      this.opts.logger.warn("setLinkWorker: manifest missing", {
+        chain_id: chainId,
+        link,
+      });
+      return;
+    }
+    manifest.link_workers ??= {
+      plan: null,
+      build: null,
+      verify: null,
+      review: null,
+      accept: null,
+    };
+    manifest.link_workers[link] = workerId;
     await fs.promises.writeFile(
       manifestPath,
       JSON.stringify(manifest, null, 2),

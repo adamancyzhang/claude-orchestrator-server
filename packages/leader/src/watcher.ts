@@ -43,7 +43,6 @@ export class LeaderWatcher {
     task_title?: string | null;
     task_description?: string | null;
     task_criteria?: string | null;
-    task_doc_path?: string | null;
     result_path?: string | null;
     reply_to?: string | null;
     chain_id?: string | null;

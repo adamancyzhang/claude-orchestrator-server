@@ -41,7 +41,6 @@ export interface ITaskQueue {
     completedByName: string,
     durationSeconds: number | null,
   ): Promise<void>;
-  block(taskId: TaskId, reason: string): Promise<void>;
   fail(taskId: TaskId, reason: string): Promise<void>;
   retry(taskId: TaskId): Promise<Task>;
   listPending(): Promise<Task[]>;

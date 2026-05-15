@@ -87,18 +87,6 @@ export interface ChainRouterOptions {
 
 export class ChainRouter {
   /**
-   * In-memory chain → link → worker_id mapping. Populated whenever the
-   * router dispatches a task to a worker, consulted by the `feedback`
-   * decision branch to route feedback back to the previous-link worker
-   * when the evaluator did not provide an explicit `feedback_target`.
-   *
-   * The map is process-local. If the leader restarts mid-chain, the
-   * mapping is lost — feedback in that window falls back to the
-   * `msg.from_instance` legacy behavior.
-   */
-  private readonly chainWorkers = new Map<ChainId, Map<TaskLink, InstanceId>>();
-
-  /**
    * Per-chain commit log accumulated from completion_report messages.
    * Insertion order is the link order in which reports arrive — used
    * to drive MergeValidator on chain close in P→B→V→R→A sequence.
@@ -131,21 +119,23 @@ export class ChainRouter {
     });
   }
 
-  private rememberDispatch(
+  /**
+   * Record the link → worker mapping persistently in the chain manifest
+   * (`link_workers`). Survives leader restarts, and is the sole source of
+   * truth `resolveFeedbackTarget` consults when no explicit target is
+   * provided by the evaluator.
+   */
+  private async rememberDispatch(
     chainId: ChainId,
     link: TaskLink,
     workerId: InstanceId,
-  ): void {
-    let perChain = this.chainWorkers.get(chainId);
-    if (!perChain) {
-      perChain = new Map();
-      this.chainWorkers.set(chainId, perChain);
+  ): Promise<void> {
+    if (this.opts.chain_audit) {
+      await this.opts.chain_audit.setLinkWorker(chainId, link, workerId);
     }
-    perChain.set(link, workerId);
   }
 
   private forgetChain(chainId: ChainId): void {
-    this.chainWorkers.delete(chainId);
     this.chainCommits.delete(chainId);
   }
 
@@ -195,7 +185,6 @@ export class ChainRouter {
         task_title: msg.task_title ?? "",
         task_description: msg.task_description ?? msg.content,
         task_criteria: msg.task_criteria ?? "",
-        task_doc_path: msg.task_doc_path ?? "",
         result_path: resultPath,
         work_dir: process.cwd(),
         time: new Date().toISOString(),
@@ -339,7 +328,7 @@ export class ChainRouter {
           task_criteria: firstDef.criteria,
           original_requirement_path: requirementPath,
         });
-        this.rememberDispatch(chainDef.chain_id, firstLink, firstWorker.id);
+        await this.rememberDispatch(chainDef.chain_id, firstLink, firstWorker.id);
       } else {
         this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink]} available — task queued`);
       }
@@ -424,33 +413,22 @@ export class ChainRouter {
             task_title: nextTask.title,
             task_description: nextTask.description,
             task_criteria: nextTask.criteria,
-            task_doc_path: nextTask.task_doc_path,
             original_requirement_path: requirementPath,
           });
-          this.rememberDispatch(msg.chain_id, nextLink, worker.id);
+          await this.rememberDispatch(msg.chain_id, nextLink, worker.id);
         }
         break;
       }
       case "feedback": {
-        const targetId = this.resolveFeedbackTarget(msg, decision.feedback_target ?? null);
-        if (this.opts.chain_audit && msg.chain_id) {
-          await this.opts.chain_audit.record(msg.chain_id, {
-            event: "feedback_sent",
-            link: msg.link ?? null,
-            worker_id: targetId,
-            payload: { feedback_to_worker: decision.feedback_to_worker },
-          });
-        }
-        await this.opts.message_router.send({
-          type: "direct",
-          from_instance: this.opts.leader_id,
-          from_name: this.opts.leader_name,
-          from_role: "leader",
-          to_instance: targetId,
-          content: decision.feedback_to_worker,
-          link: msg.link,
-          chain_id: msg.chain_id,
-          original_requirement_path: requirementPath,
+        const targetId = await this.resolveFeedbackTarget(
+          msg,
+          decision.feedback_target ?? null,
+        );
+        await this.dispatchFeedbackAsRetry({
+          msg,
+          targetId,
+          feedback: decision.feedback_to_worker,
+          requirementPath,
         });
         break;
       }
@@ -519,23 +497,144 @@ export class ChainRouter {
    * Priority:
    *   1. Explicit `feedback_target` from the EvalDecision (Worker-asserted).
    *   2. The worker that handled the previous link in this chain (e.g.
-   *      Verifier feedback → Builder), looked up via chainWorkers.
+   *      Verifier feedback → Builder), looked up via the persisted chain
+   *      manifest (`link_workers`). Survives leader restarts.
    *   3. The sender of the completion report (legacy fallback — keeps
    *      single-worker / ad-hoc flows unblocked).
    */
-  private resolveFeedbackTarget(
+  private async resolveFeedbackTarget(
     msg: Message,
     explicit: InstanceId | null,
-  ): InstanceId {
+  ): Promise<InstanceId> {
     if (explicit) return explicit;
-    if (msg.chain_id && msg.link) {
+    if (msg.chain_id && msg.link && this.opts.chain_audit) {
       const prevLink = PREV_LINKS[msg.link];
       if (prevLink) {
-        const prev = this.chainWorkers.get(msg.chain_id)?.get(prevLink);
+        const manifest = await this.opts.chain_audit.readManifest(msg.chain_id);
+        const prev = manifest?.link_workers?.[prevLink];
         if (prev) return prev;
       }
     }
     return msg.from_instance;
+  }
+
+  /**
+   * Materialize a feedback decision as a brand-new pending task for the
+   * target link, with `retry_count` incremented relative to the most
+   * recent completed/pending task of (chain_id, link). The previously
+   * completed task and its on-disk artifacts (`tasks/<old_id>/...`)
+   * remain untouched for forensics. The new task is dispatched as a
+   * regular `task_dispatch` — the receiving Worker's claimById path
+   * runs the standard claim → run → evaluate cycle, with `retry_hint`
+   * carrying the feedback text in `task_description`.
+   */
+  private async dispatchFeedbackAsRetry(args: {
+    msg: Message;
+    targetId: InstanceId;
+    feedback: string;
+    requirementPath: string | null;
+  }): Promise<void> {
+    const { msg, targetId, feedback, requirementPath } = args;
+    if (!msg.chain_id || !msg.link) {
+      this.opts.logger.warn("feedback decision lacks chain_id/link", {
+        chain_id: msg.chain_id ?? null,
+        link: msg.link ?? null,
+      });
+      return;
+    }
+    const prevLink = PREV_LINKS[msg.link] ?? msg.link;
+    const priorRetry = await this.lookupPriorRetry(
+      msg.chain_id,
+      prevLink,
+      msg.task_id ?? null,
+    );
+    const target = await this.opts.registry.get(targetId);
+    const targetName = target?.name ?? "";
+    const newTask = await this.opts.task_queue.push({
+      title: `[${msg.chain_id}] ${prevLink} (retry ${priorRetry + 1})`,
+      description: feedback,
+      criteria: "",
+      priority: 1,
+      link: prevLink,
+      chain_id: msg.chain_id,
+      retry_count: priorRetry + 1,
+      created_by: this.opts.leader_id,
+      created_by_name: this.opts.leader_name,
+      assigned_to: targetId,
+      assigned_to_name: targetName,
+    });
+    if (this.opts.chain_audit) {
+      await this.opts.chain_audit.setLinkTask(msg.chain_id, prevLink, newTask.id);
+      await this.opts.chain_audit.setLinkWorker(msg.chain_id, prevLink, targetId);
+      await this.opts.chain_audit.record(msg.chain_id, {
+        event: "feedback_sent",
+        link: msg.link,
+        worker_id: targetId,
+        worker_name: targetName,
+        task_id: newTask.id,
+        payload: {
+          feedback_to_worker: feedback,
+          retry_count: priorRetry + 1,
+          target_link: prevLink,
+        },
+      });
+    }
+    await this.opts.message_router.send({
+      type: "task_dispatch",
+      from_instance: this.opts.leader_id,
+      from_name: this.opts.leader_name,
+      from_role: "leader",
+      to_instance: targetId,
+      content: newTask.title,
+      link: prevLink,
+      chain_id: msg.chain_id,
+      task_id: newTask.id,
+      task_title: newTask.title,
+      task_description: feedback,
+      task_criteria: "",
+      original_requirement_path: requirementPath,
+    });
+  }
+
+  /**
+   * Best-effort retry-count lookup for the link we're about to retry.
+   *
+   * Tries, in order:
+   *   1. The completed task whose id the reporter cited (most accurate
+   *      when feedback bounces back to the same link the reporter ran).
+   *   2. The link's currently recorded task in the manifest's
+   *      `link_tasks` map — works for feedback that crosses links
+   *      (e.g. verifier → builder) and survives leader restarts.
+   *   3. Any pending task for (chain_id, link) still in the queue.
+   * Falls back to 0 if no prior record exists.
+   */
+  private async lookupPriorRetry(
+    chainId: ChainId,
+    link: TaskLink,
+    msgTaskId: TaskId | null,
+  ): Promise<number> {
+    if (msgTaskId) {
+      const completed = await this.opts.task_queue.getCompleted(msgTaskId);
+      if (completed && completed.link === link) {
+        return completed.retry_count ?? 0;
+      }
+    }
+    if (this.opts.chain_audit) {
+      const manifest = await this.opts.chain_audit.readManifest(chainId);
+      const priorId = manifest?.link_tasks?.[link] ?? null;
+      if (priorId) {
+        const prior = await this.opts.task_queue.getCompleted(priorId);
+        if (prior) return prior.retry_count ?? 0;
+      }
+    }
+    const pending = await this.opts.task_queue.listPending();
+    let max = 0;
+    for (const t of pending) {
+      if (t.chain_id === chainId && t.link === link) {
+        max = Math.max(max, t.retry_count ?? 0);
+      }
+    }
+    return max;
   }
 
   private emitChainClosed(chainId: ChainId): void {

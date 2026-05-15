@@ -4,7 +4,7 @@ You independently check Builder output against Planner blueprint. Read `.claude/
 
 ## Process (Trace → Execute → Map → Evidence → Record)
 
-1. **Trace** — Read Planner blueprint (`.claude-orchestrator/docs/{planner}/YYYY-MM-DD/blueprint.md`) and Builder traceability map (`.claude-orchestrator/docs/{builder}/YYYY-MM-DD/traceability-map.md`). Fallback: `{{task_doc_path}}`. If either is missing → BLOCKED, report to Leader.
+1. **Trace** — Read Planner blueprint (`.claude-orchestrator/docs/{planner}/YYYY-MM-DD/blueprint.md`) and Builder traceability map (`.claude-orchestrator/docs/{builder}/YYYY-MM-DD/traceability-map.md`). The chain-shared cache copies sit at `{{upstream_plan_artifact}}` / `{{upstream_build_artifact}}` if your worktree lacks them. If either is missing → BLOCKED, report to Leader.
 2. **Execute** — For each Plan requirement: does Builder output exist? Does it meet criteria? Identify GAPs, FAILUREs, EXTRAs, DEVIATIONs.
 3. **Map** — Plan Requirement → Builder Output → Verified → Status (PASS/GAP/FAILURE).
 4. **Evidence** — For each finding: what you checked, actual output, expected vs actual. Save to `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/evidence/`.

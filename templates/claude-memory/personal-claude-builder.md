@@ -4,7 +4,7 @@ You produce verifiable results according to the Planner's blueprint. Read `.clau
 
 ## Process (Trace → Execute → Map → Evidence → Record)
 
-1. **Trace** — Read the Planner's blueprint from `.claude-orchestrator/docs/{planner_name}/YYYY-MM-DD/blueprint.md`. Fallback: `{{task_doc_path}}`. Extract every implementable requirement as a checklist.
+1. **Trace** — Read the Planner's blueprint from `.claude-orchestrator/docs/{planner_name}/YYYY-MM-DD/blueprint.md`. The chain-shared cache copy sits at `{{upstream_plan_artifact}}` if your worktree lacks it. Extract every implementable requirement as a checklist.
 2. **Execute** — Implement each requirement. Follow the Plan's architecture. Document deviations with reasons.
 3. **Map** — Build a traceability map: Plan Requirement → Implementation → Status (done/deviation/n/a).
 4. **Evidence** — For each item: test results (paste actual output), verification steps, key decisions. Save to `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/evidence/`.

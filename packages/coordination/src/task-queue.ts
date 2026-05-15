@@ -61,12 +61,8 @@ export class TaskQueue implements ITaskQueue {
       status: "pending" as const,
       link: input.link ?? null,
       chain_id: input.chain_id ?? null,
-      task_doc_path: input.task_doc_path ?? null,
       result_path: input.result_path ?? null,
-      retry_count: 0,
-      depends_on: input.depends_on ?? [],
-      blocked_by: input.blocked_by ?? [],
-      blocked_reason: null,
+      retry_count: input.retry_count ?? 0,
       fail_reason: null,
       created_by: input.created_by ?? null,
       created_by_name: input.created_by_name ?? "",
@@ -238,29 +234,6 @@ export class TaskQueue implements ITaskQueue {
       encode(completed),
     );
     await this.zk.delete(claimPath);
-  }
-
-  async block(taskId: TaskId, reason: string): Promise<void> {
-    const ids = await this.zk.getChildren(zkPaths.tasksClaimed(this.paths));
-    const target = ids.find((s) => s.endsWith(`-${taskId}`));
-    if (!target) throw new ZkNodeNotFoundError(`no claim for ${taskId}`);
-    const fullPath = zkPaths.tasksClaimed(this.paths);
-    const data = await this.zk.getData(
-      (`${fullPath}/${target}`) as ReturnType<typeof zkPaths.tasksClaimed>,
-    );
-    if (!data) throw new ZkNodeNotFoundError(`claim missing: ${target}`);
-    const record = decode<ClaimRecord>(data.data);
-    if (record.task_snapshot) {
-      record.task_snapshot = {
-        ...record.task_snapshot,
-        status: "blocked",
-        blocked_reason: reason,
-      };
-    }
-    await this.zk.setData(
-      (`${fullPath}/${target}`) as ReturnType<typeof zkPaths.tasksClaimed>,
-      encode(record),
-    );
   }
 
   async fail(taskId: TaskId, reason: string): Promise<void> {

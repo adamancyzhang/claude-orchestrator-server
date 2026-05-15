@@ -57,15 +57,28 @@ describe("TaskSchema", () => {
     expect(t.priority).toBe(1);
   });
 
-  it("carries task_doc_path and result_path", () => {
+  it("carries result_path", () => {
     const t = TaskSchema.parse({
       title: "x",
       created_at: "2026-05-14T00:00:00Z",
-      task_doc_path: "/cache/tasks/t-1.md",
       result_path: "/cache/results/t-1.md",
     });
-    expect(t.task_doc_path).toBe("/cache/tasks/t-1.md");
     expect(t.result_path).toBe("/cache/results/t-1.md");
+  });
+
+  it("strips legacy task_doc_path / depends_on / blocked_by silently", () => {
+    const t = TaskSchema.parse({
+      title: "legacy",
+      created_at: "2026-05-14T00:00:00Z",
+      task_doc_path: "/legacy/path.md",
+      depends_on: ["task-x"],
+      blocked_by: ["task-y"],
+      blocked_reason: "legacy reason",
+    });
+    expect("task_doc_path" in t).toBe(false);
+    expect("depends_on" in t).toBe(false);
+    expect("blocked_by" in t).toBe(false);
+    expect("blocked_reason" in t).toBe(false);
   });
 });
 

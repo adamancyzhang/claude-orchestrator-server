@@ -5,7 +5,7 @@
 //     1. A ChainDef arrives → 5 pending tasks pushed (with description +
 //        criteria) and the first link dispatched with full task context.
 //     2. A Worker reports `activate_next` → next link is dispatched with
-//        task_description / task_criteria / task_doc_path threaded through.
+//        task_description / task_criteria threaded through.
 //     3. Worker reports `feedback` → a direct message is sent (target
 //        defaults to msg.from_instance unless feedback_target overrides).
 //     4. Worker reports `reject` / `close_chain` → chain_closed is emitted
@@ -58,6 +58,54 @@ import {
 } from "@co/contracts";
 import { TaskQueue } from "@co/coordination";
 import { ChainRouter } from "../../../src/chain-router.js";
+import type { ChainAudit, ChainManifest, ChainOpenMeta, ChainAuditEventInput } from "../../../src/chain-audit.js";
+
+/**
+ * In-memory ChainAudit fake — mirrors only the methods ChainRouter consumes
+ * (openChain, setLinkTask, setLinkWorker, record, closeChain, readManifest).
+ * No filesystem I/O, so unit tests stay hermetic.
+ */
+class FakeChainAudit implements Pick<ChainAudit,
+  "openChain" | "setLinkTask" | "setLinkWorker" | "record" | "closeChain" | "readManifest"
+> {
+  private manifests = new Map<ChainId, ChainManifest>();
+  events: ChainAuditEventInput[] = [];
+
+  async openChain(chainId: ChainId, meta: ChainOpenMeta): Promise<void> {
+    this.manifests.set(chainId, {
+      chain_id: chainId,
+      created_at: meta.created_at,
+      completed_at: null,
+      status: "running",
+      leader_id: meta.leader_id,
+      leader_name: meta.leader_name,
+      requirement_path: meta.requirement_path,
+      link_tasks: { plan: null, build: null, verify: null, review: null, accept: null },
+      link_workers: { plan: null, build: null, verify: null, review: null, accept: null },
+    });
+  }
+  async setLinkTask(chainId: ChainId, link: TaskLink, taskId: never): Promise<void> {
+    const m = this.manifests.get(chainId);
+    if (m) m.link_tasks[link] = taskId;
+  }
+  async setLinkWorker(chainId: ChainId, link: TaskLink, workerId: InstanceId): Promise<void> {
+    const m = this.manifests.get(chainId);
+    if (m) m.link_workers[link] = workerId;
+  }
+  async record(_chainId: ChainId, event: ChainAuditEventInput): Promise<void> {
+    this.events.push(event);
+  }
+  async closeChain(chainId: ChainId, status: "completed" | "failed" | "aborted"): Promise<void> {
+    const m = this.manifests.get(chainId);
+    if (m) {
+      m.status = status;
+      m.completed_at = new Date().toISOString();
+    }
+  }
+  async readManifest(chainId: ChainId): Promise<ChainManifest | null> {
+    return this.manifests.get(chainId) ?? null;
+  }
+}
 
 class SilentLogger implements ILogger {
   debug(): void {}
@@ -79,8 +127,8 @@ class FakeRegistry implements IInstanceRegistry {
   async list(): Promise<Instance[]> {
     return [...this.instances];
   }
-  async get(): Promise<Instance | null> {
-    return null;
+  async get(id: InstanceId): Promise<Instance | null> {
+    return this.instances.find((i) => i.id === id) ?? null;
   }
   async watch(): Promise<Instance[]> {
     return [...this.instances];
@@ -106,7 +154,6 @@ class FakeMessageRouter implements IMessageRouter {
       task_title: input.task_title ?? null,
       task_description: input.task_description ?? null,
       task_criteria: input.task_criteria ?? null,
-      task_doc_path: input.task_doc_path ?? null,
       result_path: input.result_path ?? null,
       reply_to: input.reply_to ?? null,
       read: false,
@@ -246,12 +293,14 @@ function setup(instances: Instance[] = []): {
   queue: TaskQueue;
   bus: FakeBus;
   msg: FakeMessageRouter;
+  audit: FakeChainAudit;
 } {
   const zk = new MemoryZk();
   const queue = new TaskQueue({ zk: zk as never });
   const bus = new FakeBus();
   const msg = new FakeMessageRouter();
   const registry = new FakeRegistry(instances);
+  const audit = new FakeChainAudit();
   const router = new ChainRouter({
     task_queue: queue,
     message_router: msg,
@@ -266,8 +315,9 @@ function setup(instances: Instance[] = []): {
       projects_root: "/tmp/co-test",
       leader_instance_id: LEADER_ID,
     },
+    chain_audit: audit as never,
   });
-  return { router, queue, bus, msg };
+  return { router, queue, bus, msg, audit };
 }
 
 function chainDefJson(): string {
@@ -333,7 +383,6 @@ function chainDefMessage(content: string): Message {
     task_title: null,
     task_description: null,
     task_criteria: null,
-    task_doc_path: null,
     result_path: null,
     reply_to: null,
     read: false,
@@ -361,7 +410,6 @@ function completionMessage(
     task_title: null,
     task_description: null,
     task_criteria: null,
-    task_doc_path: null,
     result_path: null,
     reply_to: null,
     read: false,
@@ -476,7 +524,6 @@ describe("ChainRouter.handleCompletionReport — activate_next", () => {
     expect(dispatch.task_id).toBeTruthy();
     expect("task_description" in dispatch).toBe(true);
     expect("task_criteria" in dispatch).toBe(true);
-    expect("task_doc_path" in dispatch).toBe(true);
   });
 
   it("reuses the existing pending task for the chain's next link instead of creating a duplicate", async () => {
@@ -569,14 +616,15 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     });
   });
 
-  it("routes verifier feedback to the upstream builder via the chain dispatch map (no explicit feedback_target)", async () => {
+  it("routes verifier feedback to the upstream builder as a retry task_dispatch (no explicit feedback_target)", async () => {
     // Set up a chain where Tom (planner) and Jerry (builder) have already
     // been dispatched tasks for this chain. Then Lucy (verifier) reports
     // feedback without an explicit feedback_target — it should land in
-    // Jerry's inbox, not Lucy's.
+    // Jerry's inbox as a fresh pending build task with retry_count=1,
+    // not as an opaque direct message.
     const tom = makeInstance("tom-01", "Tom", "planner");
     const jerry = makeInstance("jerry-01", "Jerry", "builder");
-    const { router, msg } = setup([tom, jerry]);
+    const { router, msg, queue } = setup([tom, jerry]);
     await router.route(chainDefMessage(chainDefJson()));
     expect(msg.sent[0].to_instance).toBe(tom.id); // plan dispatched to Tom
 
@@ -609,9 +657,21 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     );
     expect(msg.sent.length).toBe(before + 1);
     const fb = msg.sent.at(-1)!;
-    expect(fb.type).toBe("direct");
+    expect(fb.type).toBe("task_dispatch");
     expect(fb.to_instance).toBe(jerry.id);
-    expect(fb.content).toBe("Add page_size<=100 validation");
+    expect(fb.link).toBe("build");
+    expect(fb.task_description).toBe("Add page_size<=100 validation");
+    expect(fb.task_id).toBeTruthy();
+
+    // A fresh pending build task was pushed with retry_count=1, assigned
+    // to Jerry and carrying the feedback as its description.
+    const pending = await queue.listPending();
+    const retry = pending.find(
+      (t) => t.link === "build" && (t.retry_count ?? 0) >= 1,
+    );
+    expect(retry).toBeTruthy();
+    expect(retry!.assigned_to).toBe(jerry.id);
+    expect(retry!.description).toBe("Add page_size<=100 validation");
   });
 
   it("honors explicit feedback_target over the prior-link fallback", async () => {
@@ -633,11 +693,14 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
         asInstanceId("lucy-01"),
       ),
     );
-    expect(msg.sent.at(-1)!.to_instance).toBe(targetOverride);
+    const fb = msg.sent.at(-1)!;
+    expect(fb.to_instance).toBe(targetOverride);
+    expect(fb.type).toBe("task_dispatch");
   });
 
-  it("falls back to msg.from_instance only when neither feedback_target nor a prior-link worker exists", async () => {
-    // Plan link feedback has no prior link to bounce back to.
+  it("falls back to msg.from_instance for plan feedback (no prior link to bounce back to)", async () => {
+    // Plan link feedback has no prior link, so the retry task is assigned
+    // to the reporter themselves (legacy behavior, kept for ad-hoc flows).
     const { router, msg } = setup([]);
     await router.route(
       completionMessage(
@@ -652,6 +715,8 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     );
     const last = msg.sent.at(-1)!;
     expect(last.to_instance).toBe(asInstanceId("tom-01"));
+    expect(last.link).toBe("plan");
+    expect(last.task_description).toBe("expand the blueprint");
   });
 });
 
