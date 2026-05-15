@@ -51,7 +51,7 @@ program
     output({
       protocol_version: PROTOCOL_VERSION,
       zookeeper: config.zk,
-      cache_dir: config.cache_dir,
+      projects_root: config.projects_root,
       commands: config.commands,
       hooks: config.hooks,
       project: {

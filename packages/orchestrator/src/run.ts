@@ -29,6 +29,7 @@ import {
   TaskQueue,
 } from "@co/coordination";
 import {
+  ChainAudit,
   ChainRouter,
   LeaderEventBus,
   LeaderState,
@@ -53,6 +54,7 @@ import {
   createUserClaudeMdStep,
 } from "./init-checker.js";
 import { initializeWorktrees } from "./worktree-initializer.js";
+import { ensureCoRoot } from "./co-root-initializer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -148,7 +150,13 @@ export async function runOrchestrator(
   });
   saveInstanceId(leaderInstance.id);
 
-  captureConsoleToFile(resolved.cache_dir);
+  const coRoot = await ensureCoRoot({
+    projects_root: resolved.projects_root,
+    leader_instance_id: leaderInstance.id,
+    git_command: resolved.commands.git,
+    logger: logger.child("co-root"),
+  });
+  captureConsoleToFile(coRoot);
 
   const messageRouter = new MessageRouter({ zk });
   const taskQueue = new TaskQueue({ zk });
@@ -170,7 +178,7 @@ export async function runOrchestrator(
   void hookEngine;
 
   const cachePaths = {
-    cache_dir: resolved.cache_dir,
+    projects_root: resolved.projects_root,
     leader_instance_id: leaderInstance.id,
   };
 
@@ -181,8 +189,12 @@ export async function runOrchestrator(
     template_name: "worker-merge-decision.md",
     bus,
     logger: logger.child("merge"),
-    log_path_for: (key) =>
-      path.join(resolved.cache_dir, leaderInstance.id, "merges", `${key}.log`),
+    log_path_for: (key) => path.join(coRoot, "merges", `${key}.log`),
+  });
+
+  const chainAudit = new ChainAudit({
+    cache_paths: cachePaths,
+    logger: logger.child("chain-audit"),
   });
 
   const chainRouter = new ChainRouter({
@@ -197,6 +209,7 @@ export async function runOrchestrator(
     leader_name: leaderInstance.name,
     cache_paths: cachePaths,
     merge_validator: mergeValidator,
+    chain_audit: chainAudit,
   });
 
   const leaderWatcher = new LeaderWatcher(
@@ -230,7 +243,7 @@ export async function runOrchestrator(
     logger: logger.child("tui"),
     leader_id: leaderInstance.id,
     leader_name: leaderInstance.name,
-    cache_dir: resolved.cache_dir,
+    projects_root: resolved.projects_root,
   });
   tui.start();
 
@@ -239,7 +252,7 @@ export async function runOrchestrator(
     child_module_path: paths.child_module,
     zk_hosts: resolved.zk.hosts,
     cli_command: resolved.commands.claude_cli,
-    cache_dir: resolved.cache_dir,
+    projects_root: resolved.projects_root,
     leader_instance_id: leaderInstance.id,
     debug: input.debug ?? false,
     logger: logger.child("supervisor"),

@@ -5,6 +5,9 @@
 **Acceptance Criteria**: {{task_criteria}}
 **Spec doc**: {{task_doc_path}}
 
+## Origin
+The user's original requirement is preserved verbatim at `{{original_requirement_path}}`. Read it first whenever the task description feels under-specified — the authoritative intent lives there, not in the description above.
+
 ## Intent
 The Leader needs a blueprint that downstream Builder / Verifier / Reviewer / Accepter can execute in sequence. Produce a self-contained design document — architecture, interfaces, data flow, concrete Build steps with verifiable acceptance criteria — so each downstream link can ground its work in this one file.
 

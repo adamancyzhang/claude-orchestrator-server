@@ -48,7 +48,7 @@ export interface TuiControllerOptions {
   logger: ILogger;
   leader_id: InstanceId;
   leader_name: string;
-  cache_dir: string;
+  projects_root: string;
 }
 
 const SENT_INDICATOR_MS = 2000;
@@ -112,7 +112,7 @@ export class TuiController {
       now_ms: Date.now(),
       leader_name: this.opts.leader_name,
       leader_id: this.opts.leader_id,
-      cache_dir: this.opts.cache_dir,
+      projects_root: this.opts.projects_root,
     });
     this.opts.sink.write(frame);
   }

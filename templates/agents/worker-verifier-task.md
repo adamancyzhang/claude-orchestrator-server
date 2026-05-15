@@ -5,6 +5,9 @@
 **Acceptance Criteria**: {{task_criteria}}
 **Spec doc**: {{task_doc_path}}
 
+## Origin
+The user's original requirement is preserved verbatim at `{{original_requirement_path}}`. Use it as the ground-truth when judging whether Plan↔Build coverage is actually complete — items the Plan omits but the original requirement demands must be flagged as GAP.
+
 ## Upstream Artifacts (read first, in order)
 1. Planner blueprint: `{{upstream_plan_artifact}}`
 2. Builder traceability map: `{{upstream_build_artifact}}`

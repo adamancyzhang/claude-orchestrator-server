@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { extractJson } from "@co/runtime";
 import {
   ChainDefSchema,
@@ -19,11 +20,14 @@ import {
   type Message,
   type MergeDecision,
   type Task,
+  type TaskId,
   type TaskLink,
+  asTaskId,
   cachePaths,
   asChainId,
 } from "@co/contracts";
 import type { CommitInfo } from "./merge-validator.js";
+import type { ChainAudit } from "./chain-audit.js";
 
 export interface IMergeValidator {
   validate(commit: CommitInfo): Promise<MergeDecision>;
@@ -72,6 +76,13 @@ export interface ChainRouterOptions {
    * want to touch git.
    */
   merge_validator?: IMergeValidator;
+  /**
+   * Optional. When provided, ChainRouter persists per-chain audit state
+   * (manifest.json + audit.jsonl + requirement.md) under
+   * `<co_root>/chains/<chain_id>/`. Omitted in unit tests that don't
+   * need on-disk audit trails.
+   */
+  chain_audit?: ChainAudit;
 }
 
 export class ChainRouter {
@@ -148,7 +159,7 @@ export class ChainRouter {
       return;
     }
     if (this.looksLikeChainDef(msg.content)) {
-      await this.handleTaskDefinitions(msg);
+      await this.handleTaskDefinitions(msg, msg.content);
       return;
     }
     await this.handleCompletionReport(msg);
@@ -164,13 +175,19 @@ export class ChainRouter {
   }
 
   private async handleRequirement(msg: Message): Promise<void> {
+    // Capture the user's raw requirement text BEFORE decompose overwrites
+    // msg.content. handleTaskDefinitions persists this verbatim to
+    // chains/<chain_id>/requirement.md and propagates the path to every
+    // worker dispatched in the chain.
+    const originalRequirement = msg.content;
+
     if (this.opts.template_engine.has("worker-decompose.md")) {
       const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
       const resultPath = cachePaths.decomposeResultPath(
         this.opts.cache_paths,
         msg.id,
       );
-      await fs.promises.mkdir(require("node:path").dirname(resultPath), { recursive: true });
+      await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
 
       const prompt = this.opts.template_engine.render("worker-decompose.md", {
         name: this.opts.leader_name,
@@ -187,7 +204,10 @@ export class ChainRouter {
       await this.opts.runner.run({ prompt, log_path: logPath });
       const resultContent = await fs.promises.readFile(resultPath, "utf-8");
       const cleaned = extractJson(resultContent);
-      await this.handleTaskDefinitions({ ...msg, content: cleaned });
+      await this.handleTaskDefinitions(
+        { ...msg, content: cleaned },
+        originalRequirement,
+      );
       return;
     }
 
@@ -208,13 +228,42 @@ export class ChainRouter {
     });
   }
 
-  private async handleTaskDefinitions(msg: Message): Promise<void> {
+  private async handleTaskDefinitions(
+    msg: Message,
+    originalRequirement?: string,
+  ): Promise<void> {
     const parsed = ChainDefSchema.safeParse(JSON.parse(extractJson(msg.content)));
     if (!parsed.success) {
       throw new ValidationError("invalid ChainDef in message", parsed.error);
     }
     const chainDef: ChainDef = parsed.data;
     const linkOrder: Array<TaskLink> = ["plan", "build", "verify", "review", "accept"];
+
+    // Persist requirement.md and open audit before any dispatch fires —
+    // downstream workers read manifest.json to resolve upstream task ids,
+    // and dispatched messages carry the requirement_path verbatim.
+    const requirementPath = cachePaths.chainRequirementPath(
+      this.opts.cache_paths,
+      chainDef.chain_id,
+    );
+    await fs.promises.mkdir(path.dirname(requirementPath), { recursive: true });
+    await fs.promises.writeFile(
+      requirementPath,
+      originalRequirement ?? msg.content,
+      "utf-8",
+    );
+    if (this.opts.chain_audit) {
+      await this.opts.chain_audit.openChain(chainDef.chain_id, {
+        created_at: new Date().toISOString(),
+        leader_id: this.opts.leader_id,
+        leader_name: this.opts.leader_name,
+        requirement_path: requirementPath,
+      });
+      await this.opts.chain_audit.record(chainDef.chain_id, {
+        event: "requirement_received",
+        payload: { requirement_path: requirementPath },
+      });
+    }
 
     // Pre-resolve the first link's worker so we can stamp the pending
     // task with assigned_to at push time — the Leader is the sole
@@ -261,6 +310,20 @@ export class ChainRouter {
 
     if (firstLink && firstTaskId && firstDef) {
       if (firstWorker) {
+        if (this.opts.chain_audit) {
+          await this.opts.chain_audit.setLinkTask(
+            chainDef.chain_id,
+            firstLink,
+            asTaskId(firstTaskId),
+          );
+          await this.opts.chain_audit.record(chainDef.chain_id, {
+            event: "task_dispatch",
+            link: firstLink,
+            worker_id: firstWorker.id,
+            worker_name: firstWorker.name,
+            task_id: asTaskId(firstTaskId),
+          });
+        }
         await this.opts.message_router.send({
           type: "task_dispatch",
           from_instance: this.opts.leader_id,
@@ -274,6 +337,7 @@ export class ChainRouter {
           task_title: firstTitle,
           task_description: firstDef.description,
           task_criteria: firstDef.criteria,
+          original_requirement_path: requirementPath,
         });
         this.rememberDispatch(chainDef.chain_id, firstLink, firstWorker.id);
       } else {
@@ -305,6 +369,19 @@ export class ChainRouter {
       }
     }
 
+    if (this.opts.chain_audit && msg.chain_id) {
+      await this.opts.chain_audit.record(msg.chain_id, {
+        event: "completion_report",
+        link: msg.link ?? null,
+        worker_id: msg.from_instance,
+        worker_name: msg.from_name,
+        task_id: (msg.task_id as TaskId | null) ?? null,
+        payload: { decision: decision.decision },
+      });
+    }
+
+    const requirementPath = await this.resolveRequirementPath(msg.chain_id ?? null);
+
     switch (decision.decision) {
       case "activate_next": {
         if (!msg.chain_id) break;
@@ -320,6 +397,20 @@ export class ChainRouter {
           // before claiming, so without this assign() the dispatched
           // worker would refuse the task.
           await this.opts.task_queue.assign(nextTask.id, worker.id, worker.name);
+          if (this.opts.chain_audit) {
+            await this.opts.chain_audit.setLinkTask(
+              msg.chain_id,
+              nextLink,
+              nextTask.id,
+            );
+            await this.opts.chain_audit.record(msg.chain_id, {
+              event: "task_dispatch",
+              link: nextLink,
+              worker_id: worker.id,
+              worker_name: worker.name,
+              task_id: nextTask.id,
+            });
+          }
           await this.opts.message_router.send({
             type: "task_dispatch",
             from_instance: this.opts.leader_id,
@@ -334,6 +425,7 @@ export class ChainRouter {
             task_description: nextTask.description,
             task_criteria: nextTask.criteria,
             task_doc_path: nextTask.task_doc_path,
+            original_requirement_path: requirementPath,
           });
           this.rememberDispatch(msg.chain_id, nextLink, worker.id);
         }
@@ -341,6 +433,14 @@ export class ChainRouter {
       }
       case "feedback": {
         const targetId = this.resolveFeedbackTarget(msg, decision.feedback_target ?? null);
+        if (this.opts.chain_audit && msg.chain_id) {
+          await this.opts.chain_audit.record(msg.chain_id, {
+            event: "feedback_sent",
+            link: msg.link ?? null,
+            worker_id: targetId,
+            payload: { feedback_to_worker: decision.feedback_to_worker },
+          });
+        }
         await this.opts.message_router.send({
           type: "direct",
           from_instance: this.opts.leader_id,
@@ -350,12 +450,16 @@ export class ChainRouter {
           content: decision.feedback_to_worker,
           link: msg.link,
           chain_id: msg.chain_id,
+          original_requirement_path: requirementPath,
         });
         break;
       }
       case "close_chain": {
         if (msg.chain_id) {
           await this.runMergeValidation(msg.chain_id);
+          if (this.opts.chain_audit) {
+            await this.opts.chain_audit.closeChain(msg.chain_id, "completed");
+          }
           this.emitChainClosed(msg.chain_id);
           this.forgetChain(msg.chain_id);
         }
@@ -363,12 +467,25 @@ export class ChainRouter {
       }
       case "reject": {
         if (msg.chain_id) {
+          if (this.opts.chain_audit) {
+            await this.opts.chain_audit.closeChain(msg.chain_id, "aborted", {
+              reason: "evaluator_reject",
+            });
+          }
           this.emitChainClosed(msg.chain_id);
           this.forgetChain(msg.chain_id);
         }
         break;
       }
     }
+  }
+
+  private async resolveRequirementPath(
+    chainId: ChainId | null,
+  ): Promise<string | null> {
+    if (!chainId || !this.opts.chain_audit) return null;
+    const manifest = await this.opts.chain_audit.readManifest(chainId);
+    return manifest?.requirement_path ?? null;
   }
 
   /**

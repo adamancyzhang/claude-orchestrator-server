@@ -5,6 +5,9 @@
 **Acceptance Criteria**: {{task_criteria}}
 **Spec doc**: {{task_doc_path}}
 
+## Origin
+The user's original requirement is preserved verbatim at `{{original_requirement_path}}`. Anchor your ACCEPT/CONCERN/REJECT judgments to whether the original intent is satisfied — not merely whether each upstream link agrees with the one before it.
+
 ## Upstream Artifacts (read first, in order)
 1. Planner blueprint: `{{upstream_plan_artifact}}`
 2. Builder traceability map: `{{upstream_build_artifact}}`

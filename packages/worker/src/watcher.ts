@@ -99,19 +99,15 @@ export class WorkerWatcher {
       (msg.task_id as TaskId | null) ??
       asTaskId(`adhoc-${msg.id || Date.now().toString(36)}`);
     const isChainLink = link !== null && CHAIN_LINKS.includes(link as TaskLink);
-    const chainArtifacts = this.collectChainArtifacts(msg, link);
-    const resultPath =
-      isChainLink && msg.chain_id
-        ? cachePaths.chainArtifactPath(
-            this.opts.cache_paths,
-            msg.chain_id as ChainId,
-            link as TaskLink,
-          )
-        : cachePaths.taskResultPath(this.opts.cache_paths, taskId);
+    const chainArtifacts = await this.collectChainArtifacts(msg, link);
+    const resultPath = cachePaths.taskResultPath(
+      this.opts.cache_paths,
+      taskId,
+    );
     const logPath = cachePaths.taskLogPath(
       this.opts.cache_paths,
       taskId,
-      new Date().toISOString(),
+      new Date().toISOString().replace(/[:.]/g, "-"),
     );
 
     // Leader-directed dispatch: the task must be pinned to this worker
@@ -156,7 +152,13 @@ export class WorkerWatcher {
     const localPrefix = isChainLink
       ? LINK_TO_LOCAL_PREFIX[link as TaskLink]
       : (link as string | null) ?? "result";
-    const localDocPath = `${this.opts.worktree_path}/.claude-orchestrator/docs/${this.opts.worker_name}/${dateStamp}/${localPrefix}-${uniqueKey}.md`;
+    const localDocPath = cachePaths.workerLocalDocPath(
+      this.opts.cache_paths,
+      this.opts.worker_name,
+      dateStamp,
+      localPrefix,
+      uniqueKey,
+    );
 
     await this.opts.hooks.fire({
       type: "worker_message_start",
@@ -189,6 +191,7 @@ export class WorkerWatcher {
         work_dir: this.opts.worktree_path,
         time: new Date().toISOString(),
         content: msg.content,
+        original_requirement_path: msg.original_requirement_path ?? "",
         upstream_plan_artifact: chainArtifacts.plan,
         upstream_build_artifact: chainArtifacts.build,
         upstream_verify_artifact: chainArtifacts.verify,
@@ -347,42 +350,47 @@ export class WorkerWatcher {
   }
 
   /**
-   * Compute the cache_dir-shared chain artifact paths for every link
-   * upstream of the current one. Empty string when no chain_id is set
-   * (ad-hoc / decompose flows) so template rendering remains stable.
+   * Resolve upstream artifact paths for the current link by reading the
+   * chain manifest. Each upstream link's accepted task_id maps to
+   * `tasks/<task_id>/result.md`. Empty string when no chain_id is set
+   * (ad-hoc / decompose flows) or when the manifest is missing the entry
+   * — template rendering remains stable.
    */
-  private collectChainArtifacts(
+  private async collectChainArtifacts(
     msg: Message,
     link: TaskLink | "decompose" | null,
-  ): {
+  ): Promise<{
     plan: string;
     build: string;
     verify: string;
     review: string;
-  } {
+  }> {
     const empty = { plan: "", build: "", verify: "", review: "" };
     if (!msg.chain_id || !link || link === "decompose") return empty;
     const chainId = msg.chain_id as ChainId;
-    const plan = cachePaths.chainArtifactPath(
-      this.opts.cache_paths,
-      chainId,
-      "plan",
-    );
-    const build = cachePaths.chainArtifactPath(
-      this.opts.cache_paths,
-      chainId,
-      "build",
-    );
-    const verify = cachePaths.chainArtifactPath(
-      this.opts.cache_paths,
-      chainId,
-      "verify",
-    );
-    const review = cachePaths.chainArtifactPath(
-      this.opts.cache_paths,
-      chainId,
-      "review",
-    );
+    let manifest: { link_tasks?: Record<string, string | null> } | null = null;
+    try {
+      const manifestPath = cachePaths.chainManifestPath(
+        this.opts.cache_paths,
+        chainId,
+      );
+      manifest = JSON.parse(await fs.promises.readFile(manifestPath, "utf-8"));
+    } catch {
+      return empty;
+    }
+    const linkTasks = manifest?.link_tasks ?? {};
+    const lookup = (k: TaskLink): string => {
+      const tid = linkTasks[k];
+      if (!tid) return "";
+      return cachePaths.taskResultPath(
+        this.opts.cache_paths,
+        asTaskId(tid),
+      );
+    };
+    const plan = lookup("plan");
+    const build = lookup("build");
+    const verify = lookup("verify");
+    const review = lookup("review");
     switch (link as TaskLink) {
       case "plan":
         return empty;

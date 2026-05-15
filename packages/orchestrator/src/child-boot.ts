@@ -112,7 +112,7 @@ async function boot(config: ChildConfig): Promise<void> {
   );
 
   const cachePathOpts = {
-    cache_dir: config.cache_dir,
+    projects_root: config.projects_root,
     leader_instance_id: asInstanceId(config.leader_instance_id),
   };
 

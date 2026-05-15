@@ -9,7 +9,7 @@ export interface ChildSupervisorOptions {
   child_module_path: string;
   zk_hosts: string;
   cli_command: string;
-  cache_dir: string;
+  projects_root: string;
   leader_instance_id: string;
   debug: boolean;
   logger: ILogger;
@@ -54,7 +54,7 @@ export class ChildSupervisor {
       branch: cfg.branch,
       zk_hosts: this.opts.zk_hosts,
       cli_command: this.opts.cli_command,
-      cache_dir: this.opts.cache_dir,
+      projects_root: this.opts.projects_root,
       leader_instance_id: this.opts.leader_instance_id,
       debug: this.opts.debug,
     };

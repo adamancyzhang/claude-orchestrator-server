@@ -55,39 +55,56 @@ describe("zkPaths instance / task / message", () => {
 
 describe("cachePaths", () => {
   const opts = {
-    cache_dir: "/tmp/cache",
+    projects_root: "/tmp/projects",
     leader_instance_id: asInstanceId("leader1"),
   };
-  it("composes task / log / result / eval / commit / message paths", () => {
-    expect(cachePaths.taskDocPath(opts, 1)).toBe(
-      "/tmp/cache/leader1/tasks/task-1.md",
+  it("composes task / message / chain / docs paths under the per-leader root", () => {
+    // 4 顶层语义目录：chains/ tasks/ messages/ docs/。所有 per-task 产物
+    // 归并到 tasks/<task_id>/，per-message 产物归并到 messages/<message_id>/，
+    // 链审计三件套和 link artifacts 都在 chains/<chain_id>/。
+    expect(cachePaths.coRootDir(opts)).toBe("/tmp/projects/leader1");
+
+    // tasks/<task_id>/ —— definition + all per-task artifacts in one folder
+    expect(cachePaths.taskDefinitionPath(opts, asTaskId("task-1"))).toBe(
+      "/tmp/projects/leader1/tasks/task-1/definition.md",
     );
-    // Cache path helpers do NOT add an extra "task-" prefix — task ids from
-    // task_queue.push already have it (e.g. "task-0000000001"). This avoids
-    // the historical "task-task-..." double-prefix bug.
     expect(cachePaths.taskLogPath(opts, asTaskId("task-1"), "ts")).toBe(
-      "/tmp/cache/leader1/logs/task-1-ts.log",
+      "/tmp/projects/leader1/tasks/task-1/exec-ts.log",
     );
     expect(cachePaths.taskResultPath(opts, asTaskId("task-1"))).toBe(
-      "/tmp/cache/leader1/results/task-1.md",
+      "/tmp/projects/leader1/tasks/task-1/result.md",
     );
     expect(cachePaths.evalLogPath(opts, asTaskId("task-1"), 0)).toBe(
-      "/tmp/cache/leader1/evals/task-1-attempt-0.log",
+      "/tmp/projects/leader1/tasks/task-1/eval-0.log",
     );
     expect(cachePaths.commitLogPath(opts, asTaskId("task-1"))).toBe(
-      "/tmp/cache/leader1/commits/task-1.log",
+      "/tmp/projects/leader1/tasks/task-1/commit.log",
     );
+
+    // messages/<message_id>/ —— inbound log + (optionally) decompose output
     expect(cachePaths.messageLogPath(opts, asMessageId("m-1"))).toBe(
-      "/tmp/cache/leader1/messages/m-1.log",
+      "/tmp/projects/leader1/messages/m-1/inbound.log",
     );
     expect(cachePaths.decomposeResultPath(opts, asMessageId("msg-1"))).toBe(
-      "/tmp/cache/leader1/decompose/msg-1.md",
+      "/tmp/projects/leader1/messages/msg-1/decompose.md",
     );
+
+    // chains/<chain_id>/ —— audit triple. The chainArtifactPath helper is
+    // intentionally removed; downstream link workers resolve upstream task
+    // outputs via manifest.link_tasks[link] → tasks/<task_id>/result.md.
+    expect(cachePaths.chainRequirementPath(opts, asChainId("chain-x"))).toBe(
+      "/tmp/projects/leader1/chains/chain-x/requirement.md",
+    );
+    expect(cachePaths.chainManifestPath(opts, asChainId("chain-x"))).toBe(
+      "/tmp/projects/leader1/chains/chain-x/manifest.json",
+    );
+    expect(cachePaths.chainAuditPath(opts, asChainId("chain-x"))).toBe(
+      "/tmp/projects/leader1/chains/chain-x/audit.jsonl",
+    );
+
+    // docs/<worker>/<date>/<prefix>-<uniqueKey>.md — worker local copy
     expect(
-      cachePaths.chainArtifactPath(opts, asChainId("chain-x"), "plan"),
-    ).toBe("/tmp/cache/leader1/chains/chain-x/plan.md");
-    expect(
-      cachePaths.chainArtifactPath(opts, asChainId("chain-x"), "build"),
-    ).toBe("/tmp/cache/leader1/chains/chain-x/build.md");
+      cachePaths.workerLocalDocPath(opts, "alpha", "2026-05-15", "plan", "chain-x"),
+    ).toBe("/tmp/projects/leader1/docs/alpha/2026-05-15/plan-chain-x.md");
   });
 });

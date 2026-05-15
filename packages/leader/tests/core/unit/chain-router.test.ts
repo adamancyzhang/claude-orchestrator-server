@@ -263,7 +263,7 @@ function setup(instances: Instance[] = []): {
     leader_id: LEADER_ID,
     leader_name: "Leader",
     cache_paths: {
-      cache_dir: "/tmp/co-test",
+      projects_root: "/tmp/co-test",
       leader_instance_id: LEADER_ID,
     },
   });
@@ -688,7 +688,7 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
       leader_id: LEADER_ID,
       leader_name: "Leader",
       cache_paths: {
-        cache_dir: "/tmp/co-test",
+        projects_root: "/tmp/co-test",
         leader_instance_id: LEADER_ID,
       },
       merge_validator: mergeValidator,
@@ -775,7 +775,7 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
       leader_id: LEADER_ID,
       leader_name: "Leader",
       cache_paths: {
-        cache_dir: "/tmp/co-test",
+        projects_root: "/tmp/co-test",
         leader_instance_id: LEADER_ID,
       },
       merge_validator: mergeValidator,
