@@ -22,6 +22,18 @@ export interface ITaskQueue {
    * or it was completed).
    */
   claimById(taskId: TaskId, claimer: InstanceId): Promise<Task | null>;
+  /**
+   * Set `assigned_to` / `assigned_to_name` on a still-pending task without
+   * transitioning it to claimed. Used by the Leader to pin a pending task
+   * to a specific Worker just before sending the corresponding dispatch
+   * message. Returns the updated Task, or null when the task is no longer
+   * pending (already claimed / completed).
+   */
+  assign(
+    taskId: TaskId,
+    instanceId: InstanceId,
+    instanceName: string,
+  ): Promise<Task | null>;
   complete(
     taskId: TaskId,
     result: string,

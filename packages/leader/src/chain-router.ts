@@ -215,14 +215,29 @@ export class ChainRouter {
     }
     const chainDef: ChainDef = parsed.data;
     const linkOrder: Array<TaskLink> = ["plan", "build", "verify", "review", "accept"];
+
+    // Pre-resolve the first link's worker so we can stamp the pending
+    // task with assigned_to at push time — the Leader is the sole
+    // dispatcher; subsequent links are pinned later via task_queue.assign()
+    // in handleCompletionReport (activate_next).
     let firstLink: TaskLink | null = null;
+    for (const link of linkOrder) {
+      if (chainDef.tasks[link]) {
+        firstLink = link;
+        break;
+      }
+    }
+    const firstWorker = firstLink
+      ? await this.findIdleWorkerByRole(LINK_TO_ROLE[firstLink])
+      : null;
+
     let firstTaskId: string | null = null;
     let firstTitle = "";
-
     let firstDef: ChainDef["tasks"][TaskLink] | null = null;
     for (const link of linkOrder) {
       const def = chainDef.tasks[link];
       if (!def) continue;
+      const isFirst = link === firstLink;
       const task = await this.opts.task_queue.push({
         title: def.title,
         description: def.description,
@@ -232,9 +247,10 @@ export class ChainRouter {
         chain_id: chainDef.chain_id,
         created_by: this.opts.leader_id,
         created_by_name: this.opts.leader_name,
+        assigned_to: isFirst && firstWorker ? firstWorker.id : null,
+        assigned_to_name: isFirst && firstWorker ? firstWorker.name : null,
       });
-      if (firstLink === null) {
-        firstLink = link;
+      if (isFirst) {
         firstTaskId = task.id;
         firstTitle = def.title;
         firstDef = def;
@@ -244,14 +260,13 @@ export class ChainRouter {
     this.opts.bus.emit({ type: "chain_activated", chain_id: chainDef.chain_id });
 
     if (firstLink && firstTaskId && firstDef) {
-      const worker = await this.findIdleWorkerByRole(LINK_TO_ROLE[firstLink]);
-      if (worker) {
+      if (firstWorker) {
         await this.opts.message_router.send({
           type: "task_dispatch",
           from_instance: this.opts.leader_id,
           from_name: this.opts.leader_name,
           from_role: "leader",
-          to_instance: worker.id,
+          to_instance: firstWorker.id,
           content: firstTitle,
           link: firstLink,
           chain_id: chainDef.chain_id,
@@ -260,7 +275,7 @@ export class ChainRouter {
           task_description: firstDef.description,
           task_criteria: firstDef.criteria,
         });
-        this.rememberDispatch(chainDef.chain_id, firstLink, worker.id);
+        this.rememberDispatch(chainDef.chain_id, firstLink, firstWorker.id);
       } else {
         this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink]} available — task queued`);
       }
@@ -300,6 +315,11 @@ export class ChainRouter {
         );
         const worker = await this.findIdleWorkerByRole(LINK_TO_ROLE[nextLink]);
         if (worker) {
+          // Pin the pending task to this worker before sending the
+          // dispatch — the Worker's watcher validates assigned_to == self
+          // before claiming, so without this assign() the dispatched
+          // worker would refuse the task.
+          await this.opts.task_queue.assign(nextTask.id, worker.id, worker.name);
           await this.opts.message_router.send({
             type: "task_dispatch",
             from_instance: this.opts.leader_id,

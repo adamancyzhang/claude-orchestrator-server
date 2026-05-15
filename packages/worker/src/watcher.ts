@@ -21,14 +21,35 @@ import type { SelfEvaluator } from "./evaluator.js";
 import { CHAIN_LINKS } from "./evaluator.js";
 import type { CommitChecker, CommitResult } from "./commit-checker.js";
 
-const LINK_TO_TEMPLATE: Record<TaskLink | "decompose", string> = {
-  plan: "worker-plan.md",
-  build: "worker-build.md",
-  verify: "worker-verify.md",
-  review: "worker-review.md",
-  accept: "worker-accept.md",
+/**
+ * Per-link user-message template. The system prompt (identity + standing
+ * role description) is loaded once at boot in child-boot.ts; these
+ * templates only carry the per-task body — task metadata, upstream
+ * artifact paths, output contract, retry hint.
+ */
+const LINK_TO_TASK_TEMPLATE: Record<TaskLink | "decompose", string> = {
+  plan: "worker-planner-task.md",
+  build: "worker-builder-task.md",
+  verify: "worker-verifier-task.md",
+  review: "worker-reviewer-task.md",
+  accept: "worker-accepter-task.md",
   decompose: "worker-decompose.md",
 };
+
+const LINK_TO_LOCAL_PREFIX: Record<TaskLink, string> = {
+  plan: "plan",
+  build: "build",
+  verify: "verify",
+  review: "review",
+  accept: "accept",
+};
+
+const MAX_GENERATION_RETRIES = 3;
+
+interface GenerationFailure {
+  kind: "missing" | "empty" | "exit_code";
+  detail: string;
+}
 
 export interface WorkerWatcherOptions {
   instance_id: InstanceId;
@@ -77,10 +98,6 @@ export class WorkerWatcher {
     const taskId =
       (msg.task_id as TaskId | null) ??
       asTaskId(`adhoc-${msg.id || Date.now().toString(36)}`);
-    // For chain links with a chain_id, route the Worker's output to the
-    // chain-shared cache location so downstream Workers (in different
-    // worktrees) can read it. Ad-hoc / decompose tasks keep the per-task
-    // result path.
     const isChainLink = link !== null && CHAIN_LINKS.includes(link as TaskLink);
     const chainArtifacts = this.collectChainArtifacts(msg, link);
     const resultPath =
@@ -97,13 +114,27 @@ export class WorkerWatcher {
       new Date().toISOString(),
     );
 
-    // Claim the task in ZK so the cluster sees this worker as its owner.
-    // Skipped for ad-hoc / decompose messages (no real pending node) and
-    // tolerated when the pending node is gone (e.g. resumed dispatch).
+    // Leader-directed dispatch: the task must be pinned to this worker
+    // (assigned_to == self) before we claim it. If a different message
+    // wakes us up for a task we are not assigned to, skip — the
+    // legitimate assignee will pick it up.
     const realTaskId =
       isChainLink && msg.task_id ? (msg.task_id as TaskId) : null;
     const taskStart = Date.now();
     if (realTaskId) {
+      const pending = await this.opts.task_queue.getPending(realTaskId);
+      if (pending && pending.assigned_to && pending.assigned_to !== this.opts.instance_id) {
+        this.opts.logger.warn(
+          `task assigned to another worker, dismissing dispatch`,
+          {
+            task_id: realTaskId,
+            assigned_to: pending.assigned_to,
+            self: this.opts.instance_id,
+          },
+        );
+        await this.opts.message_router.dismiss(this.opts.instance_id, msg.id);
+        return;
+      }
       const claimed = await this.opts.task_queue.claimById(
         realTaskId,
         this.opts.instance_id,
@@ -116,30 +147,16 @@ export class WorkerWatcher {
       }
     }
 
-    let prompt = msg.content;
-    if (link) {
-      const tplName = LINK_TO_TEMPLATE[link];
-      if (this.opts.template_engine.has(tplName)) {
-        prompt = this.opts.template_engine.render(tplName, {
-          name: this.opts.worker_name,
-          role: this.opts.worker_role,
-          task_title: msg.task_title ?? "",
-          task_description: msg.task_description ?? msg.content,
-          task_criteria: msg.task_criteria ?? "",
-          task_doc_path: msg.task_doc_path ?? "",
-          result_path: resultPath,
-          work_dir: this.opts.worktree_path,
-          time: new Date().toISOString(),
-          content: msg.content,
-          // Cross-worktree artifact paths — Workers in other worktrees
-          // wrote here; downstream link templates reference these vars.
-          upstream_plan_artifact: chainArtifacts.plan,
-          upstream_build_artifact: chainArtifacts.build,
-          upstream_verify_artifact: chainArtifacts.verify,
-          upstream_review_artifact: chainArtifacts.review,
-        });
-      }
-    }
+    // uniqueKey = chain_id when available, else the task id. Drives both
+    // the user-message template variable and the in-worktree local copy
+    // filename. Chain-shared cache path stays per-(chain,link) folder.
+    const uniqueKey: string =
+      (msg.chain_id as string | null) ?? (taskId as unknown as string);
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const localPrefix = isChainLink
+      ? LINK_TO_LOCAL_PREFIX[link as TaskLink]
+      : (link as string | null) ?? "result";
+    const localDocPath = `${this.opts.worktree_path}/.claude-orchestrator/docs/${this.opts.worker_name}/${dateStamp}/${localPrefix}-${uniqueKey}.md`;
 
     await this.opts.hooks.fire({
       type: "worker_message_start",
@@ -154,13 +171,83 @@ export class WorkerWatcher {
       },
     });
 
-    const result = await this.opts.runner.run({
-      prompt,
+    const renderPrompt = (retryHint: string): string => {
+      if (!link) return msg.content;
+      const tplName = LINK_TO_TASK_TEMPLATE[link];
+      if (!this.opts.template_engine.has(tplName)) return msg.content;
+      return this.opts.template_engine.render(tplName, {
+        name: this.opts.worker_name,
+        role: this.opts.worker_role,
+        date: dateStamp,
+        unique_key: uniqueKey,
+        task_title: msg.task_title ?? "",
+        task_description: msg.task_description ?? msg.content,
+        task_criteria: msg.task_criteria ?? "",
+        task_doc_path: msg.task_doc_path ?? "",
+        result_path: resultPath,
+        local_doc_path: localDocPath,
+        work_dir: this.opts.worktree_path,
+        time: new Date().toISOString(),
+        content: msg.content,
+        upstream_plan_artifact: chainArtifacts.plan,
+        upstream_build_artifact: chainArtifacts.build,
+        upstream_verify_artifact: chainArtifacts.verify,
+        upstream_review_artifact: chainArtifacts.review,
+        retry_hint: retryHint,
+      });
+    };
+
+    const validateOutput = async (
+      runResult: { exit_code: number },
+    ): Promise<GenerationFailure | null> => {
+      if (runResult.exit_code !== 0) {
+        return { kind: "exit_code", detail: `exit_code=${runResult.exit_code}` };
+      }
+      if (!isChainLink) return null;
+      try {
+        const stat = await fs.promises.stat(resultPath);
+        if (stat.size === 0) {
+          return { kind: "empty", detail: `${resultPath} is 0 bytes` };
+        }
+        const content = await fs.promises.readFile(resultPath, "utf-8");
+        if (!content.trim()) {
+          return { kind: "empty", detail: `${resultPath} contains only whitespace` };
+        }
+        return null;
+      } catch {
+        return { kind: "missing", detail: `${resultPath} does not exist` };
+      }
+    };
+
+    let result: { exit_code: number; session_id: SessionId | null; log_path: string } = {
+      exit_code: -1,
+      session_id: null,
       log_path: logPath,
-      system_prompt: this.opts.identity_system_prompt,
-      cwd: this.opts.worktree_path,
-      quiet: true,
-    });
+    };
+    let retryHint = "";
+    let failure: GenerationFailure | null = null;
+    const maxAttempts = isChainLink ? MAX_GENERATION_RETRIES : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const prompt = renderPrompt(retryHint);
+      result = await this.opts.runner.run({
+        prompt,
+        log_path: logPath,
+        system_prompt: this.opts.identity_system_prompt,
+        cwd: this.opts.worktree_path,
+        quiet: true,
+      });
+      failure = await validateOutput(result);
+      if (!failure) break;
+      this.opts.logger.warn("worker output failed validation", {
+        attempt,
+        max: maxAttempts,
+        kind: failure.kind,
+        detail: failure.detail,
+      });
+      if (attempt < maxAttempts) {
+        retryHint = `[RETRY ${attempt + 1}/${maxAttempts}] Previous attempt failed: ${failure.detail}. You MUST write your output to exactly: ${resultPath}. Use the Write tool, then immediately Read it back to confirm the file exists and is non-empty.`;
+      }
+    }
 
     await this.opts.hooks.fire({
       type: "worker_message_end",
@@ -175,6 +262,37 @@ export class WorkerWatcher {
         exit_code: result.exit_code,
       },
     });
+
+    if (failure) {
+      this.opts.logger.error(
+        `worker output validation failed after ${maxAttempts} attempts — reporting to Leader`,
+        { task_id: taskId, kind: failure.kind, detail: failure.detail },
+      );
+      await this.opts.message_router.send({
+        type: "direct",
+        from_instance: this.opts.instance_id,
+        from_name: this.opts.worker_name,
+        from_role: this.opts.worker_role,
+        to_instance: this.opts.leader_id,
+        content: `worker output validation failed after ${maxAttempts} attempts: ${failure.detail}`,
+        link: (link as TaskLink) ?? null,
+        chain_id: msg.chain_id ?? null,
+        task_id: taskId,
+        result_path: resultPath,
+      });
+      if (realTaskId) {
+        try {
+          await this.opts.task_queue.fail(realTaskId, failure.detail);
+        } catch (err) {
+          this.opts.logger.warn("task fail() marking errored", {
+            task_id: realTaskId,
+            error: String(err),
+          });
+        }
+      }
+      await this.opts.message_router.dismiss(this.opts.instance_id, msg.id);
+      return;
+    }
 
     let commit: CommitResult | null = null;
     if (link && CHAIN_LINKS.includes(link as TaskLink)) {

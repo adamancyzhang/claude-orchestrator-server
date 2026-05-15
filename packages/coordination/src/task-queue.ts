@@ -153,6 +153,28 @@ export class TaskQueue implements ITaskQueue {
     return null;
   }
 
+  async assign(
+    taskId: TaskId,
+    instanceId: InstanceId,
+    instanceName: string,
+  ): Promise<Task | null> {
+    const data = await this.zk.getData(
+      zkPaths.taskPending(taskId, this.paths),
+    );
+    if (!data) return null;
+    const raw = decode<Record<string, unknown>>(data.data);
+    const updated = {
+      ...raw,
+      assigned_to: instanceId,
+      assigned_to_name: instanceName,
+    };
+    await this.zk.setData(
+      zkPaths.taskPending(taskId, this.paths),
+      encode(updated),
+    );
+    return parseTask({ ...updated, id: taskId });
+  }
+
   async claimById(taskId: TaskId, claimer: InstanceId): Promise<Task | null> {
     const data = await this.zk.getData(
       zkPaths.taskPending(taskId, this.paths),

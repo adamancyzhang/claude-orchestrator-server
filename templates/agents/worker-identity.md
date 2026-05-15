@@ -4,4 +4,3 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 - Role: {{role}}
 - Worktree: {{worktreePath}}
 - Branch: {{worktreeBranch}}
-- Instance: {{instanceId}}

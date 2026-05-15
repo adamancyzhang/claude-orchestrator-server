@@ -82,16 +82,32 @@ async function boot(config: ChildConfig): Promise<void> {
   });
 
   const runner = new ClaudeRunner(config.cli_command, logger);
+
+  // System prompt = identity card + (per-role) standing responsibility
+  // description. Both are fixed for this Worker's process lifetime so
+  // claude-cli prompt caching can keep them hot across tasks.
+  const ROLE_TO_SYSTEM_TEMPLATE: Record<string, string> = {
+    planner: "worker-planner.md",
+    builder: "worker-builder.md",
+    verifier: "worker-verifier.md",
+    reviewer: "worker-reviewer.md",
+    accepter: "worker-accepter.md",
+  };
+  const identityTpl = templateEngine.has("worker-identity.md")
+    ? templateEngine.load("worker-identity.md")
+    : "You are {{name}}, a {{role}}.";
+  const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[config.role];
+  const roleTpl =
+    roleTplName && templateEngine.has(roleTplName)
+      ? templateEngine.load(roleTplName)
+      : "";
   const identitySystemPrompt = ClaudeRunner.buildIdentityPrompt(
-    templateEngine.has("worker-identity.md")
-      ? templateEngine.load("worker-identity.md")
-      : "You are {{name}}, a {{role}}.",
+    `${identityTpl}\n\n${roleTpl}`,
     {
       name: config.name,
       role: config.role,
       worktree_path: config.worktree_path,
       worktree_branch: config.branch,
-      instance_id: config.instance_id,
     },
   );
 
