@@ -3,7 +3,6 @@
 **Title**: {{task_title}}
 **Description**: {{task_description}}
 **Acceptance Criteria**: {{task_criteria}}
-**Spec doc**: {{task_doc_path}}
 
 ## Origin
 The user's original requirement is preserved verbatim at `{{original_requirement_path}}`. Read it first whenever the task description feels under-specified — the authoritative intent lives there, not in the description above.

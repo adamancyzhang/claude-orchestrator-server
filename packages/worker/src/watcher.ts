@@ -99,6 +99,44 @@ export class WorkerWatcher {
       (msg.task_id as TaskId | null) ??
       asTaskId(`adhoc-${msg.id || Date.now().toString(36)}`);
     const isChainLink = link !== null && CHAIN_LINKS.includes(link as TaskLink);
+    const realTaskId =
+      isChainLink && msg.task_id ? (msg.task_id as TaskId) : null;
+
+    // Mark this worker busy in ZK before doing anything observable. The
+    // idle restore lives in the outer finally block so it runs even on
+    // early returns, exceptions, or dispatch dismissals. Errors are
+    // swallowed — heartbeat updates must never crash the watch loop.
+    await this.opts.registry
+      .heartbeat(this.opts.instance_id, {
+        status: "busy",
+        current_task_id: realTaskId,
+      })
+      .catch((err) => {
+        this.opts.logger.warn("heartbeat busy failed", { error: String(err) });
+      });
+
+    try {
+      await this.processTask({ msg, link, taskId, realTaskId, isChainLink });
+    } finally {
+      await this.opts.registry
+        .heartbeat(this.opts.instance_id, {
+          status: "idle",
+          current_task_id: null,
+        })
+        .catch((err) => {
+          this.opts.logger.warn("heartbeat idle failed", { error: String(err) });
+        });
+    }
+  }
+
+  private async processTask(args: {
+    msg: Message;
+    link: TaskLink | "decompose" | null;
+    taskId: TaskId;
+    realTaskId: TaskId | null;
+    isChainLink: boolean;
+  }): Promise<void> {
+    const { msg, link, taskId, realTaskId, isChainLink } = args;
     const chainArtifacts = await this.collectChainArtifacts(msg, link);
     const resultPath = cachePaths.taskResultPath(
       this.opts.cache_paths,
@@ -114,8 +152,6 @@ export class WorkerWatcher {
     // (assigned_to == self) before we claim it. If a different message
     // wakes us up for a task we are not assigned to, skip — the
     // legitimate assignee will pick it up.
-    const realTaskId =
-      isChainLink && msg.task_id ? (msg.task_id as TaskId) : null;
     const taskStart = Date.now();
     if (realTaskId) {
       const pending = await this.opts.task_queue.getPending(realTaskId);
@@ -140,6 +176,17 @@ export class WorkerWatcher {
           `task already claimed/completed, proceeding without ZK claim`,
           { task_id: realTaskId },
         );
+      } else {
+        await this.opts.hooks.fire({
+          type: "task_claimed",
+          env: {
+            CO_WORKER_NAME: this.opts.worker_name,
+            CO_WORKER_ID: this.opts.instance_id,
+            CO_TASK_ID: realTaskId,
+            CO_LINK: (link as TaskLink) ?? "",
+            CO_CHAIN_ID: (msg.chain_id as ChainId) ?? "",
+          },
+        });
       }
     }
 
@@ -185,7 +232,6 @@ export class WorkerWatcher {
         task_title: msg.task_title ?? "",
         task_description: msg.task_description ?? msg.content,
         task_criteria: msg.task_criteria ?? "",
-        task_doc_path: msg.task_doc_path ?? "",
         result_path: resultPath,
         local_doc_path: localDocPath,
         work_dir: this.opts.worktree_path,
@@ -335,6 +381,17 @@ export class WorkerWatcher {
           this.opts.worker_name,
           durationSeconds,
         );
+        await this.opts.hooks.fire({
+          type: "task_completed",
+          env: {
+            CO_WORKER_NAME: this.opts.worker_name,
+            CO_WORKER_ID: this.opts.instance_id,
+            CO_TASK_ID: realTaskId,
+            CO_LINK: (link as TaskLink) ?? "",
+            CO_CHAIN_ID: (msg.chain_id as ChainId) ?? "",
+            duration_seconds: durationSeconds,
+          },
+        });
       } catch (err) {
         this.opts.logger.warn("task completion failed", {
           task_id: realTaskId,
@@ -421,7 +478,6 @@ export class WorkerWatcher {
         task_title: msg.task_title ?? "",
         task_description: msg.task_description ?? "",
         task_criteria: msg.task_criteria ?? "",
-        task_doc_path: msg.task_doc_path ?? "",
         content: msg.content,
       },
       resume_session_id: resumeSessionId,

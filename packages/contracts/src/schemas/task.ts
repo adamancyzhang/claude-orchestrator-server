@@ -24,12 +24,8 @@ export const TaskSchema = z.object({
   status: TaskStatusSchema.default("pending"),
   link: TaskLinkSchema.nullable().default(null),
   chain_id: z.string().transform(asChainId).nullable().default(null),
-  task_doc_path: z.string().nullable().default(null),
   result_path: z.string().nullable().default(null),
   retry_count: z.number().int().min(0).default(0),
-  depends_on: z.array(z.string().transform(asTaskId)).default([]),
-  blocked_by: z.array(z.string().transform(asTaskId)).default([]),
-  blocked_reason: z.string().nullable().default(null),
   fail_reason: z.string().nullable().default(null),
   created_by: z.string().transform(asInstanceId).nullable().default(null),
   created_by_name: z.string().default(""),
@@ -53,10 +49,8 @@ export interface CreateTaskInput {
   priority?: TaskPriority;
   link?: TaskLink | null;
   chain_id?: ChainId | null;
-  task_doc_path?: string | null;
   result_path?: string | null;
-  depends_on?: readonly TaskId[];
-  blocked_by?: readonly TaskId[];
+  retry_count?: number;
   created_by?: InstanceId | null;
   created_by_name?: string;
   assigned_to?: InstanceId | null;

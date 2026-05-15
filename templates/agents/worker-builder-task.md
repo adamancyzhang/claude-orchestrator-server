@@ -3,7 +3,6 @@
 **Title**: {{task_title}}
 **Description**: {{task_description}}
 **Acceptance Criteria**: {{task_criteria}}
-**Spec doc**: {{task_doc_path}}
 
 ## Origin
 The user's original requirement is preserved verbatim at `{{original_requirement_path}}`. Cross-check the Planner blueprint against this file before implementing — if the blueprint contradicts the original intent, surface the conflict in your output instead of silently following the blueprint.
@@ -11,7 +10,7 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 ## Upstream Artifacts (read first, in order)
 1. Planner blueprint (authoritative): `{{upstream_plan_artifact}}`
 2. In-worktree resume copy (only if a previous build attempt exists): `{{local_doc_path}}`
-3. Spec fallback: `{{task_doc_path}}`
+3. If both are missing → BLOCK and report to Leader via the completion report.
 
 Extract every implementable requirement as a checklist before writing code.
 

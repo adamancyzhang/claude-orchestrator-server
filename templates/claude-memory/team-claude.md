@@ -48,7 +48,7 @@ When your link depends on previous work:
 | Review | Planner + Builder + Verifier artifacts |
 | Accept | All four upstream artifacts |
 
-If an upstream artifact is missing, check `{{task_doc_path}}` as fallback. If still not found, report to Leader.
+If an upstream artifact is missing, check the chain-shared cache copy provided in your per-task template (`{{upstream_plan_artifact}}` / `{{upstream_build_artifact}}` / `{{upstream_verify_artifact}}` / `{{upstream_review_artifact}}`). If still not found, report to Leader.
 
 ## Your Personal CLAUDE.md
 

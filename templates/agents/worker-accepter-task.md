@@ -3,7 +3,6 @@
 **Title**: {{task_title}}
 **Description**: {{task_description}}
 **Acceptance Criteria**: {{task_criteria}}
-**Spec doc**: {{task_doc_path}}
 
 ## Origin
 The user's original requirement is preserved verbatim at `{{original_requirement_path}}`. The GO/NO-GO call must be made against this file — not the Planner blueprint, not the Reviewer judgment. If the chain has drifted from the original intent, that alone is grounds for NO-GO.
@@ -13,7 +12,6 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 2. Builder traceability map: `{{upstream_build_artifact}}`
 3. Verifier verification map: `{{upstream_verify_artifact}}`
 4. Reviewer judgment: `{{upstream_review_artifact}}`
-5. Fallback: `{{task_doc_path}}`
 
 If any of the four upstream artifacts is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop.
 

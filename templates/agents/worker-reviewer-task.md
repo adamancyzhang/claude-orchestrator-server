@@ -3,7 +3,6 @@
 **Title**: {{task_title}}
 **Description**: {{task_description}}
 **Acceptance Criteria**: {{task_criteria}}
-**Spec doc**: {{task_doc_path}}
 
 ## Origin
 The user's original requirement is preserved verbatim at `{{original_requirement_path}}`. Anchor your ACCEPT/CONCERN/REJECT judgments to whether the original intent is satisfied — not merely whether each upstream link agrees with the one before it.
@@ -12,7 +11,6 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 1. Planner blueprint: `{{upstream_plan_artifact}}`
 2. Builder traceability map: `{{upstream_build_artifact}}`
 3. Verifier verification map: `{{upstream_verify_artifact}}`
-4. Fallback: `{{task_doc_path}}`
 
 If any of the three upstream artifacts is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop.
 
