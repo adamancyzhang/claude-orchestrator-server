@@ -18,6 +18,8 @@ interface RawConfig {
   instance_id?: string;
   name?: string;
   role?: InstanceRole;
+  projects_root?: string;
+  /** @deprecated use projects_root; retained for legacy override */
   cache_dir?: string;
   zookeeper?: Partial<ZkConfig>;
   commands?: Partial<CommandsConfig>;
@@ -42,8 +44,8 @@ function defaultCommands(): CommandsConfig {
   };
 }
 
-function defaultCacheDir(): string {
-  return path.join(process.cwd(), ".claude-orchestrator", "sessions");
+function defaultProjectsRoot(): string {
+  return path.join(os.homedir(), ".claude-orchestrator", "projects");
 }
 
 function projectConfigFile(): string {
@@ -66,10 +68,24 @@ export function loadConfig(input: LoadConfigInput = {}): ResolvedConfig {
   if (input.cli_zookeeper) zk.hosts = input.cli_zookeeper;
   else if (process.env.ZK_HOSTS) zk.hosts = process.env.ZK_HOSTS;
 
-  const cacheDir = path.resolve(
+  const projectsRoot = path.resolve(
     process.cwd(),
-    expandHomeDir(project.cache_dir ?? global.cache_dir ?? defaultCacheDir()),
+    expandHomeDir(
+      project.projects_root ??
+        global.projects_root ??
+        project.cache_dir ??
+        global.cache_dir ??
+        defaultProjectsRoot(),
+    ),
   );
+  if (
+    (project.cache_dir || global.cache_dir) &&
+    !(project.projects_root || global.projects_root)
+  ) {
+    console.warn(
+      "[config] `cache_dir` is deprecated; please rename to `projects_root` (default ~/.claude-orchestrator/projects).",
+    );
+  }
 
   const commands: CommandsConfig = {
     ...defaultCommands(),
@@ -82,7 +98,7 @@ export function loadConfig(input: LoadConfigInput = {}): ResolvedConfig {
 
   return {
     zk,
-    cache_dir: cacheDir,
+    projects_root: projectsRoot,
     commands,
     hooks,
     init_status: initStatus,

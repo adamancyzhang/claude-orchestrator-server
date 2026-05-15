@@ -18,11 +18,11 @@ npm install
 # Build (compiles TypeScript + copies templates and skills to dist/)
 npm run build
 
-# Start full orchestration (Leader TUI + 3 Workers)
-node dist/index.js run --worker 3
+# Start full orchestration (Leader TUI + 6 Workers; --worker default is 6, minimum is 6)
+node dist/index.js run --worker 6
 
 # Start with debug trace
-node dist/index.js run --worker 3 --debug
+node dist/index.js run --worker 6 --debug
 
 # Run all tests
 npm test              # vitest run
@@ -206,7 +206,7 @@ Context store (`/context`) is not implemented — no paths exist in `paths.ts`.
 | `src/utils/logger.ts` | Tagged logger with `--debug` mode for tracing prompts and execution |
 | `src/utils/output.ts` | JSON output helper for CLI commands |
 | `src/utils/console-capture.ts` | Console redirect to file (for TUI display) |
-| `templates/` | Agent prompt templates (7 worker templates) + claude-memory templates (6 role configs) |
+| `templates/` | Agent prompt templates (5 role-named system prompts `worker-{role}.md` + 5 per-task user-message wrappers `worker-{role}-task.md` + identity/decompose/evaluate/commit/merge/task-doc) + claude-memory templates (6 role configs) |
 | `skills/` | Claude Code skills for responsibility chain (6) + CLI reference + developer reference |
 
 ## Testing

@@ -133,7 +133,7 @@ export function createGlobalConfigStep(logger: ILogger): InitStep {
         ? JSON.parse(fs.readFileSync(file, "utf-8"))
         : {};
       const defaults = {
-        cache_dir: ".claude-orchestrator/sessions",
+        projects_root: "~/.claude-orchestrator/projects",
         commands: {
           claude_cli: "claude --dangerously-skip-permissions --permission-mode dontAsk",
           git: "git",

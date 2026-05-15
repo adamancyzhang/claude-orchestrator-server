@@ -65,6 +65,7 @@ export class MessageRouter implements IMessageRouter {
       task_criteria: input.task_criteria ?? null,
       task_doc_path: input.task_doc_path ?? null,
       result_path: input.result_path ?? null,
+      original_requirement_path: input.original_requirement_path ?? null,
       reply_to: input.reply_to ?? null,
       read: false,
       created_at: utcNow(),

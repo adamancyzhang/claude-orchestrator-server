@@ -320,7 +320,7 @@ export interface ComposeFrameInput {
   now_ms: number;
   leader_name: string;
   leader_id: string;
-  cache_dir: string;
+  projects_root: string;
 }
 
 export function composeFrame(input: ComposeFrameInput): string {

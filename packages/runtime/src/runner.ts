@@ -13,7 +13,6 @@ export interface BuildIdentityInput {
   role: string;
   worktree_path: string;
   worktree_branch: string;
-  instance_id: string;
 }
 
 export class ClaudeRunner implements IClaudeRunner {
@@ -30,8 +29,7 @@ export class ClaudeRunner implements IClaudeRunner {
       .replace(/\{\{name\}\}/g, input.name)
       .replace(/\{\{role\}\}/g, input.role)
       .replace(/\{\{worktreePath\}\}/g, input.worktree_path)
-      .replace(/\{\{worktreeBranch\}\}/g, input.worktree_branch)
-      .replace(/\{\{instanceId\}\}/g, input.instance_id);
+      .replace(/\{\{worktreeBranch\}\}/g, input.worktree_branch);
   }
 
   async run(opts: RunOptions): Promise<RunResult> {

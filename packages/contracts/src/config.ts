@@ -31,7 +31,7 @@ export interface InitStatusEntry {
 
 export interface ResolvedConfig {
   zk: ZkConfig;
-  cache_dir: string;
+  projects_root: string;
   commands: CommandsConfig;
   hooks: readonly HookCommand[];
   init_status: readonly InitStatusEntry[];

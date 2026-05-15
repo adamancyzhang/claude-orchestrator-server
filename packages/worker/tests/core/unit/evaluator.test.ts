@@ -88,7 +88,7 @@ function evaluatorWith(
     template_engine,
     logger: new FakeLogger(),
     cache_paths: {
-      cache_dir: tmp,
+      projects_root: tmp,
       leader_instance_id: asInstanceId("leader1"),
     },
     worktree_path: "/wt",

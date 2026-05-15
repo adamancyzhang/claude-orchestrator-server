@@ -210,11 +210,16 @@ templates/
 ├── agents/                          ← Worker prompt templates
 │   ├── worker-identity.md           #   --append-system-prompt identity card
 │   ├── worker-decompose.md          #   Requirement → ChainDef decomposition
-│   ├── worker-plan.md               #   Planner: blueprint design
-│   ├── worker-build.md              #   Builder: traceable implementation
-│   ├── worker-verify.md             #   Verifier: cross-check Plan vs Build
-│   ├── worker-review.md             #   Reviewer: chain-level quality gate
-│   ├── worker-accept.md             #   Accepter: final Go/No-Go decision
+│   ├── worker-planner.md            #   Planner: standing role description (system prompt)
+│   ├── worker-planner-task.md       #   Planner: per-task user-message wrapper
+│   ├── worker-builder.md            #   Builder: standing role description
+│   ├── worker-builder-task.md       #   Builder: per-task user-message wrapper
+│   ├── worker-verifier.md           #   Verifier: standing role description
+│   ├── worker-verifier-task.md      #   Verifier: per-task user-message wrapper
+│   ├── worker-reviewer.md           #   Reviewer: standing role description
+│   ├── worker-reviewer-task.md      #   Reviewer: per-task user-message wrapper
+│   ├── worker-accepter.md           #   Accepter: standing role description
+│   ├── worker-accepter-task.md      #   Accepter: per-task user-message wrapper
 │   ├── worker-evaluate.md           #   Self-evaluation → EvalDecision JSON
 │   ├── worker-evaluate-format-hint.md  # Appended on eval retry attempts ≥ 2
 │   ├── worker-commit-message.md     #   Auto commit-message generation
@@ -318,8 +323,8 @@ pnpm install
 docker-compose up -d
 pnpm -r build
 
-# Start with 3 Workers
-node bin/claude-orchestrator run --worker 3
+# Start with 6 Workers (default; minimum is 6)
+node bin/claude-orchestrator run --worker 6
 ```
 
 ### Build / Validate

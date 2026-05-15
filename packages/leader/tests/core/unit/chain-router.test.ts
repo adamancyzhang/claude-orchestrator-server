@@ -263,7 +263,7 @@ function setup(instances: Instance[] = []): {
     leader_id: LEADER_ID,
     leader_name: "Leader",
     cache_paths: {
-      cache_dir: "/tmp/co-test",
+      projects_root: "/tmp/co-test",
       leader_instance_id: LEADER_ID,
     },
   });
@@ -395,6 +395,62 @@ describe("ChainRouter.handleTaskDefinitions", () => {
       type: "chain_activated",
       chain_id: CHAIN_ID,
     });
+  });
+
+  it("pins the first link's pending task to the dispatched planner via assigned_to, leaving downstream links unassigned", async () => {
+    const planner = makeInstance("tom-01", "Tom", "planner");
+    const { router, queue } = setup([planner]);
+
+    await router.route(chainDefMessage(chainDefJson()));
+
+    const pending = await queue.listPending();
+    const plan = pending.find((t) => t.link === "plan")!;
+    expect(plan.assigned_to).toBe(planner.id);
+    expect(plan.assigned_to_name).toBe(planner.name);
+
+    for (const link of ["build", "verify", "review", "accept"] as const) {
+      const t = pending.find((x) => x.link === link)!;
+      expect(t.assigned_to).toBeNull();
+      expect(t.assigned_to_name).toBeNull();
+    }
+  });
+});
+
+describe("ChainRouter.activate_next assigns before dispatch", () => {
+  it("calls task_queue.assign(nextTask, worker) before sending task_dispatch", async () => {
+    const tom = makeInstance("tom-01", "Tom", "planner");
+    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, queue, msg } = setup([tom, jerry]);
+
+    // Seed the chain via handleTaskDefinitions — plan pinned to Tom.
+    await router.route(chainDefMessage(chainDefJson()));
+    const before = await queue.listPending();
+    const buildBefore = before.find((t) => t.link === "build")!;
+    expect(buildBefore.assigned_to).toBeNull();
+
+    // Tom reports activate_next → build.
+    await router.route(
+      completionMessage(
+        "plan",
+        JSON.stringify({
+          decision: "activate_next",
+          reason: "ok",
+          next_link: "build",
+        }),
+        tom.id,
+      ),
+    );
+
+    const after = await queue.listPending();
+    const buildAfter = after.find((t) => t.link === "build")!;
+    expect(buildAfter.assigned_to).toBe(jerry.id);
+    expect(buildAfter.assigned_to_name).toBe(jerry.name);
+
+    const buildDispatch = msg.sent.find(
+      (m) => m.link === "build" && m.type === "task_dispatch",
+    );
+    expect(buildDispatch).toBeTruthy();
+    expect(buildDispatch!.to_instance).toBe(jerry.id);
   });
 });
 
@@ -632,7 +688,7 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
       leader_id: LEADER_ID,
       leader_name: "Leader",
       cache_paths: {
-        cache_dir: "/tmp/co-test",
+        projects_root: "/tmp/co-test",
         leader_instance_id: LEADER_ID,
       },
       merge_validator: mergeValidator,
@@ -719,7 +775,7 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
       leader_id: LEADER_ID,
       leader_name: "Leader",
       cache_paths: {
-        cache_dir: "/tmp/co-test",
+        projects_root: "/tmp/co-test",
         leader_instance_id: LEADER_ID,
       },
       merge_validator: mergeValidator,

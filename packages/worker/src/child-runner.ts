@@ -8,7 +8,7 @@ export interface ChildConfig {
   branch: string;
   zk_hosts: string;
   cli_command: string;
-  cache_dir: string;
+  projects_root: string;
   leader_instance_id: InstanceId;
   debug: boolean;
 }

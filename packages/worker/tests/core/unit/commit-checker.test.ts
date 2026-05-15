@@ -75,14 +75,14 @@ function initRepo(): string {
 }
 
 function makeChecker(repo: string, runnerOut: string): CommitChecker {
-  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "commit-cache-"));
+  const projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "commit-cache-"));
   return new CommitChecker({
     worktree_path: repo,
     runner: new FixedRunner(runnerOut),
     template_engine: newTemplateEngine(),
     logger: new SilentLogger(),
     cache_paths: {
-      cache_dir: cacheDir,
+      projects_root: projectsRoot,
       leader_instance_id: asInstanceId("leader-1"),
     },
     worker_name: "Tester",

@@ -16,7 +16,18 @@ program
 program
   .command("run")
   .description("One-shot orchestration: setup environment, start TUI, fork Workers")
-  .requiredOption("--worker <n>", "Number of Workers", parseInt)
+  .option(
+    "--worker <n>",
+    "Number of Workers (must be >= 6)",
+    (raw) => {
+      const n = parseInt(raw, 10);
+      if (!Number.isFinite(n) || n < 6) {
+        throw new Error("`--worker` must be an integer >= 6");
+      }
+      return n;
+    },
+    6,
+  )
   .option("-y, --yes", "Skip interactive prompts, auto-approve based on history")
   .action(async function (this: Command) {
     const { worker, yes } = this.opts() as { worker: number; yes?: boolean };
@@ -40,7 +51,7 @@ program
     output({
       protocol_version: PROTOCOL_VERSION,
       zookeeper: config.zk,
-      cache_dir: config.cache_dir,
+      projects_root: config.projects_root,
       commands: config.commands,
       hooks: config.hooks,
       project: {

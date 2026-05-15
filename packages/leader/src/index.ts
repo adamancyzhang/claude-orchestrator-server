@@ -16,5 +16,14 @@ export {
   ChainRouter,
   type ChainRouterOptions,
 } from "./chain-router.js";
+export {
+  ChainAudit,
+  type ChainAuditEventInput,
+  type ChainAuditEventType,
+  type ChainAuditOptions,
+  type ChainManifest,
+  type ChainOpenMeta,
+  type ChainStatus,
+} from "./chain-audit.js";
 export { LeaderWatcher } from "./watcher.js";
 export * from "./tui/index.js";
