@@ -644,7 +644,47 @@ export class ChainRouter {
       }
       case "close_chain": {
         if (msg.chain_id) {
-          await this.runMergeValidation(msg.chain_id);
+          const failures = await this.runMergeValidation(msg.chain_id);
+          if (failures.length > 0) {
+            // At least one commit could not be merged to main. Do NOT
+            // mark the chain "completed" — that would silently leave
+            // the deliverable half-merged. Record the failures, abort
+            // chain status as "merge_failed", and push a retry task to
+            // each link's worker so they can fix the conflict.
+            this.opts.logger.error("close_chain blocked: merge failures", {
+              chain_id: msg.chain_id,
+              count: failures.length,
+            });
+            if (this.opts.chain_audit) {
+              for (const f of failures) {
+                await this.opts.chain_audit.record(msg.chain_id, {
+                  event: "merge_failure",
+                  link: f.link,
+                  task_id: null,
+                  payload: {
+                    sha: f.sha,
+                    branch: f.branch,
+                    message: f.message,
+                    error: f.error,
+                  },
+                });
+              }
+              await this.opts.chain_audit.closeChain(
+                msg.chain_id,
+                "merge_failed",
+                { failures: failures as unknown as Record<string, unknown> },
+              );
+            }
+            this.opts.bus.emit({
+              type: "chain_merge_failed",
+              chain_id: msg.chain_id,
+              failures,
+            });
+            await this.pushMergeConflictRetries(msg, failures, requirementPath);
+            this.emitChainClosed(msg.chain_id);
+            this.forgetChain(msg.chain_id);
+            break;
+          }
           if (this.opts.chain_audit) {
             await this.opts.chain_audit.closeChain(msg.chain_id, "completed");
           }
@@ -679,14 +719,34 @@ export class ChainRouter {
   /**
    * Walk the per-chain commit log in P→B→V→R→A order, asking the
    * MergeValidator for a merge / skip / review_first decision per
-   * commit. Errors from a single commit (e.g. merge conflict) are
-   * logged and swallowed so subsequent commits still get a chance.
-   * Skipped silently when no validator is configured.
+   * commit. Continues past a single-commit failure so other commits
+   * still get evaluated, but collects each failure and returns the
+   * list to the caller. Returns an empty array when no validator is
+   * configured (validation is opt-in) or when no commits were recorded.
+   * The caller (close_chain branch) uses a non-empty return value to
+   * route the chain to "merge_failed" status instead of "completed".
    */
-  private async runMergeValidation(chainId: ChainId): Promise<void> {
-    if (!this.opts.merge_validator) return;
+  private async runMergeValidation(
+    chainId: ChainId,
+  ): Promise<
+    Array<{
+      link: TaskLink;
+      sha: string;
+      branch: string;
+      message: string;
+      error: string;
+    }>
+  > {
+    const failures: Array<{
+      link: TaskLink;
+      sha: string;
+      branch: string;
+      message: string;
+      error: string;
+    }> = [];
+    if (!this.opts.merge_validator) return failures;
     const commits = this.chainCommits.get(chainId);
-    if (!commits || commits.length === 0) return;
+    if (!commits || commits.length === 0) return failures;
     for (const commit of commits) {
       try {
         await this.opts.merge_validator.validate(commit);
@@ -697,7 +757,100 @@ export class ChainRouter {
           sha: commit.sha,
           error: String(err),
         });
+        failures.push({
+          link: commit.task_link as TaskLink,
+          sha: commit.sha,
+          branch: commit.branch,
+          message: commit.message,
+          error: String(err),
+        });
       }
+    }
+    return failures;
+  }
+
+  /**
+   * Create one retry task per failed merge, addressed to the worker
+   * that owned that link in the chain manifest (link_workers). Each
+   * retry carries a description naming the failed sha / branch /
+   * conflict so the worker can rebase, fix conflicts, and re-commit.
+   * Skips silently when chain_audit is not configured (manifest
+   * lookups would have no source).
+   */
+  private async pushMergeConflictRetries(
+    msg: Message,
+    failures: ReadonlyArray<{
+      link: TaskLink;
+      sha: string;
+      branch: string;
+      message: string;
+      error: string;
+    }>,
+    requirementPath: string | null,
+  ): Promise<void> {
+    if (!msg.chain_id || !this.opts.chain_audit) return;
+    const manifest = await this.opts.chain_audit.readManifest(msg.chain_id);
+    if (!manifest) return;
+    for (const f of failures) {
+      const targetId = manifest.link_workers?.[f.link];
+      if (!targetId) {
+        this.opts.logger.warn(
+          "merge retry skipped: no worker recorded for link",
+          { chain_id: msg.chain_id, link: f.link },
+        );
+        continue;
+      }
+      const target = await this.opts.registry.get(targetId);
+      const targetName = target?.name ?? "";
+      const description =
+        `Merge conflict on branch ${f.branch} at ${f.sha.slice(0, 8)}: ${f.message}.\n` +
+        `Error: ${f.error}.\n` +
+        `Pull main, resolve conflicts in your worktree, re-commit, and re-run this link.`;
+      const newTask = await this.opts.task_queue.push({
+        title: `[${msg.chain_id}] ${f.link} merge-conflict-fix`,
+        description,
+        criteria: "",
+        priority: 0,
+        link: f.link,
+        chain_id: msg.chain_id,
+        retry_count: 0,
+        created_by: this.opts.leader_id,
+        created_by_name: this.opts.leader_name,
+        assigned_to: targetId,
+        assigned_to_name: targetName,
+      });
+      await this.opts.chain_audit.setLinkTask(
+        msg.chain_id,
+        f.link,
+        newTask.id,
+      );
+      await this.opts.chain_audit.record(msg.chain_id, {
+        event: "feedback_sent",
+        link: f.link,
+        worker_id: targetId,
+        worker_name: targetName,
+        task_id: newTask.id,
+        payload: {
+          reason: "merge_conflict",
+          sha: f.sha,
+          branch: f.branch,
+        },
+      });
+      await this.opts.message_router.send({
+        type: "task_dispatch",
+        from_instance: this.opts.leader_id,
+        from_name: this.opts.leader_name,
+        from_role: "leader",
+        to_instance: targetId,
+        content: newTask.title,
+        link: f.link,
+        chain_id: msg.chain_id,
+        task_id: newTask.id,
+        task_title: newTask.title,
+        task_description: description,
+        task_criteria: "",
+        original_requirement_path: requirementPath,
+      });
     }
   }
 

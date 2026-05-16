@@ -56,6 +56,17 @@ export type LeaderEvent =
   | { type: "message_processed"; message_id: MessageId; log_path: string }
   | { type: "chain_activated"; chain_id: ChainId }
   | { type: "chain_closed"; chain_id: ChainId }
+  | {
+      type: "chain_merge_failed";
+      chain_id: ChainId;
+      failures: ReadonlyArray<{
+        link: TaskLink;
+        sha: string;
+        branch: string;
+        message: string;
+        error: string;
+      }>;
+    }
   | { type: "debug_info"; message: string }
   | {
       type: "stream_chunk";

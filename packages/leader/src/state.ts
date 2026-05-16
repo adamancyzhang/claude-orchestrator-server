@@ -175,6 +175,7 @@ export class LeaderState implements ILeaderStateView {
       case "message_processed":
       case "chain_activated":
       case "chain_closed":
+      case "chain_merge_failed":
       case "debug_info":
       case "stream_chunk":
         break;

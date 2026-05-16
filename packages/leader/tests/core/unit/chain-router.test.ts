@@ -949,6 +949,137 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
     ]);
   });
 
+  it("aborts close_chain as merge_failed and pushes a retry to the link's worker on conflict", async () => {
+    // Setup: tom + jerry, chain dispatched, build recorded as the link
+    // owned by Jerry in link_workers. Then drive build → activate_next
+    // so the manifest's link_workers["build"] = jerry. Close the chain
+    // with a merge validator that throws on the build commit only —
+    // verify the chain becomes "merge_failed" (not "completed"), the
+    // chain_merge_failed event fires with the failure list, and Jerry
+    // receives a retry task addressed to him with a description naming
+    // the conflicting sha/branch.
+    const tom = makeInstance("tom-01", "Tom", "planner");
+    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const lucy = makeInstance("lucy-01", "Lucy", "verifier");
+    const mia = makeInstance("mia-01", "Mia", "reviewer");
+    const leo = makeInstance("leo-01", "Leo", "accepter");
+
+    const mergeValidator = {
+      async validate(commit: { branch: string; sha: string; task_link: string }) {
+        if (commit.task_link === "build") {
+          throw new Error(
+            `merge ${commit.branch} conflicted at ${commit.sha}`,
+          );
+        }
+        return { decision: "merge" as const, reason: "ok" };
+      },
+    };
+
+    const zk = new MemoryZk();
+    const queue = new TaskQueue({ zk: zk as never });
+    const bus = new FakeBus();
+    const msg = new FakeMessageRouter();
+    const registry = new FakeRegistry([tom, jerry, lucy, mia, leo]);
+    const audit = new FakeChainAudit();
+    const router = new ChainRouter({
+      task_queue: queue,
+      message_router: msg,
+      registry,
+      bus,
+      runner: new FakeRunner(),
+      template_engine: new FakeTemplateEngine(),
+      logger: new SilentLogger(),
+      leader_id: LEADER_ID,
+      leader_name: "Leader",
+      cache_paths: {
+        projects_root: "/tmp/co-test",
+        leader_instance_id: LEADER_ID,
+      },
+      chain_audit: audit as never,
+      merge_validator: mergeValidator,
+    });
+
+    // Activate chain + advance through every link so link_workers is
+    // fully populated and chainCommits collects one commit per link.
+    await router.route(chainDefMessage(chainDefJson()));
+    const flow: { link: TaskLink; next: TaskLink | null; from: InstanceId }[] = [
+      { link: "plan", next: "build", from: tom.id },
+      { link: "build", next: "verify", from: jerry.id },
+      { link: "verify", next: "review", from: lucy.id },
+      { link: "review", next: "accept", from: mia.id },
+    ];
+    for (const step of flow) {
+      await router.route(
+        completionMessage(
+          step.link,
+          JSON.stringify({
+            decision: "activate_next",
+            reason: "ok",
+            next_link: step.next,
+            commit: {
+              sha: `${step.link}-sha`,
+              message: `${step.link}: change`,
+              branch: `co/${step.link}-1`,
+            },
+          }),
+          step.from,
+        ),
+      );
+    }
+    // close_chain with accept's commit also recorded.
+    await router.route(
+      completionMessage(
+        "accept",
+        JSON.stringify({
+          decision: "close_chain",
+          reason: "all good",
+          commit: {
+            sha: "accept-sha",
+            message: "accept: sign off",
+            branch: "co/accept-1",
+          },
+        }),
+        leo.id,
+      ),
+    );
+
+    // Chain closure was "merge_failed", not "completed".
+    const closure = audit.closures.find((c) => c.chainId === CHAIN_ID);
+    expect(closure).toBeTruthy();
+    expect(closure!.status).toBe("merge_failed");
+    expect(closure!.status).not.toBe("completed");
+
+    // chain_merge_failed event lists the failure.
+    const mfEvent = bus.emitted.find((e) => e.type === "chain_merge_failed");
+    expect(mfEvent).toBeTruthy();
+    if (mfEvent && mfEvent.type === "chain_merge_failed") {
+      expect(mfEvent.failures).toHaveLength(1);
+      expect(mfEvent.failures[0].link).toBe("build");
+      expect(mfEvent.failures[0].sha).toBe("build-sha");
+    }
+
+    // chain_closed also fires (TUI shows the chain ended).
+    expect(
+      bus.emitted.some(
+        (e) => e.type === "chain_closed" && e.chain_id === CHAIN_ID,
+      ),
+    ).toBe(true);
+
+    // Jerry received a retry task naming the conflict.
+    const retryToJerry = msg.sent.find(
+      (m) =>
+        m.type === "task_dispatch" &&
+        m.to_instance === jerry.id &&
+        m.link === "build" &&
+        typeof m.task_description === "string" &&
+        m.task_description.includes("Merge conflict"),
+    );
+    expect(retryToJerry).toBeTruthy();
+
+    // Audit log has a merge_failure entry.
+    expect(audit.events.some((e) => e.event === "merge_failure")).toBe(true);
+  });
+
   it("does not invoke MergeValidator on reject", async () => {
     const validated: unknown[] = [];
     const mergeValidator = {
