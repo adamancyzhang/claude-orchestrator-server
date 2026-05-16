@@ -358,6 +358,34 @@ export class WorkerWatcher {
         },
         result.session_id ?? undefined,
       );
+      // Best-effort workspace memory refresh: tell the Leader which
+      // source files this commit touched so it can regenerate their
+      // memory entries. Send only when there is at least one changed
+      // file; failures here must not block task completion.
+      if (commit && commit.changed_files.length > 0) {
+        this.opts.message_router
+          .send({
+            type: "memory_refresh",
+            from_instance: this.opts.instance_id,
+            from_name: this.opts.worker_name,
+            from_role: this.opts.worker_role,
+            to_instance: this.opts.leader_id,
+            content: JSON.stringify({
+              chain_id: msg.chain_id ?? null,
+              task_id: taskId,
+              commit_sha: commit.sha,
+              changed_files: commit.changed_files,
+            }),
+            link: link as TaskLink,
+            chain_id: msg.chain_id ?? null,
+            task_id: taskId,
+          })
+          .catch((err) =>
+            this.opts.logger.warn("memory_refresh send failed", {
+              error: String(err),
+            }),
+          );
+      }
     }
 
     if (link && CHAIN_LINKS.includes(link as TaskLink)) {

@@ -293,4 +293,48 @@ describe("MemoryBootstrap", () => {
       fx.cleanup();
     }
   });
+
+  it("refreshFiles overwrites existing per-file memory and regenerates affected dir indexes", async () => {
+    const fx = makeFixture();
+    try {
+      const bs = makeBootstrap(fx);
+      await bs.run();
+      const memRoot = path.join(fx.cacheRoot, "leader-1", "memory");
+      const helperPath = path.join(memRoot, "packages/alpha/src/helper.md");
+      const beforeMtime = fs.statSync(helperPath).mtimeMs;
+      // Wait long enough for mtime resolution then refresh that one file.
+      await new Promise((r) => setTimeout(r, 25));
+      const stats = await bs.refreshFiles([
+        "packages/alpha/src/helper.ts",
+      ]);
+      expect(stats.generated).toBe(1);
+      expect(stats.failed).toBe(0);
+      expect(stats.filtered_out).toBe(0);
+      // helper.md rewritten (mtime changed).
+      expect(fs.statSync(helperPath).mtimeMs).toBeGreaterThan(beforeMtime);
+      // The alpha dir index is rewritten too (delete + regenerate).
+      expect(
+        fs.existsSync(path.join(memRoot, "packages/alpha/src/CLAUDE.md")),
+      ).toBe(true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("refreshFiles filters out files not matched by source_globs", async () => {
+    const fx = makeFixture();
+    try {
+      const bs = makeBootstrap(fx);
+      await bs.run();
+      const stats = await bs.refreshFiles([
+        "packages/alpha/src/helper.ts",  // matches
+        "README.md",                      // tracked but not in glob
+        "packages/alpha/missing.ts",      // not tracked
+      ]);
+      expect(stats.generated).toBe(1);
+      expect(stats.filtered_out).toBe(2);
+    } finally {
+      fx.cleanup();
+    }
+  });
 });

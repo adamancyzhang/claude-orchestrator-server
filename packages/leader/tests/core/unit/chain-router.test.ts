@@ -870,3 +870,130 @@ const NEXT_LINK: Record<string, TaskLink> = {
   verify: "review",
   review: "accept",
 };
+
+// ---------------------------------------------------------------------------
+// memory_refresh routing
+// ---------------------------------------------------------------------------
+//
+// Builders send a memory_refresh message after a successful commit so the
+// Leader can regenerate the workspace memory entries for the changed files.
+// ChainRouter only parses + delegates; the regeneration itself is covered by
+// memory-bootstrap.test.ts.
+
+interface FakeMemoryBootstrap {
+  calls: string[][];
+  refreshFiles: (sources: string[]) => Promise<{
+    generated: number;
+    failed: number;
+    filtered_out: number;
+  }>;
+}
+
+function makeFakeBootstrap(): FakeMemoryBootstrap {
+  const calls: string[][] = [];
+  return {
+    calls,
+    async refreshFiles(sources: string[]) {
+      calls.push([...sources]);
+      return { generated: sources.length, failed: 0, filtered_out: 0 };
+    },
+  };
+}
+
+function memoryRefreshMessage(content: string): Message {
+  return {
+    id: asMessageId("msg-mr"),
+    type: "memory_refresh",
+    from_instance: asInstanceId("alpha"),
+    from_name: "alpha",
+    from_role: "builder",
+    to_instance: LEADER_ID,
+    to_name: null,
+    content,
+    link: "build",
+    task_id: null,
+    chain_id: null,
+    task_title: null,
+    task_description: null,
+    task_criteria: null,
+    result_path: null,
+    original_requirement_path: null,
+    reply_to: null,
+    read: false,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function memoryRefreshRouter(
+  bootstrap: FakeMemoryBootstrap | undefined,
+): ChainRouter {
+  return new ChainRouter({
+    task_queue: new TaskQueue({ zk: new MemoryZk() as never }),
+    message_router: new FakeMessageRouter(),
+    registry: new FakeRegistry([]),
+    bus: new FakeBus(),
+    runner: new FakeRunner(),
+    template_engine: new FakeTemplateEngine(),
+    logger: new SilentLogger(),
+    leader_id: LEADER_ID,
+    leader_name: "Leader",
+    cache_paths: {
+      projects_root: "/tmp/co-test",
+      leader_instance_id: LEADER_ID,
+    },
+    memory_bootstrap: bootstrap as never,
+  });
+}
+
+describe("ChainRouter.handleMemoryRefresh", () => {
+  it("parses changed_files from the JSON payload and forwards them to MemoryBootstrap.refreshFiles", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(
+      memoryRefreshMessage(
+        JSON.stringify({
+          chain_id: "chain-1",
+          task_id: "task-1",
+          commit_sha: "deadbeef",
+          changed_files: [
+            "packages/worker/src/watcher.ts",
+            "packages/leader/src/chain-router.ts",
+          ],
+        }),
+      ),
+    );
+    expect(bs.calls).toHaveLength(1);
+    expect(bs.calls[0]).toEqual([
+      "packages/worker/src/watcher.ts",
+      "packages/leader/src/chain-router.ts",
+    ]);
+  });
+
+  it("does not call MemoryBootstrap when changed_files is empty or absent", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(memoryRefreshMessage(JSON.stringify({ changed_files: [] })));
+    await router.route(memoryRefreshMessage(JSON.stringify({})));
+    expect(bs.calls).toHaveLength(0);
+  });
+
+  it("silently drops malformed payloads (not JSON, wrong type) — refresh is best-effort", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(memoryRefreshMessage("not-json"));
+    await router.route(
+      memoryRefreshMessage(JSON.stringify({ changed_files: "scalar-not-array" })),
+    );
+    expect(bs.calls).toHaveLength(0);
+  });
+
+  it("is a no-op when no MemoryBootstrap is wired (test/CLI flows)", async () => {
+    const router = memoryRefreshRouter(undefined);
+    // Should not throw — handler logs and returns.
+    await router.route(
+      memoryRefreshMessage(
+        JSON.stringify({ changed_files: ["packages/worker/src/watcher.ts"] }),
+      ),
+    );
+  });
+});

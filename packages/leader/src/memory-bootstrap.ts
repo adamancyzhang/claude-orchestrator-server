@@ -133,8 +133,17 @@ export class MemoryBootstrap {
    * Generate per-file memory entries by rendering `file_template` once per
    * source file and invoking the Claude runner. Failures are logged and
    * counted; one failing file does not abort the pass.
+   *
+   * @param mode When `"skip-existing"`, files whose memory already exists
+   *   on disk are counted as skipped and left alone (used by the initial
+   *   bootstrap to keep restarts cheap). When `"force"`, existing memory
+   *   files are overwritten — used by incremental refresh after a commit
+   *   so the stored `source_hash` catches up with the new source.
    */
-  private async generateFiles(sources: string[]): Promise<{
+  private async generateFiles(
+    sources: string[],
+    mode: "skip-existing" | "force" = "skip-existing",
+  ): Promise<{
     generated: number;
     skipped: number;
     failed: number;
@@ -155,7 +164,7 @@ export class MemoryBootstrap {
         this.opts.cache_paths,
         source,
       );
-      if (fs.existsSync(resultPath)) {
+      if (mode === "skip-existing" && fs.existsSync(resultPath)) {
         skipped += 1;
         continue;
       }
@@ -194,6 +203,55 @@ export class MemoryBootstrap {
       }
     }
     return { generated, skipped, failed };
+  }
+
+  /**
+   * Force-refresh a specific set of source files. Bypasses the populated
+   * sentinel and the skip-existing rule — used by ChainRouter after a
+   * Worker commit so the memory for changed files catches up. Filters out
+   * any paths that don't match the configured `source_globs` so callers
+   * can pass an unsanitised diff list.
+   *
+   * Returns the per-source counts the caller can log.
+   */
+  async refreshFiles(sources: string[]): Promise<{
+    generated: number;
+    failed: number;
+    filtered_out: number;
+  }> {
+    const allowed = new Set(this.enumerateSources());
+    const filtered: string[] = [];
+    let filteredOut = 0;
+    for (const s of sources) {
+      const normalized = s.replace(/^\.\//, "").replace(/^\/+/, "");
+      if (allowed.has(normalized)) filtered.push(normalized);
+      else filteredOut += 1;
+    }
+    if (filtered.length === 0) {
+      return { generated: 0, failed: 0, filtered_out: filteredOut };
+    }
+    const fileStats = await this.generateFiles(filtered, "force");
+    // Refresh the per-directory CLAUDE.md indexes affected by the change
+    // so their `关键文件清单` reflects updated Purpose lines. `generateDirs`
+    // skips dirs whose index already exists, so we delete first.
+    const grouped = this.groupByDir(filtered);
+    for (const dir of grouped.keys()) {
+      const idxPath = cachePaths.workspaceMemoryDirIndexPath(
+        this.opts.cache_paths,
+        dir,
+      );
+      try {
+        await fs.promises.unlink(idxPath);
+      } catch {
+        // missing is fine; generateDirs will create it
+      }
+    }
+    await this.generateDirs(grouped);
+    return {
+      generated: fileStats.generated,
+      failed: fileStats.failed,
+      filtered_out: filteredOut,
+    };
   }
 
   /**

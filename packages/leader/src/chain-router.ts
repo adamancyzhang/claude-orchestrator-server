@@ -28,6 +28,7 @@ import {
 } from "@co/contracts";
 import type { CommitInfo } from "./merge-validator.js";
 import type { ChainAudit } from "./chain-audit.js";
+import type { MemoryBootstrap } from "./memory-bootstrap.js";
 
 export interface IMergeValidator {
   validate(commit: CommitInfo): Promise<MergeDecision>;
@@ -83,6 +84,14 @@ export interface ChainRouterOptions {
    * need on-disk audit trails.
    */
   chain_audit?: ChainAudit;
+  /**
+   * Optional. When provided, ChainRouter handles incoming
+   * `memory_refresh` messages by invoking
+   * `MemoryBootstrap.refreshFiles(changed_files)` so the workspace
+   * memory tree catches up with the Worker's commit. Omitted in unit
+   * tests that don't exercise the memory refresh path.
+   */
+  memory_bootstrap?: MemoryBootstrap;
 }
 
 export class ChainRouter {
@@ -140,6 +149,10 @@ export class ChainRouter {
   }
 
   async route(msg: Message): Promise<void> {
+    if (msg.type === "memory_refresh") {
+      await this.handleMemoryRefresh(msg);
+      return;
+    }
     if (!msg.link) {
       await this.handleRequirement(msg);
       return;
@@ -153,6 +166,60 @@ export class ChainRouter {
       return;
     }
     await this.handleCompletionReport(msg);
+  }
+
+  /**
+   * Parse a `memory_refresh` payload and forward the changed-files list
+   * to MemoryBootstrap. Payload shape:
+   *
+   *   {"changed_files": ["packages/worker/src/watcher.ts", ...]}
+   *
+   * Non-JSON or malformed payloads are logged and dropped — refresh is a
+   * best-effort hint, not a critical path. When no `memory_bootstrap` is
+   * wired (unit tests, ad-hoc CLI flows) the message is acknowledged via
+   * the event bus and ignored.
+   */
+  private async handleMemoryRefresh(msg: Message): Promise<void> {
+    if (!this.opts.memory_bootstrap) {
+      this.opts.logger.debug("memory_refresh received but no bootstrap wired", {
+        from: msg.from_name,
+      });
+      return;
+    }
+    let changed: string[] = [];
+    try {
+      const payload = JSON.parse(extractJson(msg.content)) as {
+        changed_files?: unknown;
+      };
+      if (Array.isArray(payload.changed_files)) {
+        changed = payload.changed_files.filter(
+          (s): s is string => typeof s === "string",
+        );
+      }
+    } catch {
+      this.opts.logger.warn("memory_refresh payload not parseable", {
+        from: msg.from_name,
+      });
+      return;
+    }
+    if (changed.length === 0) {
+      this.opts.logger.debug("memory_refresh with empty file list", {
+        from: msg.from_name,
+      });
+      return;
+    }
+    try {
+      const stats = await this.opts.memory_bootstrap.refreshFiles(changed);
+      this.opts.logger.info("memory refresh complete", {
+        from: msg.from_name,
+        ...stats,
+      });
+    } catch (err) {
+      this.opts.logger.warn("memory refresh threw", {
+        from: msg.from_name,
+        error: String(err),
+      });
+    }
   }
 
   private looksLikeChainDef(content: string): boolean {
