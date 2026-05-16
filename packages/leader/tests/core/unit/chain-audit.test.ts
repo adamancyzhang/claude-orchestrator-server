@@ -19,9 +19,13 @@ import {
   asInstanceId,
   asTaskId,
   cachePaths,
+  ChainConflictError,
   type ILogger,
 } from "@co/contracts";
-import { ChainAudit } from "../../../src/chain-audit.js";
+import {
+  ChainAudit,
+  DEFAULT_MAX_TOTAL_RETRIES,
+} from "../../../src/chain-audit.js";
 
 class SilentLogger implements ILogger {
   debug(): void {}
@@ -136,5 +140,151 @@ describe("ChainAudit", () => {
       .map((l) => JSON.parse(l) as { event: string });
     expect(lines.some((l) => l.event === "chain_opened")).toBe(true);
     expect(lines.some((l) => l.event === "chain_closed")).toBe(true);
+  });
+
+  it("openChain seeds total_retry_count=0 and the default ceiling", async () => {
+    const { audit } = makeAudit();
+    const chainId = asChainId("chain-retry-defaults");
+    await audit.openChain(chainId, {
+      created_at: "2026-05-14T00:00:00Z",
+      leader_id: asInstanceId("leader-1"),
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+    });
+    const m = await audit.readManifest(chainId);
+    expect(m!.total_retry_count).toBe(0);
+    expect(m!.max_total_retries).toBe(DEFAULT_MAX_TOTAL_RETRIES);
+  });
+
+  it("openChain honors an explicit max_total_retries override", async () => {
+    const { audit } = makeAudit();
+    const chainId = asChainId("chain-retry-override");
+    await audit.openChain(chainId, {
+      created_at: "2026-05-14T00:00:00Z",
+      leader_id: asInstanceId("leader-1"),
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+      max_total_retries: 3,
+    });
+    const m = await audit.readManifest(chainId);
+    expect(m!.max_total_retries).toBe(3);
+  });
+
+  it("incrementRetry bumps total_retry_count and reports the ceiling", async () => {
+    const { audit } = makeAudit();
+    const chainId = asChainId("chain-retry-bump");
+    await audit.openChain(chainId, {
+      created_at: "2026-05-14T00:00:00Z",
+      leader_id: asInstanceId("leader-1"),
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+      max_total_retries: 2,
+    });
+    const first = await audit.incrementRetry(chainId);
+    expect(first).toEqual({ total_retry_count: 1, max_total_retries: 2 });
+    const second = await audit.incrementRetry(chainId);
+    expect(second).toEqual({ total_retry_count: 2, max_total_retries: 2 });
+    const m = await audit.readManifest(chainId);
+    expect(m!.total_retry_count).toBe(2);
+  });
+
+  it("incrementRetry returns null when the manifest is missing", async () => {
+    const { audit } = makeAudit();
+    const result = await audit.incrementRetry(asChainId("chain-ghost"));
+    expect(result).toBeNull();
+  });
+
+  it("openChain throws ChainConflictError when a chain is already completed", async () => {
+    const { audit } = makeAudit();
+    const chainId = asChainId("chain-once");
+    await audit.openChain(chainId, {
+      created_at: "2026-05-14T00:00:00Z",
+      leader_id: asInstanceId("leader-1"),
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+    });
+    await audit.closeChain(chainId, "completed");
+
+    let caught: unknown = null;
+    try {
+      await audit.openChain(chainId, {
+        created_at: "2026-05-15T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req2.md",
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChainConflictError);
+    const err = caught as ChainConflictError;
+    expect(err.existing_status).toBe("completed");
+    expect(err.existing_completed_at).not.toBeNull();
+
+    // Manifest must still reflect the original closed state, not the
+    // would-be overwrite.
+    const m = await audit.readManifest(chainId);
+    expect(m!.status).toBe("completed");
+  });
+
+  it("openChain throws ChainConflictError for aborted and merge_failed chains too", async () => {
+    const { audit } = makeAudit();
+    const aborted = asChainId("chain-aborted");
+    await audit.openChain(aborted, {
+      created_at: "2026-05-14T00:00:00Z",
+      leader_id: asInstanceId("leader-1"),
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+    });
+    await audit.closeChain(aborted, "aborted");
+    await expect(
+      audit.openChain(aborted, {
+        created_at: "2026-05-15T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req2.md",
+      }),
+    ).rejects.toBeInstanceOf(ChainConflictError);
+
+    const mergeFailed = asChainId("chain-merge-failed");
+    await audit.openChain(mergeFailed, {
+      created_at: "2026-05-14T00:00:00Z",
+      leader_id: asInstanceId("leader-1"),
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+    });
+    await audit.closeChain(mergeFailed, "merge_failed");
+    await expect(
+      audit.openChain(mergeFailed, {
+        created_at: "2026-05-15T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req2.md",
+      }),
+    ).rejects.toBeInstanceOf(ChainConflictError);
+  });
+
+  it("openChain on a still-running chain is a no-op upsert (no conflict)", async () => {
+    const { audit } = makeAudit();
+    const chainId = asChainId("chain-running");
+    await audit.openChain(chainId, {
+      created_at: "2026-05-14T00:00:00Z",
+      leader_id: asInstanceId("leader-1"),
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+    });
+    // Re-opening a running chain must not throw — the manifest is just
+    // rewritten to the same shape. This keeps replay/restart paths
+    // unblocked.
+    await expect(
+      audit.openChain(chainId, {
+        created_at: "2026-05-14T01:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req.md",
+      }),
+    ).resolves.toBeUndefined();
+    const m = await audit.readManifest(chainId);
+    expect(m!.status).toBe("running");
   });
 });

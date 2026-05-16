@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name("claude-orchestrator")
   .description("Multi-agent orchestration CLI backed by ZooKeeper")
-  .version(`0.5.0 (protocol ${PROTOCOL_VERSION})`)
+  .version(`0.6.0 (protocol ${PROTOCOL_VERSION})`)
   .option("-z, --zookeeper <hosts>", "ZooKeeper connection string (env: ZK_HOSTS)")
   .option("-d, --debug", "Enable debug mode");
 

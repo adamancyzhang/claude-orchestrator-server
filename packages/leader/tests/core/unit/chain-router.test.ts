@@ -61,15 +61,22 @@ import { ChainRouter } from "../../../src/chain-router.js";
 import type { ChainAudit, ChainManifest, ChainOpenMeta, ChainAuditEventInput } from "../../../src/chain-audit.js";
 
 /**
- * In-memory ChainAudit fake — mirrors only the methods ChainRouter consumes
- * (openChain, setLinkTask, setLinkWorker, record, closeChain, readManifest).
- * No filesystem I/O, so unit tests stay hermetic.
+ * In-memory ChainAudit fake — mirrors the methods ChainRouter consumes
+ * (openChain, setLinkTask, setLinkWorker, record, closeChain, readManifest,
+ * incrementRetry). No filesystem I/O, so unit tests stay hermetic.
  */
 class FakeChainAudit implements Pick<ChainAudit,
-  "openChain" | "setLinkTask" | "setLinkWorker" | "record" | "closeChain" | "readManifest"
+  | "openChain"
+  | "setLinkTask"
+  | "setLinkWorker"
+  | "record"
+  | "closeChain"
+  | "readManifest"
+  | "incrementRetry"
 > {
   private manifests = new Map<ChainId, ChainManifest>();
   events: ChainAuditEventInput[] = [];
+  closures: { chainId: ChainId; status: string; extra?: Record<string, unknown> }[] = [];
 
   async openChain(chainId: ChainId, meta: ChainOpenMeta): Promise<void> {
     this.manifests.set(chainId, {
@@ -82,6 +89,8 @@ class FakeChainAudit implements Pick<ChainAudit,
       requirement_path: meta.requirement_path,
       link_tasks: { plan: null, build: null, verify: null, review: null, accept: null },
       link_workers: { plan: null, build: null, verify: null, review: null, accept: null },
+      total_retry_count: 0,
+      max_total_retries: meta.max_total_retries ?? 9,
     });
   }
   async setLinkTask(chainId: ChainId, link: TaskLink, taskId: never): Promise<void> {
@@ -95,15 +104,31 @@ class FakeChainAudit implements Pick<ChainAudit,
   async record(_chainId: ChainId, event: ChainAuditEventInput): Promise<void> {
     this.events.push(event);
   }
-  async closeChain(chainId: ChainId, status: "completed" | "failed" | "aborted"): Promise<void> {
+  async closeChain(
+    chainId: ChainId,
+    status: "completed" | "failed" | "aborted" | "merge_failed",
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
     const m = this.manifests.get(chainId);
     if (m) {
       m.status = status;
       m.completed_at = new Date().toISOString();
     }
+    this.closures.push({ chainId, status, extra });
   }
   async readManifest(chainId: ChainId): Promise<ChainManifest | null> {
     return this.manifests.get(chainId) ?? null;
+  }
+  async incrementRetry(chainId: ChainId): Promise<
+    { total_retry_count: number; max_total_retries: number } | null
+  > {
+    const m = this.manifests.get(chainId);
+    if (!m) return null;
+    m.total_retry_count = (m.total_retry_count ?? 0) + 1;
+    return {
+      total_retry_count: m.total_retry_count,
+      max_total_retries: m.max_total_retries,
+    };
   }
 }
 
@@ -288,7 +313,10 @@ function makeInstance(
 const LEADER_ID = asInstanceId("leader-1");
 const CHAIN_ID: ChainId = asChainId("chain-test-001");
 
-function setup(instances: Instance[] = []): {
+function setup(
+  instances: Instance[] = [],
+  opts?: { max_chain_retries?: number },
+): {
   router: ChainRouter;
   queue: TaskQueue;
   bus: FakeBus;
@@ -316,6 +344,7 @@ function setup(instances: Instance[] = []): {
       leader_instance_id: LEADER_ID,
     },
     chain_audit: audit as never,
+    max_chain_retries: opts?.max_chain_retries,
   });
   return { router, queue, bus, msg, audit };
 }
@@ -698,10 +727,14 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     expect(fb.type).toBe("task_dispatch");
   });
 
-  it("falls back to msg.from_instance for plan feedback (no prior link to bounce back to)", async () => {
-    // Plan link feedback has no prior link, so the retry task is assigned
-    // to the reporter themselves (legacy behavior, kept for ad-hoc flows).
-    const { router, msg } = setup([]);
+  it("drops feedback when neither explicit target nor prior-link worker is resolvable", async () => {
+    // Plan link feedback has no prior link, and there is no upstream
+    // manifest entry to bounce back to. The previous implementation
+    // silently routed to msg.from_instance, which caused workers to
+    // receive their own feedback — death loop. The new contract is to
+    // drop the dispatch and leave a single feedback_unresolved audit
+    // record + a debug_info TUI event.
+    const { router, msg, bus } = setup([]);
     await router.route(
       completionMessage(
         "plan",
@@ -713,10 +746,107 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
         asInstanceId("tom-01"),
       ),
     );
-    const last = msg.sent.at(-1)!;
-    expect(last.to_instance).toBe(asInstanceId("tom-01"));
-    expect(last.link).toBe("plan");
-    expect(last.task_description).toBe("expand the blueprint");
+    // No new task_dispatch was sent in response to the feedback.
+    expect(
+      msg.sent.find(
+        (m) =>
+          m.type === "task_dispatch" &&
+          m.task_description === "expand the blueprint",
+      ),
+    ).toBeUndefined();
+    // The TUI received a debug_info warning about the dropped feedback.
+    expect(
+      bus.emitted.some(
+        (e) =>
+          e.type === "debug_info" &&
+          typeof (e as { message: string }).message === "string" &&
+          (e as { message: string }).message.includes("no resolvable target"),
+      ),
+    ).toBe(true);
+  });
+
+  it("aborts the chain when feedback exceeds max_chain_retries (A5 ceiling)", async () => {
+    // Configure a 1-retry ceiling so the first feedback succeeds and the
+    // second exceeds. Build a chain with planner+builder so feedback has
+    // a resolvable prior-link target (otherwise A6 drops it before A5
+    // gets a chance to count).
+    const tom = makeInstance("tom-01", "Tom", "planner");
+    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, msg, bus, audit, queue } = setup([tom, jerry], {
+      max_chain_retries: 1,
+    });
+    await router.route(chainDefMessage(chainDefJson()));
+    // Drive plan → activate_next so build is dispatched to Jerry and the
+    // manifest records link_workers.build for prev-link resolution.
+    await router.route(
+      completionMessage(
+        "plan",
+        JSON.stringify({
+          decision: "activate_next",
+          reason: "ok",
+          next_link: "build",
+        }),
+        tom.id,
+      ),
+    );
+
+    // First feedback: under the ceiling (post-increment = 1 <= 1).
+    await router.route(
+      completionMessage(
+        "verify",
+        JSON.stringify({
+          decision: "feedback",
+          reason: "first FAILURE",
+          feedback_to_worker: "fix #1",
+        }),
+        asInstanceId("lucy-01"),
+      ),
+    );
+    const dispatchesAfterFirst = msg.sent.filter(
+      (m) => m.type === "task_dispatch" && m.task_description === "fix #1",
+    );
+    expect(dispatchesAfterFirst).toHaveLength(1);
+    const manifestAfterFirst = await audit.readManifest(CHAIN_ID);
+    expect(manifestAfterFirst!.total_retry_count).toBe(1);
+    expect(manifestAfterFirst!.status).toBe("running");
+
+    // Second feedback: post-increment = 2 > 1 → must abort the chain.
+    const beforeSecond = msg.sent.length;
+    await router.route(
+      completionMessage(
+        "verify",
+        JSON.stringify({
+          decision: "feedback",
+          reason: "second FAILURE",
+          feedback_to_worker: "fix #2",
+        }),
+        asInstanceId("lucy-01"),
+      ),
+    );
+    // No new task_dispatch with the second feedback was pushed.
+    expect(
+      msg.sent.slice(beforeSecond).find(
+        (m) => m.type === "task_dispatch" && m.task_description === "fix #2",
+      ),
+    ).toBeUndefined();
+    // No new pending task with description "fix #2" exists.
+    const pending = await queue.listPending();
+    expect(pending.find((t) => t.description === "fix #2")).toBeUndefined();
+    // Chain transitioned to aborted with the ceiling reason.
+    const closure = audit.closures.find((c) => c.chainId === CHAIN_ID);
+    expect(closure).toBeTruthy();
+    expect(closure!.status).toBe("aborted");
+    expect(closure!.extra?.reason).toBe("retry_ceiling_exceeded");
+    // chain_closed event was emitted.
+    expect(
+      bus.emitted.some(
+        (e) => e.type === "chain_closed" && e.chain_id === CHAIN_ID,
+      ),
+    ).toBe(true);
+    // Audit log carries retry_ceiling_exceeded.
+    expect(audit.events.some((e) => e.event === "retry_ceiling_exceeded")).toBe(
+      true,
+    );
   });
 });
 
@@ -817,6 +947,137 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
       "ddddddd",
       "eeeeeee",
     ]);
+  });
+
+  it("aborts close_chain as merge_failed and pushes a retry to the link's worker on conflict", async () => {
+    // Setup: tom + jerry, chain dispatched, build recorded as the link
+    // owned by Jerry in link_workers. Then drive build → activate_next
+    // so the manifest's link_workers["build"] = jerry. Close the chain
+    // with a merge validator that throws on the build commit only —
+    // verify the chain becomes "merge_failed" (not "completed"), the
+    // chain_merge_failed event fires with the failure list, and Jerry
+    // receives a retry task addressed to him with a description naming
+    // the conflicting sha/branch.
+    const tom = makeInstance("tom-01", "Tom", "planner");
+    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const lucy = makeInstance("lucy-01", "Lucy", "verifier");
+    const mia = makeInstance("mia-01", "Mia", "reviewer");
+    const leo = makeInstance("leo-01", "Leo", "accepter");
+
+    const mergeValidator = {
+      async validate(commit: { branch: string; sha: string; task_link: string }) {
+        if (commit.task_link === "build") {
+          throw new Error(
+            `merge ${commit.branch} conflicted at ${commit.sha}`,
+          );
+        }
+        return { decision: "merge" as const, reason: "ok" };
+      },
+    };
+
+    const zk = new MemoryZk();
+    const queue = new TaskQueue({ zk: zk as never });
+    const bus = new FakeBus();
+    const msg = new FakeMessageRouter();
+    const registry = new FakeRegistry([tom, jerry, lucy, mia, leo]);
+    const audit = new FakeChainAudit();
+    const router = new ChainRouter({
+      task_queue: queue,
+      message_router: msg,
+      registry,
+      bus,
+      runner: new FakeRunner(),
+      template_engine: new FakeTemplateEngine(),
+      logger: new SilentLogger(),
+      leader_id: LEADER_ID,
+      leader_name: "Leader",
+      cache_paths: {
+        projects_root: "/tmp/co-test",
+        leader_instance_id: LEADER_ID,
+      },
+      chain_audit: audit as never,
+      merge_validator: mergeValidator,
+    });
+
+    // Activate chain + advance through every link so link_workers is
+    // fully populated and chainCommits collects one commit per link.
+    await router.route(chainDefMessage(chainDefJson()));
+    const flow: { link: TaskLink; next: TaskLink | null; from: InstanceId }[] = [
+      { link: "plan", next: "build", from: tom.id },
+      { link: "build", next: "verify", from: jerry.id },
+      { link: "verify", next: "review", from: lucy.id },
+      { link: "review", next: "accept", from: mia.id },
+    ];
+    for (const step of flow) {
+      await router.route(
+        completionMessage(
+          step.link,
+          JSON.stringify({
+            decision: "activate_next",
+            reason: "ok",
+            next_link: step.next,
+            commit: {
+              sha: `${step.link}-sha`,
+              message: `${step.link}: change`,
+              branch: `co/${step.link}-1`,
+            },
+          }),
+          step.from,
+        ),
+      );
+    }
+    // close_chain with accept's commit also recorded.
+    await router.route(
+      completionMessage(
+        "accept",
+        JSON.stringify({
+          decision: "close_chain",
+          reason: "all good",
+          commit: {
+            sha: "accept-sha",
+            message: "accept: sign off",
+            branch: "co/accept-1",
+          },
+        }),
+        leo.id,
+      ),
+    );
+
+    // Chain closure was "merge_failed", not "completed".
+    const closure = audit.closures.find((c) => c.chainId === CHAIN_ID);
+    expect(closure).toBeTruthy();
+    expect(closure!.status).toBe("merge_failed");
+    expect(closure!.status).not.toBe("completed");
+
+    // chain_merge_failed event lists the failure.
+    const mfEvent = bus.emitted.find((e) => e.type === "chain_merge_failed");
+    expect(mfEvent).toBeTruthy();
+    if (mfEvent && mfEvent.type === "chain_merge_failed") {
+      expect(mfEvent.failures).toHaveLength(1);
+      expect(mfEvent.failures[0].link).toBe("build");
+      expect(mfEvent.failures[0].sha).toBe("build-sha");
+    }
+
+    // chain_closed also fires (TUI shows the chain ended).
+    expect(
+      bus.emitted.some(
+        (e) => e.type === "chain_closed" && e.chain_id === CHAIN_ID,
+      ),
+    ).toBe(true);
+
+    // Jerry received a retry task naming the conflict.
+    const retryToJerry = msg.sent.find(
+      (m) =>
+        m.type === "task_dispatch" &&
+        m.to_instance === jerry.id &&
+        m.link === "build" &&
+        typeof m.task_description === "string" &&
+        m.task_description.includes("Merge conflict"),
+    );
+    expect(retryToJerry).toBeTruthy();
+
+    // Audit log has a merge_failure entry.
+    expect(audit.events.some((e) => e.event === "merge_failure")).toBe(true);
   });
 
   it("does not invoke MergeValidator on reject", async () => {

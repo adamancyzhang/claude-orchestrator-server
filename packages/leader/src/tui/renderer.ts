@@ -251,6 +251,10 @@ function eventToString(event: LeaderEvent): string {
       return `chain ${event.chain_id} activated`;
     case "chain_closed":
       return `chain ${event.chain_id} closed`;
+    case "chain_merge_failed": {
+      const branches = event.failures.map((f) => f.branch).join(", ");
+      return `MERGE_FAILED chain ${event.chain_id}: ${event.failures.length} branch(es) [${branches}] — retry tasks pushed`;
+    }
     case "debug_info":
       return `[debug] ${event.message}`;
     case "stream_chunk":

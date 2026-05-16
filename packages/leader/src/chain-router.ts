@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { extractJson } from "@co/runtime";
 import {
+  ChainConflictError,
   ChainDefSchema,
   EvalDecisionSchema,
   ValidationError,
@@ -70,6 +71,14 @@ export interface ChainRouterOptions {
   leader_id: InstanceId;
   leader_name: string;
   cache_paths: cachePaths.CachePathOptions;
+  /**
+   * Hard ceiling on the total number of feedback-driven retries a chain
+   * may accumulate before ChainRouter forcibly aborts it. Passed to
+   * `chain_audit.openChain` so it is persisted per-chain (survives leader
+   * restarts) and exposed to `dispatchFeedbackAsRetry` via the manifest.
+   * When omitted, ChainAudit uses `DEFAULT_MAX_TOTAL_RETRIES`.
+   */
+  max_chain_retries?: number;
   /**
    * Optional. When provided, ChainRouter calls `validate` for every
    * commit it has collected on `close_chain`, in plan→build→verify→
@@ -384,12 +393,37 @@ export class ChainRouter {
       "utf-8",
     );
     if (this.opts.chain_audit) {
-      await this.opts.chain_audit.openChain(chainDef.chain_id, {
-        created_at: new Date().toISOString(),
-        leader_id: this.opts.leader_id,
-        leader_name: this.opts.leader_name,
-        requirement_path: requirementPath,
-      });
+      try {
+        await this.opts.chain_audit.openChain(chainDef.chain_id, {
+          created_at: new Date().toISOString(),
+          leader_id: this.opts.leader_id,
+          leader_name: this.opts.leader_name,
+          requirement_path: requirementPath,
+          max_total_retries: this.opts.max_chain_retries,
+        });
+      } catch (err) {
+        if (err instanceof ChainConflictError) {
+          this.opts.logger.error("chain_id conflict — refusing to reopen", {
+            chain_id: chainDef.chain_id,
+            existing_status: err.existing_status,
+            existing_completed_at: err.existing_completed_at,
+          });
+          this.opts.bus.emit({
+            type: "debug_info",
+            message: `chain ${chainDef.chain_id} already ${err.existing_status}; new requirement dropped`,
+          });
+          await this.opts.chain_audit.record(chainDef.chain_id, {
+            event: "chain_id_conflict",
+            payload: {
+              existing_status: err.existing_status,
+              existing_completed_at: err.existing_completed_at,
+              requirement_path: requirementPath,
+            },
+          });
+          return;
+        }
+        throw err;
+      }
       await this.opts.chain_audit.record(chainDef.chain_id, {
         event: "requirement_received",
         payload: { requirement_path: requirementPath },
@@ -566,6 +600,40 @@ export class ChainRouter {
           msg,
           decision.feedback_target ?? null,
         );
+        if (!targetId) {
+          // Neither an explicit target nor a manifest-recorded prev-link
+          // worker is available. Self-routing to msg.from_instance was the
+          // previous fallback; it created death loops where a worker kept
+          // receiving its own feedback. Drop the dispatch and leave an
+          // audit trail so the operator can investigate.
+          this.opts.logger.error(
+            "feedback target unresolved — dropping retry dispatch",
+            {
+              chain_id: msg.chain_id ?? null,
+              link: msg.link ?? null,
+              from_instance: msg.from_instance,
+              explicit_target: decision.feedback_target ?? null,
+            },
+          );
+          this.opts.bus.emit({
+            type: "debug_info",
+            message: `feedback for chain ${msg.chain_id ?? "(none)"}/${msg.link ?? "(none)"} dropped: no resolvable target`,
+          });
+          if (this.opts.chain_audit && msg.chain_id) {
+            await this.opts.chain_audit.record(msg.chain_id, {
+              event: "feedback_unresolved",
+              link: msg.link ?? null,
+              worker_id: msg.from_instance,
+              worker_name: msg.from_name,
+              task_id: (msg.task_id as TaskId | null) ?? null,
+              payload: {
+                feedback_to_worker: decision.feedback_to_worker,
+                explicit_target: decision.feedback_target ?? null,
+              },
+            });
+          }
+          break;
+        }
         await this.dispatchFeedbackAsRetry({
           msg,
           targetId,
@@ -576,7 +644,47 @@ export class ChainRouter {
       }
       case "close_chain": {
         if (msg.chain_id) {
-          await this.runMergeValidation(msg.chain_id);
+          const failures = await this.runMergeValidation(msg.chain_id);
+          if (failures.length > 0) {
+            // At least one commit could not be merged to main. Do NOT
+            // mark the chain "completed" — that would silently leave
+            // the deliverable half-merged. Record the failures, abort
+            // chain status as "merge_failed", and push a retry task to
+            // each link's worker so they can fix the conflict.
+            this.opts.logger.error("close_chain blocked: merge failures", {
+              chain_id: msg.chain_id,
+              count: failures.length,
+            });
+            if (this.opts.chain_audit) {
+              for (const f of failures) {
+                await this.opts.chain_audit.record(msg.chain_id, {
+                  event: "merge_failure",
+                  link: f.link,
+                  task_id: null,
+                  payload: {
+                    sha: f.sha,
+                    branch: f.branch,
+                    message: f.message,
+                    error: f.error,
+                  },
+                });
+              }
+              await this.opts.chain_audit.closeChain(
+                msg.chain_id,
+                "merge_failed",
+                { failures: failures as unknown as Record<string, unknown> },
+              );
+            }
+            this.opts.bus.emit({
+              type: "chain_merge_failed",
+              chain_id: msg.chain_id,
+              failures,
+            });
+            await this.pushMergeConflictRetries(msg, failures, requirementPath);
+            this.emitChainClosed(msg.chain_id);
+            this.forgetChain(msg.chain_id);
+            break;
+          }
           if (this.opts.chain_audit) {
             await this.opts.chain_audit.closeChain(msg.chain_id, "completed");
           }
@@ -611,14 +719,34 @@ export class ChainRouter {
   /**
    * Walk the per-chain commit log in P→B→V→R→A order, asking the
    * MergeValidator for a merge / skip / review_first decision per
-   * commit. Errors from a single commit (e.g. merge conflict) are
-   * logged and swallowed so subsequent commits still get a chance.
-   * Skipped silently when no validator is configured.
+   * commit. Continues past a single-commit failure so other commits
+   * still get evaluated, but collects each failure and returns the
+   * list to the caller. Returns an empty array when no validator is
+   * configured (validation is opt-in) or when no commits were recorded.
+   * The caller (close_chain branch) uses a non-empty return value to
+   * route the chain to "merge_failed" status instead of "completed".
    */
-  private async runMergeValidation(chainId: ChainId): Promise<void> {
-    if (!this.opts.merge_validator) return;
+  private async runMergeValidation(
+    chainId: ChainId,
+  ): Promise<
+    Array<{
+      link: TaskLink;
+      sha: string;
+      branch: string;
+      message: string;
+      error: string;
+    }>
+  > {
+    const failures: Array<{
+      link: TaskLink;
+      sha: string;
+      branch: string;
+      message: string;
+      error: string;
+    }> = [];
+    if (!this.opts.merge_validator) return failures;
     const commits = this.chainCommits.get(chainId);
-    if (!commits || commits.length === 0) return;
+    if (!commits || commits.length === 0) return failures;
     for (const commit of commits) {
       try {
         await this.opts.merge_validator.validate(commit);
@@ -629,7 +757,100 @@ export class ChainRouter {
           sha: commit.sha,
           error: String(err),
         });
+        failures.push({
+          link: commit.task_link as TaskLink,
+          sha: commit.sha,
+          branch: commit.branch,
+          message: commit.message,
+          error: String(err),
+        });
       }
+    }
+    return failures;
+  }
+
+  /**
+   * Create one retry task per failed merge, addressed to the worker
+   * that owned that link in the chain manifest (link_workers). Each
+   * retry carries a description naming the failed sha / branch /
+   * conflict so the worker can rebase, fix conflicts, and re-commit.
+   * Skips silently when chain_audit is not configured (manifest
+   * lookups would have no source).
+   */
+  private async pushMergeConflictRetries(
+    msg: Message,
+    failures: ReadonlyArray<{
+      link: TaskLink;
+      sha: string;
+      branch: string;
+      message: string;
+      error: string;
+    }>,
+    requirementPath: string | null,
+  ): Promise<void> {
+    if (!msg.chain_id || !this.opts.chain_audit) return;
+    const manifest = await this.opts.chain_audit.readManifest(msg.chain_id);
+    if (!manifest) return;
+    for (const f of failures) {
+      const targetId = manifest.link_workers?.[f.link];
+      if (!targetId) {
+        this.opts.logger.warn(
+          "merge retry skipped: no worker recorded for link",
+          { chain_id: msg.chain_id, link: f.link },
+        );
+        continue;
+      }
+      const target = await this.opts.registry.get(targetId);
+      const targetName = target?.name ?? "";
+      const description =
+        `Merge conflict on branch ${f.branch} at ${f.sha.slice(0, 8)}: ${f.message}.\n` +
+        `Error: ${f.error}.\n` +
+        `Pull main, resolve conflicts in your worktree, re-commit, and re-run this link.`;
+      const newTask = await this.opts.task_queue.push({
+        title: `[${msg.chain_id}] ${f.link} merge-conflict-fix`,
+        description,
+        criteria: "",
+        priority: 0,
+        link: f.link,
+        chain_id: msg.chain_id,
+        retry_count: 0,
+        created_by: this.opts.leader_id,
+        created_by_name: this.opts.leader_name,
+        assigned_to: targetId,
+        assigned_to_name: targetName,
+      });
+      await this.opts.chain_audit.setLinkTask(
+        msg.chain_id,
+        f.link,
+        newTask.id,
+      );
+      await this.opts.chain_audit.record(msg.chain_id, {
+        event: "feedback_sent",
+        link: f.link,
+        worker_id: targetId,
+        worker_name: targetName,
+        task_id: newTask.id,
+        payload: {
+          reason: "merge_conflict",
+          sha: f.sha,
+          branch: f.branch,
+        },
+      });
+      await this.opts.message_router.send({
+        type: "task_dispatch",
+        from_instance: this.opts.leader_id,
+        from_name: this.opts.leader_name,
+        from_role: "leader",
+        to_instance: targetId,
+        content: newTask.title,
+        link: f.link,
+        chain_id: msg.chain_id,
+        task_id: newTask.id,
+        task_title: newTask.title,
+        task_description: description,
+        task_criteria: "",
+        original_requirement_path: requirementPath,
+      });
     }
   }
 
@@ -641,13 +862,16 @@ export class ChainRouter {
    *   2. The worker that handled the previous link in this chain (e.g.
    *      Verifier feedback → Builder), looked up via the persisted chain
    *      manifest (`link_workers`). Survives leader restarts.
-   *   3. The sender of the completion report (legacy fallback — keeps
-   *      single-worker / ad-hoc flows unblocked).
+   *
+   * Returns null when neither source is available. The caller MUST treat
+   * null as "drop the dispatch + audit" rather than fall back to the
+   * report sender — self-routing creates death loops and silently loses
+   * the operator's chance to intervene.
    */
   private async resolveFeedbackTarget(
     msg: Message,
     explicit: InstanceId | null,
-  ): Promise<InstanceId> {
+  ): Promise<InstanceId | null> {
     if (explicit) return explicit;
     if (msg.chain_id && msg.link && this.opts.chain_audit) {
       const prevLink = PREV_LINKS[msg.link];
@@ -657,7 +881,7 @@ export class ChainRouter {
         if (prev) return prev;
       }
     }
-    return msg.from_instance;
+    return null;
   }
 
   /**
@@ -683,6 +907,47 @@ export class ChainRouter {
         link: msg.link ?? null,
       });
       return;
+    }
+    // Enforce the per-chain feedback-retry ceiling before pushing a new
+    // task. The ceiling lives in the chain manifest (see ChainAudit
+    // openChain), survives leader restarts, and protects against runaway
+    // feedback loops (A→B→A→B…). incrementRetry returns null only when
+    // the manifest itself is missing, in which case we proceed without
+    // ceiling enforcement — the fallback degrades to the pre-A5 behavior
+    // rather than blocking ad-hoc flows.
+    if (this.opts.chain_audit) {
+      const counters = await this.opts.chain_audit.incrementRetry(msg.chain_id);
+      if (counters && counters.total_retry_count > counters.max_total_retries) {
+        this.opts.logger.error("chain retry ceiling exceeded — aborting chain", {
+          chain_id: msg.chain_id,
+          total_retry_count: counters.total_retry_count,
+          max_total_retries: counters.max_total_retries,
+        });
+        await this.opts.chain_audit.record(msg.chain_id, {
+          event: "retry_ceiling_exceeded",
+          link: msg.link,
+          worker_id: msg.from_instance,
+          worker_name: msg.from_name,
+          task_id: (msg.task_id as TaskId | null) ?? null,
+          payload: {
+            total_retry_count: counters.total_retry_count,
+            max_total_retries: counters.max_total_retries,
+            feedback_to_worker: feedback,
+          },
+        });
+        await this.opts.chain_audit.closeChain(msg.chain_id, "aborted", {
+          reason: "retry_ceiling_exceeded",
+          total_retry_count: counters.total_retry_count,
+          max_total_retries: counters.max_total_retries,
+        });
+        this.opts.bus.emit({
+          type: "debug_info",
+          message: `chain ${msg.chain_id} aborted: retry ceiling ${counters.max_total_retries} exceeded`,
+        });
+        this.emitChainClosed(msg.chain_id);
+        this.forgetChain(msg.chain_id);
+        return;
+      }
     }
     const prevLink = PREV_LINKS[msg.link] ?? msg.link;
     const priorRetry = await this.lookupPriorRetry(

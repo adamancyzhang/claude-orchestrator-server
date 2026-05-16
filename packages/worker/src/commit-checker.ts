@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import {
   cachePaths,
+  CommitFailedError,
   type IClaudeRunner,
   type ILogger,
   type ITemplateEngine,
@@ -63,8 +64,22 @@ export class CommitChecker {
         stdio: "pipe",
       });
     } catch (err) {
-      this.opts.logger.error("git commit failed", { error: String(err) });
-      return null;
+      // Surface as a typed error rather than silently swallowing — the
+      // pre-A1 implementation returned null here, which caused the task
+      // to complete with no commit envelope so close_chain's
+      // MergeValidator skipped the link entirely. Callers (worker
+      // watcher) catch CommitFailedError and emit a feedback decision
+      // back to the Leader instead.
+      const stderr = extractStderr(err);
+      this.opts.logger.error("git commit failed", {
+        error: String(err),
+        stderr,
+      });
+      throw new CommitFailedError(
+        `git commit failed in ${this.opts.worktree_path}`,
+        stderr,
+        err,
+      );
     }
 
     const sha = execSync("git rev-parse HEAD", {
@@ -115,6 +130,16 @@ export class CommitChecker {
       return fallback;
     }
   }
+}
+
+function extractStderr(err: unknown): string {
+  if (err && typeof err === "object" && "stderr" in err) {
+    const e = err as { stderr?: Buffer | string };
+    return Buffer.isBuffer(e.stderr)
+      ? e.stderr.toString("utf-8")
+      : String(e.stderr ?? "");
+  }
+  return "";
 }
 
 function parseStatus(status: string): {
