@@ -1,6 +1,6 @@
 // CORE-RETENTION
 // Locks in: CLI bin exists, exposes the version banner with the wire-format
-//   protocol identifier (PROTOCOL_VERSION = 0.5.0). The CLI is the only
+//   protocol identifier (PROTOCOL_VERSION = 0.6.0). The CLI is the only
 //   user-visible entry point; the protocol tag in the banner is the contract
 //   for users running `claude-orchestrator --version` to discover the wire
 //   version their cluster speaks.
@@ -21,15 +21,15 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..", "..");
 const BIN = path.join(REPO_ROOT, "bin", "claude-orchestrator");
 
 describe("claude-orchestrator CLI", () => {
-  it("--version reports 0.5.0 with protocol tag", () => {
+  it("--version reports 0.6.0 with protocol tag", () => {
     const out = execFileSync("node", [BIN, "--version"], { encoding: "utf-8" });
-    expect(out.trim()).toBe("0.5.0 (protocol 0.5.0)");
+    expect(out.trim()).toBe("0.6.0 (protocol 0.6.0)");
   });
 
   it("config outputs JSON with protocol_version", () => {
     const out = execFileSync("node", [BIN, "config"], { encoding: "utf-8" });
     const parsed = JSON.parse(out);
-    expect(parsed.protocol_version).toBe("0.5.0");
+    expect(parsed.protocol_version).toBe("0.6.0");
     expect(parsed.zookeeper.hosts).toBeTruthy();
     expect(parsed.commands.claude_cli).toContain("claude");
   });

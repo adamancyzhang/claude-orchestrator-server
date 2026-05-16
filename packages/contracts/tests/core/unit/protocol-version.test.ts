@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "../../../src/index.js";
 
 describe("PROTOCOL_VERSION", () => {
-  it("is exactly '0.5.0' (handshake constant)", () => {
-    expect(PROTOCOL_VERSION).toBe("0.5.0");
+  it("is exactly '0.6.0' (handshake constant)", () => {
+    expect(PROTOCOL_VERSION).toBe("0.6.0");
   });
 });
