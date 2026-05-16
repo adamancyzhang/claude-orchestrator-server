@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import {
   asTaskId,
   cachePaths,
+  CommitFailedError,
   type ChainId,
   type IClaudeRunner,
   type IHookEngine,
@@ -348,20 +349,39 @@ export class WorkerWatcher {
     }
 
     let commit: CommitResult | null = null;
+    let commitFailure: CommitFailedError | null = null;
     if (link && CHAIN_LINKS.includes(link as TaskLink)) {
-      commit = await this.opts.commit_checker.check(
-        {
-          link: link as TaskLink,
-          task_id: taskId,
-          task_title: msg.task_title ?? link,
-          task_description: msg.task_description ?? msg.content,
-        },
-        result.session_id ?? undefined,
-      );
+      try {
+        commit = await this.opts.commit_checker.check(
+          {
+            link: link as TaskLink,
+            task_id: taskId,
+            task_title: msg.task_title ?? link,
+            task_description: msg.task_description ?? msg.content,
+          },
+          result.session_id ?? undefined,
+        );
+      } catch (err) {
+        if (err instanceof CommitFailedError) {
+          // git commit raised a real error (not "no changes"). Capture
+          // it so the completion report becomes a feedback decision the
+          // Leader can retry instead of a silent activate_next that
+          // would let close_chain proceed without our link's commit.
+          commitFailure = err;
+          this.opts.logger.error(
+            "commit failed — reporting as feedback retry to Leader",
+            { task_id: taskId, link, stderr: err.stderr },
+          );
+        } else {
+          throw err;
+        }
+      }
       // Best-effort workspace memory refresh: tell the Leader which
       // source files this commit touched so it can regenerate their
       // memory entries. Send only when there is at least one changed
-      // file; failures here must not block task completion.
+      // file; failures here must not block task completion. Skipped
+      // entirely when commit failed since there is no committed change
+      // set to refresh against.
       if (commit && commit.changed_files.length > 0) {
         this.opts.message_router
           .send({
@@ -389,14 +409,27 @@ export class WorkerWatcher {
     }
 
     if (link && CHAIN_LINKS.includes(link as TaskLink)) {
-      await this.sendCompletionReport(
-        link as TaskLink,
-        msg,
-        resultPath,
-        taskId,
-        commit,
-        result.session_id ?? undefined,
-      );
+      if (commitFailure) {
+        // Skip self-evaluation entirely: the link's deliverable is broken
+        // because the commit did not land. Force a feedback decision
+        // targeted back to this worker so Leader requeues the same link.
+        await this.sendForcedFeedbackReport({
+          link: link as TaskLink,
+          msg,
+          resultPath,
+          taskId,
+          stderr: commitFailure.stderr,
+        });
+      } else {
+        await this.sendCompletionReport(
+          link as TaskLink,
+          msg,
+          resultPath,
+          taskId,
+          commit,
+          result.session_id ?? undefined,
+        );
+      }
     } else if (link === "decompose") {
       await this.sendDecomposeReport(msg, resultPath, taskId);
     }
@@ -541,6 +574,42 @@ export class WorkerWatcher {
       from_role: this.opts.worker_role,
       to_instance: this.opts.leader_id,
       content: body,
+      link,
+      task_id: taskId,
+      chain_id: msg.chain_id ?? null,
+      result_path: resultPath,
+    });
+  }
+
+  /**
+   * Emit a completion_report with a forced `feedback` EvalDecision when
+   * a commit failure prevents the link from producing a valid artifact.
+   * Skips the self-evaluator entirely so an LLM hallucination can't
+   * promote broken work to activate_next. The feedback targets the same
+   * worker (self-retry of the same link) — Leader's chain-router treats
+   * it like any other feedback dispatch, subject to the retry ceiling.
+   */
+  private async sendForcedFeedbackReport(args: {
+    link: TaskLink;
+    msg: Message;
+    resultPath: string;
+    taskId: TaskId;
+    stderr: string;
+  }): Promise<void> {
+    const { link, msg, resultPath, taskId, stderr } = args;
+    const decision = {
+      decision: "feedback" as const,
+      reason: `commit failed at ${link}: ${stderr.slice(0, 200) || "unknown error"}`,
+      feedback_to_worker: `git commit failed for ${link} task ${taskId}. Diagnose with 'git status' / 'git diff' in the worktree, resolve the issue, then re-run.`,
+      feedback_target: this.opts.instance_id,
+    };
+    await this.opts.message_router.send({
+      type: "completion_report",
+      from_instance: this.opts.instance_id,
+      from_name: this.opts.worker_name,
+      from_role: this.opts.worker_role,
+      to_instance: this.opts.leader_id,
+      content: JSON.stringify(decision),
       link,
       task_id: taskId,
       chain_id: msg.chain_id ?? null,
