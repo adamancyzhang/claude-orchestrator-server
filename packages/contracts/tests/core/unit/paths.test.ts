@@ -107,4 +107,52 @@ describe("cachePaths", () => {
       cachePaths.workerLocalDocPath(opts, "alpha", "2026-05-15", "plan", "chain-x"),
     ).toBe("/tmp/projects/leader1/docs/alpha/2026-05-15/plan-chain-x.md");
   });
+
+  it("composes workspace memory paths that mirror the source tree", () => {
+    // memory/ is the shared workspace memory root for this leader instance.
+    // Source files are mirrored 1:1 with the project workspace; the per-file
+    // summary swaps the source extension for .md, and every directory carries
+    // a CLAUDE.md index that the workers can read for fast context.
+    expect(cachePaths.workspaceMemoryRoot(opts)).toBe(
+      "/tmp/projects/leader1/memory",
+    );
+
+    // Per-source-file summary: extension is replaced with .md.
+    expect(
+      cachePaths.workspaceMemoryFilePath(
+        opts,
+        "packages/worker/src/watcher.ts",
+      ),
+    ).toBe("/tmp/projects/leader1/memory/packages/worker/src/watcher.md");
+    // Tolerates a leading slash on the relative input.
+    expect(
+      cachePaths.workspaceMemoryFilePath(
+        opts,
+        "/packages/runtime/src/template.ts",
+      ),
+    ).toBe("/tmp/projects/leader1/memory/packages/runtime/src/template.ts".replace(
+      /\.ts$/,
+      ".md",
+    ));
+    // Non-".ts" sources also swap the extension.
+    expect(
+      cachePaths.workspaceMemoryFilePath(opts, "scripts/build.mjs"),
+    ).toBe("/tmp/projects/leader1/memory/scripts/build.md");
+
+    // Per-directory CLAUDE.md index.
+    expect(
+      cachePaths.workspaceMemoryDirIndexPath(opts, "packages/worker/src"),
+    ).toBe("/tmp/projects/leader1/memory/packages/worker/src/CLAUDE.md");
+    // Trailing slash is tolerated.
+    expect(
+      cachePaths.workspaceMemoryDirIndexPath(opts, "packages/worker/src/"),
+    ).toBe("/tmp/projects/leader1/memory/packages/worker/src/CLAUDE.md");
+    // Root dir collapses to memory/CLAUDE.md.
+    expect(cachePaths.workspaceMemoryDirIndexPath(opts, "")).toBe(
+      "/tmp/projects/leader1/memory/CLAUDE.md",
+    );
+    expect(cachePaths.workspaceMemoryDirIndexPath(opts, ".")).toBe(
+      "/tmp/projects/leader1/memory/CLAUDE.md",
+    );
+  });
 });

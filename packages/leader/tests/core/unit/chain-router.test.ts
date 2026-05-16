@@ -870,3 +870,245 @@ const NEXT_LINK: Record<string, TaskLink> = {
   verify: "review",
   review: "accept",
 };
+
+// ---------------------------------------------------------------------------
+// memory_refresh routing
+// ---------------------------------------------------------------------------
+//
+// Builders send a memory_refresh message after a successful commit so the
+// Leader can regenerate the workspace memory entries for the changed files.
+// ChainRouter only parses + delegates; the regeneration itself is covered by
+// memory-bootstrap.test.ts.
+
+interface FakeMemoryBootstrap {
+  calls: string[][];
+  run_count: number;
+  refresh_stale_count: number;
+  refreshFiles: (sources: string[]) => Promise<{
+    generated: number;
+    failed: number;
+    filtered_out: number;
+  }>;
+  run: () => Promise<{
+    files_generated: number;
+    files_skipped: number;
+    files_failed: number;
+    dirs_generated: number;
+    dirs_failed: number;
+  }>;
+  refreshStale: () => Promise<{
+    stale_found: number;
+    generated: number;
+    failed: number;
+    filtered_out: number;
+  }>;
+}
+
+function makeFakeBootstrap(): FakeMemoryBootstrap {
+  const calls: string[][] = [];
+  const state = { run_count: 0, refresh_stale_count: 0 };
+  return {
+    calls,
+    get run_count() {
+      return state.run_count;
+    },
+    get refresh_stale_count() {
+      return state.refresh_stale_count;
+    },
+    async refreshFiles(sources: string[]) {
+      calls.push([...sources]);
+      return { generated: sources.length, failed: 0, filtered_out: 0 };
+    },
+    async run() {
+      state.run_count += 1;
+      return {
+        files_generated: 0,
+        files_skipped: 0,
+        files_failed: 0,
+        dirs_generated: 0,
+        dirs_failed: 0,
+      };
+    },
+    async refreshStale() {
+      state.refresh_stale_count += 1;
+      return { stale_found: 0, generated: 0, failed: 0, filtered_out: 0 };
+    },
+  };
+}
+
+/** Build a TUI-style user_input message with no link — what `/init` etc. come in as. */
+function slashCommandMessage(text: string): Message {
+  return {
+    id: asMessageId("msg-slash"),
+    type: "user_input",
+    from_instance: LEADER_ID,
+    from_name: "Leader",
+    from_role: "leader",
+    to_instance: LEADER_ID,
+    to_name: null,
+    content: text,
+    link: null,
+    task_id: null,
+    chain_id: null,
+    task_title: null,
+    task_description: null,
+    task_criteria: null,
+    result_path: null,
+    original_requirement_path: null,
+    reply_to: null,
+    read: false,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function memoryRefreshMessage(content: string): Message {
+  return {
+    id: asMessageId("msg-mr"),
+    type: "memory_refresh",
+    from_instance: asInstanceId("alpha"),
+    from_name: "alpha",
+    from_role: "builder",
+    to_instance: LEADER_ID,
+    to_name: null,
+    content,
+    link: "build",
+    task_id: null,
+    chain_id: null,
+    task_title: null,
+    task_description: null,
+    task_criteria: null,
+    result_path: null,
+    original_requirement_path: null,
+    reply_to: null,
+    read: false,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function memoryRefreshRouter(
+  bootstrap: FakeMemoryBootstrap | undefined,
+): ChainRouter {
+  return new ChainRouter({
+    task_queue: new TaskQueue({ zk: new MemoryZk() as never }),
+    message_router: new FakeMessageRouter(),
+    registry: new FakeRegistry([]),
+    bus: new FakeBus(),
+    runner: new FakeRunner(),
+    template_engine: new FakeTemplateEngine(),
+    logger: new SilentLogger(),
+    leader_id: LEADER_ID,
+    leader_name: "Leader",
+    cache_paths: {
+      projects_root: "/tmp/co-test",
+      leader_instance_id: LEADER_ID,
+    },
+    memory_bootstrap: bootstrap as never,
+  });
+}
+
+describe("ChainRouter.handleMemoryRefresh", () => {
+  it("parses changed_files from the JSON payload and forwards them to MemoryBootstrap.refreshFiles", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(
+      memoryRefreshMessage(
+        JSON.stringify({
+          chain_id: "chain-1",
+          task_id: "task-1",
+          commit_sha: "deadbeef",
+          changed_files: [
+            "packages/worker/src/watcher.ts",
+            "packages/leader/src/chain-router.ts",
+          ],
+        }),
+      ),
+    );
+    expect(bs.calls).toHaveLength(1);
+    expect(bs.calls[0]).toEqual([
+      "packages/worker/src/watcher.ts",
+      "packages/leader/src/chain-router.ts",
+    ]);
+  });
+
+  it("does not call MemoryBootstrap when changed_files is empty or absent", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(memoryRefreshMessage(JSON.stringify({ changed_files: [] })));
+    await router.route(memoryRefreshMessage(JSON.stringify({})));
+    expect(bs.calls).toHaveLength(0);
+  });
+
+  it("silently drops malformed payloads (not JSON, wrong type) — refresh is best-effort", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(memoryRefreshMessage("not-json"));
+    await router.route(
+      memoryRefreshMessage(JSON.stringify({ changed_files: "scalar-not-array" })),
+    );
+    expect(bs.calls).toHaveLength(0);
+  });
+
+  it("is a no-op when no MemoryBootstrap is wired (test/CLI flows)", async () => {
+    const router = memoryRefreshRouter(undefined);
+    // Should not throw — handler logs and returns.
+    await router.route(
+      memoryRefreshMessage(
+        JSON.stringify({ changed_files: ["packages/worker/src/watcher.ts"] }),
+      ),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /init slash command
+// ---------------------------------------------------------------------------
+//
+// `/init` is the user-driven entry point that fills the workspace memory
+// tree. The startup orchestrator no longer triggers a bootstrap, so this
+// is the only way the memory tree gets populated. Slash commands arrive
+// through the TUI as user_input messages with link=null; ChainRouter
+// dispatches them ahead of the decompose flow.
+
+describe("ChainRouter slash commands", () => {
+  // Yield a tick so the fire-and-forget bootstrap promise inside
+  // runInitCommand has a chance to resolve before the test asserts on
+  // the fake's call counts.
+  const flushMicrotasks = () =>
+    new Promise<void>((resolve) => setImmediate(resolve));
+
+  it("/init triggers MemoryBootstrap.run() and MemoryBootstrap.refreshStale()", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(slashCommandMessage("/init"));
+    await flushMicrotasks();
+    expect(bs.run_count).toBe(1);
+    expect(bs.refresh_stale_count).toBe(1);
+  });
+
+  it("/init tolerates trailing whitespace and trailing args", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(slashCommandMessage("  /init  --some-future-flag  "));
+    await flushMicrotasks();
+    expect(bs.run_count).toBe(1);
+    expect(bs.refresh_stale_count).toBe(1);
+  });
+
+  it("/init is a no-op when MemoryBootstrap is not wired", async () => {
+    const router = memoryRefreshRouter(undefined);
+    // Must not throw and must not invoke any downstream — confirmed by
+    // the absence of any send / push to the fake collaborators.
+    await router.route(slashCommandMessage("/init"));
+    await flushMicrotasks();
+  });
+
+  it("unknown slash command does not trigger bootstrap and falls through (logged as warning)", async () => {
+    const bs = makeFakeBootstrap();
+    const router = memoryRefreshRouter(bs);
+    await router.route(slashCommandMessage("/totally-unknown-command"));
+    await flushMicrotasks();
+    // /init was not called.
+    expect(bs.run_count).toBe(0);
+    expect(bs.refresh_stale_count).toBe(0);
+  });
+});

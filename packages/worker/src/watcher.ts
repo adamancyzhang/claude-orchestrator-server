@@ -220,6 +220,9 @@ export class WorkerWatcher {
       },
     });
 
+    const workspaceMemoryPath = cachePaths.workspaceMemoryRoot(
+      this.opts.cache_paths,
+    );
     const renderPrompt = (retryHint: string): string => {
       if (!link) return msg.content;
       const tplName = LINK_TO_TASK_TEMPLATE[link];
@@ -242,6 +245,7 @@ export class WorkerWatcher {
         upstream_build_artifact: chainArtifacts.build,
         upstream_verify_artifact: chainArtifacts.verify,
         upstream_review_artifact: chainArtifacts.review,
+        workspace_memory_path: workspaceMemoryPath,
         retry_hint: retryHint,
       });
     };
@@ -354,6 +358,34 @@ export class WorkerWatcher {
         },
         result.session_id ?? undefined,
       );
+      // Best-effort workspace memory refresh: tell the Leader which
+      // source files this commit touched so it can regenerate their
+      // memory entries. Send only when there is at least one changed
+      // file; failures here must not block task completion.
+      if (commit && commit.changed_files.length > 0) {
+        this.opts.message_router
+          .send({
+            type: "memory_refresh",
+            from_instance: this.opts.instance_id,
+            from_name: this.opts.worker_name,
+            from_role: this.opts.worker_role,
+            to_instance: this.opts.leader_id,
+            content: JSON.stringify({
+              chain_id: msg.chain_id ?? null,
+              task_id: taskId,
+              commit_sha: commit.sha,
+              changed_files: commit.changed_files,
+            }),
+            link: link as TaskLink,
+            chain_id: msg.chain_id ?? null,
+            task_id: taskId,
+          })
+          .catch((err) =>
+            this.opts.logger.warn("memory_refresh send failed", {
+              error: String(err),
+            }),
+          );
+      }
     }
 
     if (link && CHAIN_LINKS.includes(link as TaskLink)) {

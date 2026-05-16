@@ -13,6 +13,9 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 
 If either upstream artifact is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop — do not invent results.
 
+## Workspace Memory (fast reference)
+Before walking through a source file referenced by Plan/Build, check `{{workspace_memory_path}}/<relative-source-path>.md` (per-file summary) and the `CLAUDE.md` in its parent directory (directory overview). They mirror the project's source tree and capture purpose, public exports, key invariants, and cross-file dependencies. Treat them as **hints, not ground truth** — if a memory file is missing or its `source_hash` is stale, fall back to the source file.
+
 ## Intent
 Cross-reference Plan ↔ Build to build a verification checklist. Classify every item: PASS, GAP, FAILURE, DEVIATION. Be terse but unambiguous; the Reviewer will use this map verbatim.
 

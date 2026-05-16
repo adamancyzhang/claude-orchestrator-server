@@ -11,6 +11,7 @@ import type { ChainId, InstanceId, MessageId, TaskId } from "../ids.js";
  *   tasks/<task_id>/       definition.md  exec-<ts>.log  eval-<n>.log  commit.log  result.md
  *   messages/<message_id>/ inbound.log  decompose.md
  *   docs/<worker>/<date>/  CLAUDE.md  <prefix>-<uniqueKey>.md  evidence/
+ *   memory/                CLAUDE.md  <dir>/CLAUDE.md  <dir>/<file>.md
  */
 export interface CachePathOptions {
   projects_root: string;
@@ -114,4 +115,36 @@ export function workerLocalDocPath(
   uniqueKey: string,
 ): string {
   return `${coRootDir(o)}/docs/${workerName}/${date}/${prefix}-${uniqueKey}.md`;
+}
+
+// memory/...  — workspace memory mirroring the project source tree.
+// Layout:
+//   memory/                              — root index lives in CLAUDE.md
+//   memory/<dir>/CLAUDE.md               — per-directory index
+//   memory/<dir>/<file>.md               — per-source-file summary
+// `relativeSourcePath` is the path of the source file relative to the project
+// workspace root (e.g. "packages/worker/src/watcher.ts"). The summary file
+// keeps the same relative path but swaps the extension to ".md".
+export function workspaceMemoryRoot(o: CachePathOptions): string {
+  return `${coRootDir(o)}/memory`;
+}
+
+export function workspaceMemoryFilePath(
+  o: CachePathOptions,
+  relativeSourcePath: string,
+): string {
+  const normalized = relativeSourcePath.replace(/^\/+/, "");
+  const mdPath = normalized.replace(/\.[^./]+$/, ".md");
+  return `${workspaceMemoryRoot(o)}/${mdPath}`;
+}
+
+export function workspaceMemoryDirIndexPath(
+  o: CachePathOptions,
+  relativeDirPath: string,
+): string {
+  const normalized = relativeDirPath.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (normalized === "" || normalized === ".") {
+    return `${workspaceMemoryRoot(o)}/CLAUDE.md`;
+  }
+  return `${workspaceMemoryRoot(o)}/${normalized}/CLAUDE.md`;
 }

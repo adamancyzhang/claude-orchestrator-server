@@ -14,6 +14,9 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 
 Extract every implementable requirement as a checklist before writing code.
 
+## Workspace Memory (fast reference)
+Before modifying a source file, check `{{workspace_memory_path}}/<relative-source-path>.md` (per-file summary) and the `CLAUDE.md` in its parent directory (directory overview). They mirror the project's source tree and capture purpose, public exports, key invariants, and cross-file dependencies. Treat them as **hints, not ground truth** — if a memory file is missing or its `source_hash` is stale, fall back to the source file.
+
 ## Intent
 Implement the requirements in the Planner's blueprint, leaving an evidence trail the Verifier can independently re-walk. Map every line of your traceability output back to the blueprint item it satisfies.
 

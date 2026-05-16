@@ -19,7 +19,8 @@ docs/v0.6/
 │   ├── package-layout.md               # 多包工程分层、依赖矩阵
 │   ├── error-and-recovery.md           # 错误模型与恢复状态机
 │   ├── config-and-cli.md               # 配置分层与 CLI 命令参考
-│   └── execution-runtime.md            # Runner / Template / Hooks 执行层
+│   ├── execution-runtime.md            # Runner / Template / Hooks 执行层
+│   └── workspace-memory.md             # 工作区内容记忆（与源码树同构）
 ├── core/
 │   ├── core-chain-overview.md          # 核心链路总览
 │   ├── 01-requirement-to-tasks.md      # 链路 1：用户输入 → 需求拆解 → 任务入队

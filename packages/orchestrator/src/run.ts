@@ -34,6 +34,7 @@ import {
   LeaderEventBus,
   LeaderState,
   LeaderWatcher,
+  MemoryBootstrap,
   MergeValidator,
   StdinKeyboardSource,
   StdoutSink,
@@ -197,6 +198,21 @@ export async function runOrchestrator(
     logger: logger.child("chain-audit"),
   });
 
+  // Memory bootstrap is constructed before ChainRouter so we can hand
+  // the same instance to ChainRouter for both `/init` (user-triggered
+  // full bootstrap + stale sweep) and `memory_refresh` (per-commit
+  // incremental refresh). The bootstrap does NOT run automatically on
+  // startup — the user kicks it explicitly by typing `/init` in the TUI
+  // because a full pass calls claude-cli ~once per source file and is
+  // expensive to launch unsolicited.
+  const memoryBootstrap = new MemoryBootstrap({
+    cache_paths: cachePaths,
+    workspace_root: projectRoot,
+    runner,
+    template_engine: templateEngine,
+    logger: logger.child("memory-bootstrap"),
+  });
+
   const chainRouter = new ChainRouter({
     task_queue: taskQueue,
     message_router: messageRouter,
@@ -210,6 +226,7 @@ export async function runOrchestrator(
     cache_paths: cachePaths,
     merge_validator: mergeValidator,
     chain_audit: chainAudit,
+    memory_bootstrap: memoryBootstrap,
   });
 
   const leaderWatcher = new LeaderWatcher(
