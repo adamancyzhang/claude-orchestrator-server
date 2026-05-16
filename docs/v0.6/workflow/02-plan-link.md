@@ -24,7 +24,7 @@ WorkerWatcher (Tom) ← msg-0000000001
 5.5 ClaudeRunner.run({prompt, system_prompt=identity, cwd=worktree})
     │  ├─ log: projects/leader-01/tasks/task-0000000001/exec-<ts>.log
     │  └─ result: projects/leader-01/tasks/task-0000000001/result.md
-    │     ( + blueprint.md / CLAUDE.md 等 worktree 内文件 )
+    │             (Tom 同时写 local_doc_path = projects/leader-01/docs/Tom/<date>/plan-<chain_id>.md)
     ▼
 5.6 hooks.fire("worker_message_end")
     │
@@ -53,7 +53,7 @@ WorkerWatcher (Tom) ← msg-0000000001
       → MessageRouter.send → /messages/jerry-01/msg-0000000001
 ```
 
-## 5.1 任务认领 + busy 心跳 + task_claimed hook ✅ issue #1 修复
+## 5.1 任务认领 + busy 心跳 + task_claimed hook
 
 `WorkerWatcher.processMessage`（`packages/worker/src/watcher.ts`）的入口：
 
@@ -61,7 +61,7 @@ WorkerWatcher (Tom) ← msg-0000000001
 await this.opts.registry.heartbeat(this.opts.instance_id, {
   status: "busy",
   current_task_id: realTaskId,
-}).catch(...);    // ✅ 不阻塞主流程
+}).catch(...);    // 不阻塞主流程
 try {
   await this.processTask({ msg, link, taskId, realTaskId, isChainLink });
 } finally {
@@ -72,7 +72,7 @@ try {
 }
 ```
 
-`/claude-orchestrator/instances/tom-01` 在 ZK 端 status 字段先从 `idle` → `busy`（current_task_id="task-0000000001"），处理完后回到 `idle`（current_task_id=null）。这下 `ChainRouter.findIdleWorkerByRole` 真的按 status 过滤。
+`/claude-orchestrator/instances/tom-01` 在 ZK 端 status 字段先从 `idle` → `busy`（current_task_id="task-0000000001"），处理完后回到 `idle`（current_task_id=null）。`ChainRouter.findIdleWorkerByRole` 据此过滤。
 
 进入 `processTask` 后第一件事是认领：
 
@@ -102,7 +102,7 @@ if (claimed) {
 - §5.8 末尾：`task_queue.complete(task_id, resultPath, instance_id, name, duration)` 把节点搬到 `/tasks/completed/task-0000000001` (PERSISTENT)，删除 claimed，并 fire `task_completed` hook（含 `duration_seconds`）
 - `task_queue.claim(claimer, role)` 仍存在，主要被 TaskRecovery / CLI 使用，本工作流不走它
 
-⚠️ Edge case：若 task_id 对应的 pending 节点已不存在（重启重发、recovery 时清空 pending 后又收到旧消息等），`claimById` 返回 null，Worker 仍继续处理（仅记一条 warn log），保证不阻塞消息处理。
+Edge case：若 task_id 对应的 pending 节点已不存在（重启重发、recovery 时清空 pending 后又收到旧消息等），`claimById` 返回 null，Worker 仍继续处理（仅记一条 warn log），不阻塞消息处理。
 
 ## 5.2 选择模板
 
@@ -119,9 +119,9 @@ const logPath = cachePaths.taskLogPath(this.opts.cache_paths, taskId, new Date()
 const tplName = LINK_TO_TASK_TEMPLATE[link];      // "worker-planner-task.md"
 ```
 
-✅ **issue #8 修复**：`cachePaths.taskLogPath/taskResultPath/evalLogPath/commitLogPath` 已不再额外拼 `task-` 前缀，因为 task_queue 生成的 id 本身就是 `task-NNNNNNNNNN`。每条 task 拥有独立子目录 `tasks/<task_id>/`，目录下放 `definition.md`（暂未生成）、`exec-<ts>.log`、`eval-<N>.log`、`commit.log`、`result.md`。锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
+`cachePaths.taskLogPath/taskResultPath/evalLogPath/commitLogPath` 不额外拼 `task-` 前缀，因为 task_queue 生成的 id 本身就是 `task-NNNNNNNNNN`。每条 task 拥有独立子目录 `tasks/<task_id>/`，目录下放 `definition.md`（暂未生成）、`exec-<ts>.log`、`eval-<N>.log`、`commit.log`、`result.md`。锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
 
-✅ **role-named template 切换**：`LINK_TO_TASK_TEMPLATE` 在 `packages/worker/src/watcher.ts:30-37` 把每条 link 映射到 `worker-{role}-task.md`（5 个 role）+ `worker-decompose.md`。Tom 的 system prompt 是 boot 时一次性载入的 `worker-planner.md` + `personal-claude-planner.md`（已渲染 `{{name}}`/`{{role}}`），每次任务额外渲染 per-task wrapper 作为 user message。
+`LINK_TO_TASK_TEMPLATE` 在 `packages/worker/src/watcher.ts:30-37` 把每条 link 映射到 `worker-{role}-task.md`（5 个 role）+ `worker-decompose.md`。Tom 的 system prompt 是 boot 时一次性载入的 `worker-planner.md` + `personal-claude-planner.md`（已渲染 `{{name}}`/`{{role}}`），每次任务额外渲染 per-task wrapper 作为 user message。
 
 ## 5.3 Hook: worker_message_start
 
@@ -153,8 +153,8 @@ prompt = this.opts.template_engine.render(tplName /* worker-planner-task.md */, 
   date:             dateStamp,
   unique_key:       uniqueKey,                                       // chain_id 或 taskId
   task_title:       msg.task_title ?? "",                            // "设计 /api/users 分页接口蓝图"
-  task_description: msg.task_description ?? msg.content,             // ✅ #9 修复后 msg.task_description 携带 ChainDef.description
-  task_criteria:    msg.task_criteria ?? "",                         // ✅ #9 修复后 msg.task_criteria 携带 ChainDef.criteria
+  task_description: msg.task_description ?? msg.content,             // msg.task_description 携带 ChainDef.description
+  task_criteria:    msg.task_criteria ?? "",                         // msg.task_criteria 携带 ChainDef.criteria
   result_path:      resultPath,                                      // 见 5.2
   local_doc_path:   localDocPath,                                    // projects/leader-01/docs/Tom/<date>/plan-<chain_id>.md
   work_dir:         this.opts.worktree_path,                         // "~/work/co-pagination/.worktrees/Tom"
@@ -185,11 +185,11 @@ The user's original requirement is preserved verbatim at `~/.claude-orchestrator
 The Leader needs a blueprint that downstream Builder / Verifier / Reviewer / Accepter can execute in sequence. Produce a self-contained design document — architecture, interfaces, data flow, concrete Build steps with verifiable acceptance criteria — so each downstream link can ground its work in this one file.
 
 ## Required Output Files
-You MUST write your blueprint to **exactly** these two paths:
+You MUST write your blueprint to **exactly** these two paths in the shared cache:
 
-- `result_path` (Leader cache, authoritative cross-worktree source):
+- `result_path` (chain 共享 cache，下游 worker 唯一权威读取入口):
   `~/.claude-orchestrator/projects/leader-01/tasks/task-0000000001/result.md`
-- `local_doc_path` (in-worktree copy):
+- `local_doc_path` (worker 自留备份，cache 下同一根):
   `~/.claude-orchestrator/projects/leader-01/docs/Tom/2026-05-14/plan-chain-pagination-001.md`
 
 Use the **Write** tool for both. Both paths are non-negotiable. After writing, use the **Read** tool on `result_path` to confirm the file exists and is non-empty.
@@ -198,11 +198,7 @@ Use the **Write** tool for both. Both paths are non-negotiable. After writing, u
 
 ```
 
-✅ **issue #9 修复**：description / criteria 来自初始 ChainDef，task_dispatch 已携带。
-
-✅ **issue #2 修复**：`{{name}}` / `{{role}}` 现在会被替换。Tom 的 prompt 中的 `Read .claude-orchestrator/docs/{{name}}/...` 在 system prompt（worker-planner.md / personal-claude-planner.md）渲染时就替换为 Tom；同时本步 user-message 模板里的 `{{name}}` / `{{date}}` 也由 watcher 的 `renderPrompt` 替换。
-
-✅ **本轮治理**：`task_doc_path` 渲染变量已完全删除，模板中"Spec doc: {{task_doc_path}}"行随之移除。下游 worker 需要的所有上游 artifact 路径已在 §5.4 的 `upstream_*_artifact` 变量中显式传入。
+description / criteria 来自初始 ChainDef，由 task_dispatch 消息携带。Tom 的 system prompt（`worker-planner.md` + `personal-claude-planner.md`）在 boot 时已渲染 `{{name}}/{{role}}`；本步 user-message 模板里的 `{{name}}` / `{{date}}` 由 watcher 的 `renderPrompt` 替换。下游 worker 需要的上游 artifact 路径在 §5.4 的 `upstream_*_artifact` 变量中显式传入。
 
 ## 5.5 主任务执行 claude-cli
 
@@ -252,8 +248,7 @@ claude --append-system-prompt '<Tom identity card>' \
 |------|------|------|
 | `~/.claude-orchestrator/projects/leader-01/tasks/task-0000000001/exec-<ts>.log` | claude-cli stream-json | 完整流（system/init, assistant_message, tool_use 等） |
 | `~/.claude-orchestrator/projects/leader-01/tasks/task-0000000001/result.md` | markdown | Tom 写入的 blueprint（即"Outputs #1"） |
-| `~/.claude-orchestrator/projects/leader-01/docs/Tom/2026-05-14/plan-chain-pagination-001.md` | markdown | local_doc_path：同上 blueprint 的本地副本，由 Tom 自己 Write |
-| `~/work/co-pagination/.worktrees/Tom/.claude-orchestrator/docs/Tom/2026-05-14/CLAUDE.md` | markdown | 每日 directory memory（worktree-initializer 渲染后写入），记录完成状态 |
+| `~/.claude-orchestrator/projects/leader-01/docs/Tom/2026-05-14/plan-chain-pagination-001.md` | markdown | local_doc_path：worker 自留备份，由 Tom 自己 Write |
 
 **blueprint.md 内容（示意）**：
 
@@ -316,20 +311,15 @@ if (link && CHAIN_LINKS.includes(link as TaskLink)) {
 
 `packages/worker/src/commit-checker.ts` `check()` 流程：
 
-1. `git status --porcelain` （cwd=worktree_path）
-   - 假设输出：
-     ```
-      M .claude-orchestrator/docs/Tom/2026-05-14/CLAUDE.md
-     ?? .claude-orchestrator/docs/Tom/2026-05-14/blueprint.md
-     ```
-2. `parseStatus()` → `changed=[" M .claude-orchestrator/docs/Tom/2026-05-14/CLAUDE.md"]`, `untracked=[".claude-orchestrator/docs/Tom/2026-05-14/blueprint.md"]`
+1. `git status --porcelain` （cwd=worktree_path）—— 收集 Tom 在 worktree 内做的源码改动（如 `src/...` / `tests/...`）。注：blueprint.md / local_doc_path 写在 cache 下，**不**在 worktree git 工作区，不会出现在 `git status` 输出。
+2. `parseStatus()` → 拆分 `changed` / `untracked` 数组（worktree 内的实际改动文件）
 3. `generateMessage()`：
    - 模板：`templates/agents/worker-commit-message.md`
    - vars: `changed_files / untracked_files / task_title / link`
    - 调 `ClaudeRunner.run({prompt, log_path: commitLogPath, resume_session_id: "sess-tom-plan-001", quiet: true})`
    - log 路径：`~/.claude-orchestrator/projects/leader-01/tasks/task-0000000001/commit.log`
    - 读 log 首行截 72 字符 → 假设 `feat(plan): blueprint for /api/users pagination`
-4. ✅ **issue #11 修复**：`execFileSync("git", ["add", "-A"], …)` + `execFileSync("git", ["commit", "-m", message], …)`，message 作为单独 argv 元素传给 git，跳过 shell 解析。
+4. `execFileSync("git", ["add", "-A"], …)` + `execFileSync("git", ["commit", "-m", message], …)`，message 作为单独 argv 元素传给 git，跳过 shell 解析（避免命令注入）。
 5. `git rev-parse HEAD` → `7c4f3a2b...`
 6. 返回 `CommitResult`：
 
@@ -337,12 +327,14 @@ if (link && CHAIN_LINKS.includes(link as TaskLink)) {
 {
   "sha": "7c4f3a2b9d1e5f6a8b4c3d2e1f0987654321abcd",
   "message": "feat(plan): blueprint for /api/users pagination",
-  "changed_files": ["M .claude-orchestrator/docs/Tom/2026-05-14/CLAUDE.md"],
-  "untracked_files": [".claude-orchestrator/docs/Tom/2026-05-14/blueprint.md"]
+  "changed_files": [],
+  "untracked_files": []
 }
 ```
 
-⚠️ 错误处理：`git commit` 失败 → 返回 null。`git status` 失败由 execFileSync 抛异常（外层未 catch，**冒泡到 processTask 终止当前任务，但 try/finally 会保证 idle heartbeat 仍写回**）。生成 commit message 失败 → fallback `chore: auto-commit from Tom`。
+（Plan 环节 Tom 通常不改 worktree 内源码，changed/untracked 多为空；Build 环节 Jerry 会有实际改动。）
+
+错误处理：`git commit` 失败 → 返回 null。`git status` 失败由 execFileSync 抛异常（外层未 catch，冒泡到 processTask 终止当前任务，但 try/finally 会保证 idle heartbeat 仍写回）。生成 commit message 失败 → fallback `chore: auto-commit from Tom`。
 
 ## 5.8 自评估 + 完成报告 + 收尾
 
@@ -363,8 +355,8 @@ const evalContent = await this.opts.evaluator.evaluate({
   task_result_path: resultPath,
   msg_vars: {
     task_title:       "设计 /api/users 分页接口蓝图",
-    task_description: msg.task_description ?? "",       // ✅ ChainDef.description
-    task_criteria:    msg.task_criteria ?? "",           // ✅ ChainDef.criteria
+    task_description: msg.task_description ?? "",       // ChainDef.description
+    task_criteria:    msg.task_criteria ?? "",           // ChainDef.criteria
     content:          msg.content,
   },
   resume_session_id: "sess-tom-plan-001",
@@ -380,7 +372,7 @@ const evalContent = await this.opts.evaluator.evaluate({
   - baseVars: `link=plan, task_result_path=tasks/.../result.md, work_dir=worktree, time=...` + msg_vars
 - attempt > 0 时追加 `worker-evaluate-format-hint.md` 内容
 - `runner.run({prompt, log_path: evalLogPath, system_prompt: identity, resume_session_id, fork_session: true, quiet: true})`
-  - ⚠️ `fork_session=true` → 每次重试从主任务 session 分叉出干净分支，避免错误锚定
+  - `fork_session=true` → 每次重试从主任务 session 分叉出干净分支，避免错误锚定
 - 读 `evalResultPath`，过 `extractJson` + `EvalDecisionSchema.safeParse`
 - 成功 → return JSON.stringify(parsed.data)
 - 失败 → 进入下一次重试
@@ -395,16 +387,16 @@ if (next) return JSON.stringify({
 });
 ```
 
-### 5.8.2 ✅ issue #3 修复：模板字段名与 Schema 已对齐
+### 5.8.2 模板字段名与 Schema 对齐
 
-原现状下 `templates/agents/worker-evaluate.md` 输出 camelCase 字段名，与 `EvalDecisionSchema` 期待的 snake_case 冲突，schema 几乎必失败导致频繁触发 fallback。修复后：
+`templates/agents/worker-evaluate.md` 输出的字段命名与 `EvalDecisionSchema` 对齐：
 
-- 字段命名统一为 snake_case：`next_link / suggested_worker / feedback_to_worker / feedback_target`；
-- 决策枚举补齐 4 个：`activate_next / feedback / reject / close_chain`；
+- 字段命名为 snake_case：`next_link / suggested_worker / feedback_to_worker / feedback_target`；
+- 决策枚举 4 个：`activate_next / feedback / reject / close_chain`；
 - 输出按 discriminated union 分四个分支列出，禁止跨分支污染字段；
-- `worker-evaluate-format-hint.md` 同步更新，并显式列出禁用的旧字段名。
+- `worker-evaluate-format-hint.md` 显式列出禁用的旧字段名（attempt > 0 时追加）。
 
-`EvalDecisionSchema` 不变（仍在 `packages/contracts/src/schemas/eval.ts`），现在 claude 严格按模板输出可直接通过 schema 校验，fallback 路径仅在 claude 偏离模板时启用。
+`EvalDecisionSchema` 定义在 `packages/contracts/src/schemas/eval.ts`。claude 严格按模板输出可直接通过 schema 校验，fallback 路径仅在 claude 偏离模板时启用。
 
 ### 5.8.3 EvalDecision 最终内容
 
@@ -565,7 +557,7 @@ switch (decision.decision) {
         chain_id: msg.chain_id,
         task_id: nextTask.id,
         task_title: nextTask.title,
-        task_description: nextTask.description,        // ✅ 从初始 push 的 task 取
+        task_description: nextTask.description,        // 从初始 push 的 task 取
         task_criteria: nextTask.criteria,
         original_requirement_path: requirementPath,
       });
@@ -580,14 +572,14 @@ switch (decision.decision) {
 
 `rememberDispatch` 现在只调 `chain_audit.setLinkWorker(chainId, link, worker.id)` —— 旧版本的内存 `chainWorkers: Map<ChainId, Map<TaskLink, InstanceId>>` 已删除，feedback 路由的 prev-link 映射改从 `manifest.link_workers` 读，Leader 重启可恢复。
 
-### 5.9.4 ✅ issue #4 修复：activate_next 复用初始 pending task
+### 5.9.4 activate_next 复用初始 pending task
 
 `findOrCreatePendingTask(chain_id, link)` 实现：
 - `task_queue.listPending()` 扫描，找匹配 chain_id + link 的 pending 任务复用；
 - 找到则直接 dispatch 该 task（description / criteria 都从已存在的 task 取）；
 - 找不到才回退到 `task_queue.push`（覆盖 decompose 跳过、recovery 后清空等场景）。
 
-正常链路推进不再产生重复 task：贯穿样例中 build 阶段 dispatch 的是 §1 初始 push 的 `task-0000000002`，其 description / criteria 已包含完整 ChainDef 信息。`/tasks/pending/` 不会无限堆积；配合 issue #1 的 claim / complete 流转，链路收尾时 `/tasks/completed/` 里有 5 个完成态 task 完整审计。
+正常链路推进不产生重复 task：贯穿样例中 build 阶段 dispatch 的是 §1 初始 push 的 `task-0000000002`，其 description / criteria 已包含完整 ChainDef 信息。配合 claim / complete 流转，链路收尾时 `/tasks/completed/` 里有 5 个完成态 task 完整审计。
 
 ### 5.9.5 复用的 task-0000000002（被 assign 后）
 
@@ -649,7 +641,7 @@ switch (decision.decision) {
 }
 ```
 
-✅ **issue #10 修复 + 跨 worktree artifact**：Jerry 读 Tom 的 blueprint **不**依赖 worktree/git 同步。`WorkerWatcher.collectChainArtifacts` 在 Jerry 端读 chain manifest（`projects/leader-01/chains/chain-pagination-001/manifest.json`），`link_tasks.plan = "task-0000000001"`，得到上游 blueprint 路径 `projects/leader-01/tasks/task-0000000001/result.md`，渲染到 user-message prompt 的 `{{upstream_plan_artifact}}` 变量。Builder 模板就直接读这个 chain-shared cache 路径，跨 worktree 完全可解析。
+Jerry 读 Tom 的 blueprint 通过 chain-shared cache 路径，不依赖 worktree/git 同步。`WorkerWatcher.collectChainArtifacts` 在 Jerry 端读 chain manifest（`projects/leader-01/chains/chain-pagination-001/manifest.json`），`link_tasks.plan = "task-0000000001"`，得到上游 blueprint 路径 `projects/leader-01/tasks/task-0000000001/result.md`，渲染到 user-message prompt 的 `{{upstream_plan_artifact}}` 变量。Builder 模板直接读这个 chain-shared cache 路径。
 
 ## Plan 环节产物清单
 
@@ -677,20 +669,13 @@ switch (decision.decision) {
 | 路径 | 来源 |
 |------|------|
 | `tasks/task-0000000001/exec-<ts>.log` | claude-cli 主执行 stream-json |
-| `tasks/task-0000000001/result.md` | blueprint.md（Leader 视角） |
+| `tasks/task-0000000001/result.md` | blueprint.md（chain 共享，下游 worker 读取入口） |
 | `tasks/task-0000000001/commit.log` | commit message claude 调用日志 |
 | `tasks/task-0000000001/eval-{0,1,2}.log` | self-eval claude 调用日志（重试视情况） |
 | `tasks/task-0000000001/eval-{N}.log.result.md` | self-eval JSON 输出 |
-| `docs/Tom/2026-05-14/plan-chain-pagination-001.md` | local_doc_path：Tom 写的 blueprint 本地副本 |
+| `docs/Tom/2026-05-14/plan-chain-pagination-001.md` | local_doc_path（worker 自留备份） |
 | `chains/chain-pagination-001/audit.jsonl` | append 了 `completion_report` + `task_dispatch`（build）两条事件 |
 | `chains/chain-pagination-001/manifest.json` | `link_tasks.build = task-0000000002`、`link_workers.build = jerry-01` 更新 |
-
-### Worktree 内文件（Tom 的分支）
-
-| 路径 | 内容 |
-|------|------|
-| `~/work/co-pagination/.worktrees/Tom/.claude-orchestrator/docs/Tom/2026-05-14/blueprint.md` | 蓝图副本（worker 可能也写一份）|
-| `~/work/co-pagination/.worktrees/Tom/.claude-orchestrator/docs/Tom/2026-05-14/CLAUDE.md` | 当日记忆 |
 
 ### Git commit
 

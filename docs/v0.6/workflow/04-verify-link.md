@@ -22,13 +22,11 @@
 If either upstream artifact is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop — do not invent results.
 ```
 
-✅ **issue #10 修复**：跨 worktree artifact 通过 chain-shared cache 路径传递。Lucy 直接从：
+跨 worker artifact 通过 chain-shared cache 路径传递。Lucy 直接从：
 - `{{upstream_plan_artifact}}` = `~/.claude-orchestrator/projects/leader-01/tasks/task-0000000001/result.md`（manifest.link_tasks.plan 解析得到）
 - `{{upstream_build_artifact}}` = `~/.claude-orchestrator/projects/leader-01/tasks/task-0000000002/result.md`
 
-读 Tom 与 Jerry 的产物，不再依赖 git 分支跨 worktree 同步。
-
-✅ **本轮治理**：`{{task_doc_path}}` 行已从模板移除（schema 字段也已删除）。缺上游 artifact 时 Lucy 写 BLOCKED 到 result_path 然后停。
+读 Tom 与 Jerry 的产物，不依赖 git 分支跨 worktree 同步。缺上游 artifact 时 Lucy 写 BLOCKED 到 result_path 然后停。
 
 ## 7.5 主任务 claude-cli
 
@@ -42,15 +40,13 @@ claude --append-system-prompt '<Lucy identity (verifier)>' \
   > ~/.claude-orchestrator/projects/leader-01/tasks/task-0000000003/exec-<ts>.log
 ```
 
-期望生成文件：
+期望生成文件（全部在 cache 下，`~/.claude-orchestrator/projects/leader-01/`）：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../projects/leader-01/tasks/task-0000000003/result.md` | verification-map.md（Leader / 下游 worker 视角） |
-| `~/.../projects/leader-01/docs/Lucy/2026-05-14/verify-chain-pagination-001.md` | local_doc_path：同上副本 |
-| `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/verification-map.md` | worktree 副本（Lucy 可能也写一份） |
-| `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/evidence/*.log` | 测试证据（Lucy 跑的） |
-| `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/CLAUDE.md` | 当日记忆 |
+| `tasks/task-0000000003/result.md` | verification-map.md（chain 共享，下游 worker 读取入口） |
+| `docs/Lucy/2026-05-14/verify-chain-pagination-001.md` | local_doc_path（worker 自留备份） |
+| `docs/Lucy/2026-05-14/evidence/*.log` | Lucy 跑的测试证据 |
 
 **verification-map.md 内容示意**：
 
@@ -72,7 +68,7 @@ Recommendation: needs fixes by Builder (Jerry)
 
 ## 7.6 hook worker_message_end + CommitChecker
 
-`git status` 通常有 `verification-map.md` + `evidence/` 等新文件。Lucy 的 commit 不改动业务代码。
+verification-map / evidence 等都写在 cache，不在 worktree git 工作区，`git status` 通常无改动。Lucy 的 commit 多为空 commit 或仅含 commit message。
 
 `CommitResult`：
 
@@ -81,11 +77,7 @@ Recommendation: needs fixes by Builder (Jerry)
   "sha": "9e6f5c4d1b3a7e8f0d6c5b4a3e2f10987654cdef",
   "message": "verify(users): 1 FAILURE — page_size>100 not rejected",
   "changed_files": [],
-  "untracked_files": [
-    ".claude-orchestrator/docs/Lucy/2026-05-14/verification-map.md",
-    ".claude-orchestrator/docs/Lucy/2026-05-14/evidence/curl-page-size-200.log",
-    ".claude-orchestrator/docs/Lucy/2026-05-14/CLAUDE.md"
-  ]
+  "untracked_files": []
 }
 ```
 
@@ -118,8 +110,6 @@ Verifier 自己不发 feedback，而是把 FAILURE 留给 Reviewer 在更高层�
 }
 ```
 
-✅ **issue #3 修复**：模板字段名已对齐 schema，feedback 路径能被正常接受。
-
 本贯穿样例假设 Lucy 走 `activate_next`（决策 A），把 FAILURE 交给 Mia。
 
 ## 7.8 完成报告 + 收尾
@@ -137,7 +127,7 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000004`
   "from_role": "verifier",
   "to_instance": "leader-01",
   "to_name": null,
-  "content": "{\"decision\":\"activate_next\",\"reason\":\"all checklist items verified; 1 FAILURE forwarded for downstream judgment\",\"next_link\":\"review\",\"commit\":{\"sha\":\"9e6f5c4d1b3a7e8f0d6c5b4a3e2f10987654cdef\",\"message\":\"verify(users): 1 FAILURE — page_size>100 not rejected\",\"branch\":\"co/lucy-01\",\"changed_files\":[],\"untracked_files\":[\".claude-orchestrator/docs/Lucy/2026-05-14/verification-map.md\",\".claude-orchestrator/docs/Lucy/2026-05-14/CLAUDE.md\"]}}",
+  "content": "{\"decision\":\"activate_next\",\"reason\":\"all checklist items verified; 1 FAILURE forwarded for downstream judgment\",\"next_link\":\"review\",\"commit\":{\"sha\":\"9e6f5c4d1b3a7e8f0d6c5b4a3e2f10987654cdef\",\"message\":\"verify(users): 1 FAILURE — page_size>100 not rejected\",\"branch\":\"co/lucy-01\",\"changed_files\":[],\"untracked_files\":[]}}",
   "link": "verify",
   "task_id": "task-0000000003",
   "chain_id": "chain-pagination-001",
@@ -161,9 +151,9 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000004`
 - `chain_audit.setLinkTask("review", task-0000000004)` + `setLinkWorker("review", mia-01)`
 - `message_router.send(task_dispatch → mia-01)` → `/messages/mia-01/msg-0000000001`
 
-### 7.9.1 ✅ feedback 分支已物化为 retry task
+### 7.9.1 feedback 分支：物化为 retry task
 
-如果 Lucy 输出 `decision=feedback`，`ChainRouter.handleCompletionReport()` 走 feedback 分支 —— **本轮治理后行为完全更换**：
+如果 Lucy 输出 `decision=feedback`，`ChainRouter.handleCompletionReport()` 走 feedback 分支：
 
 ```typescript
 case "feedback": {
@@ -181,7 +171,7 @@ case "feedback": {
 
 Worker 端走标准 claimById → run → evaluate 流程，与首次 build 完全一致。Jerry 收到的 task_description 是 Lucy 写的 feedback 文本，task_criteria 为空字符串（feedback 通常不带新 criteria）。
 
-✅ **issue #6 修复 + 持久化**：`resolveFeedbackTarget` 优先级 = ① `decision.feedback_target`（显式指定）→ ② `manifest.link_workers[prev_link]`（从 chain audit manifest 读，持久化）→ ③ `msg.from_instance`。Leader 进程重启后通过读 manifest 仍能恢复 prev-link worker 映射，旧版本的 `chainWorkers` 内存 Map 已完全删除。
+`resolveFeedbackTarget` 优先级 = ① `decision.feedback_target`（显式指定）→ ② `manifest.link_workers[prev_link]`（从 chain audit manifest 读，持久化）→ ③ `msg.from_instance`。Leader 进程重启后通过读 manifest 仍能恢复 prev-link worker 映射。
 
 旧 completed task（首次 build 的 `task-0000000002`）在 `/tasks/completed/` 与 `tasks/task-0000000002/result.md` 中保留，审计可追溯。新 retry task 在 `/tasks/pending/` 起新轮，进入 claim → complete 标准流程。
 
@@ -214,17 +204,10 @@ Worker 端走标准 claimById → run → evaluate 流程，与首次 build 完�
 | `tasks/task-0000000003/result.md` | verification-map.md |
 | `tasks/task-0000000003/commit.log` | commit message claude 调用日志 |
 | `tasks/task-0000000003/eval-{0,1,2}.log` | self-eval claude 调用日志 |
-| `docs/Lucy/2026-05-14/verify-chain-pagination-001.md` | local_doc_path 副本 |
+| `docs/Lucy/2026-05-14/verify-chain-pagination-001.md` | local_doc_path（worker 自留备份） |
+| `docs/Lucy/2026-05-14/evidence/*.log` | Lucy 跑的测试证据 |
 | `chains/chain-pagination-001/manifest.json` | `link_tasks.review = task-0000000004`、`link_workers.review = mia-01` 更新 |
 | `chains/chain-pagination-001/audit.jsonl` | append `completion_report`（verify）+ `task_dispatch`（review）两行 |
-
-### Worktree 内文件（Lucy 分支）
-
-| 路径 | 内容 |
-|------|------|
-| `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/verification-map.md` | 验证表 |
-| `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/evidence/*.log` | 证据 |
-| `~/work/.../worktrees/Lucy/.claude-orchestrator/docs/Lucy/2026-05-14/CLAUDE.md` | 当日记忆 |
 
 ### Git commit
 
