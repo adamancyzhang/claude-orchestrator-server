@@ -42,6 +42,13 @@ export interface BootstrapStats {
   dirs_failed: number;
 }
 
+export interface StaleEntry {
+  source: string;       // relative source path, e.g. "packages/worker/src/watcher.ts"
+  memory_path: string;  // absolute path to the memory .md file
+  recorded_hash: string; // hash stored in front-matter (may be empty)
+  current_hash: string;  // hash of the source file as it currently is
+}
+
 /**
  * Generates the initial workspace memory tree under
  * `${root}/memory/` by mirroring the project source layout.
@@ -203,6 +210,107 @@ export class MemoryBootstrap {
       }
     }
     return { generated, skipped, failed };
+  }
+
+  /**
+   * Read the `source` and `source_hash` lines from a memory file's front-
+   * matter. Returns null when the file cannot be opened or front-matter is
+   * missing. Front-matter is a simple `---\nkey: value\n...\n---` block at
+   * the start of the file — we do not bring in a YAML parser dependency.
+   */
+  private readFrontMatter(
+    memoryPath: string,
+  ): { source: string; source_hash: string } | null {
+    let body = "";
+    try {
+      body = fs.readFileSync(memoryPath, "utf-8");
+    } catch {
+      return null;
+    }
+    const match = body.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!match) return null;
+    const lines = match[1].split("\n");
+    let source = "";
+    let hash = "";
+    for (const line of lines) {
+      const m = line.match(/^([a-zA-Z_]+)\s*:\s*(.*)$/);
+      if (!m) continue;
+      const key = m[1];
+      const value = m[2].trim();
+      if (key === "source") source = value;
+      else if (key === "source_hash") hash = value;
+    }
+    if (!source) return null;
+    return { source, source_hash: hash };
+  }
+
+  /**
+   * Walk the memory tree and return every per-file summary whose stored
+   * `source_hash` no longer matches `git hash-object` for the current
+   * source. Files whose `source_hash` is empty (failed initial generation)
+   * are also returned so a refresh pass can fill them in. Directory
+   * indexes (CLAUDE.md) are skipped — their staleness derives from the
+   * files they reference.
+   */
+  async findStaleEntries(): Promise<StaleEntry[]> {
+    const root = cachePaths.workspaceMemoryRoot(this.opts.cache_paths);
+    if (!fs.existsSync(root)) return [];
+    const stale: StaleEntry[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        if (!entry.name.endsWith(".md")) continue;
+        if (entry.name === "CLAUDE.md") continue;
+        const fm = this.readFrontMatter(full);
+        if (!fm) continue;
+        const currentHash = this.fileHash(fm.source);
+        if (currentHash === "") continue; // source disappeared — separate concern
+        if (currentHash !== fm.source_hash) {
+          stale.push({
+            source: fm.source,
+            memory_path: full,
+            recorded_hash: fm.source_hash,
+            current_hash: currentHash,
+          });
+        }
+      }
+    };
+    await walk(root);
+    return stale;
+  }
+
+  /**
+   * Convenience: find stale entries and immediately refresh them.
+   * Returns the underlying refreshFiles stats with the stale count so
+   * callers can log a single summary at startup.
+   */
+  async refreshStale(): Promise<{
+    stale_found: number;
+    generated: number;
+    failed: number;
+    filtered_out: number;
+  }> {
+    const stale = await this.findStaleEntries();
+    if (stale.length === 0) {
+      return { stale_found: 0, generated: 0, failed: 0, filtered_out: 0 };
+    }
+    const sources = stale.map((s) => s.source);
+    const stats = await this.refreshFiles(sources);
+    return {
+      stale_found: stale.length,
+      ...stats,
+    };
   }
 
   /**

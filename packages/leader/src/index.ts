@@ -30,5 +30,6 @@ export {
   MemoryBootstrap,
   type BootstrapStats,
   type MemoryBootstrapOptions,
+  type StaleEntry,
 } from "./memory-bootstrap.js";
 export * from "./tui/index.js";

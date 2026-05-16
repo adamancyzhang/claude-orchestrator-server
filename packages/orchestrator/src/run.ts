@@ -235,14 +235,25 @@ export async function runOrchestrator(
   );
   await leaderWatcher.start();
 
-  // Fire-and-forget bootstrap. The pass enumerates tracked source files
-  // via `git ls-files`, asks Claude for a summary per file, then per
-  // directory. Skipped if already populated. Runs detached from startup
-  // so Worker spawning can proceed in parallel — memory is a hint, not a
-  // precondition, and the per-link templates already tell Workers to
-  // fall back to source when an entry is missing.
-  void memoryBootstrap.run().catch((err) => {
-    logger.warn("memory bootstrap failed", { error: String(err) });
+  // Fire-and-forget bootstrap + stale sweep. On a fresh install the
+  // bootstrap fills the memory tree from `git ls-files`; on subsequent
+  // restarts `run()` is a no-op (root marker present) and the sweep
+  // catches up entries whose stored source_hash drifted while the
+  // Leader was offline. Both runs are detached so Worker spawning can
+  // proceed in parallel — memory is a hint, not a precondition.
+  void (async () => {
+    await memoryBootstrap.run();
+    const stale = await memoryBootstrap.refreshStale();
+    if (stale.stale_found > 0) {
+      logger.info("memory stale refresh complete", {
+        stale_found: stale.stale_found,
+        generated: stale.generated,
+        failed: stale.failed,
+        filtered_out: stale.filtered_out,
+      });
+    }
+  })().catch((err) => {
+    logger.warn("memory bootstrap/refresh failed", { error: String(err) });
   });
 
   const monitor = new WorkerMonitor(registry, bus);

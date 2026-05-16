@@ -158,22 +158,43 @@ template_engine.render(tplName, {
 - 速查路径：`{{workspace_memory_path}}/<relative-source-path>.md` 和同目录 `CLAUDE.md`
 - 性质：hints，不是 ground truth；缺失或 stale 时回落到源文件
 
-## 6. 生命周期（后续阶段）
-
-> 本节为下一阶段实现的设计意图，**路径辅助函数 + Template 变量注入 + 模板引导文案**是本期实施范围；以下两条仍待落地。
+## 6. 生命周期
 
 ### 6.1 首次填充（bootstrap）
 
-Leader 启动期检测 `${root}/memory/` 为空 → 派一个 builder 角色 worker 对 `packages/**/*.ts` 全量生成：
-1. `git ls-files packages/` 拿全集
-2. 按文件遍历 `Read` + 调 claude-cli → 写 `memory/<path>.md`
-3. 按目录遍历 → 写 `CLAUDE.md`
+`MemoryBootstrap`（`packages/leader/src/memory-bootstrap.ts`）在 Leader 启动期由 `packages/orchestrator/src/run.ts` 触发，以后台 Promise 运行（不阻塞 Worker 启动）：
 
-### 6.2 增量刷新
+1. `isPopulated()` 检查 `${root}/memory/CLAUDE.md` 根索引是否存在；若存在则跳过
+2. `enumerateSources()` 通过 `git ls-files -- 'packages/**/*.ts'` 取全集
+3. `generateFiles(sources, "skip-existing")` 逐文件调 ClaudeRunner，渲染 `worker-memorize-file.md` → 写 `memory/<path>.md`
+4. `generateDirs(grouped)` 按目录调 ClaudeRunner，渲染 `worker-memorize-dir.md`（注入已生成的 Purpose 摘要块）→ 写 `<dir>/CLAUDE.md`
+5. `writeRootMarker(stats)` 写根索引 `memory/CLAUDE.md` 作为 populated 哨兵
 
-复用现有 `commit-checker.ts` 提交后回调：
-1. Worker 完成 build link 并 commit 后，向 Leader 发送 `memory_refresh` 消息（含本次 commit 的 changed files）
-2. `ChainRouter` 收到 → 派 worker 仅对涉及文件局部刷新
+失败逐项计数但不中断；幂等。
+
+### 6.2 增量刷新（commit-driven）
+
+新增 message type `"memory_refresh"`（`packages/contracts/src/enums.ts`）：
+
+1. Worker 在 chain link 提交成功后（`packages/worker/src/watcher.ts`，commit-checker 调用之后），向 Leader fire-and-forget 发送 `memory_refresh` 消息，body 形如：
+   ```json
+   {"chain_id": "...", "task_id": "...", "commit_sha": "...",
+    "changed_files": ["packages/worker/src/watcher.ts", ...]}
+   ```
+2. `ChainRouter.route()` 早期分发到 `handleMemoryRefresh()`：解析 payload → 调 `MemoryBootstrap.refreshFiles(changed_files)`
+3. `refreshFiles()` 用 `git ls-files` 过滤非源码路径，对剩余路径以 `"force"` 模式重写 memory，并删除受影响目录的 `CLAUDE.md` 后重生
+
+发送失败不阻塞 Worker 任务完成；解析失败不阻塞链路推进。
+
+### 6.3 启动期陈旧扫描
+
+Leader 启动期在 bootstrap 之后调用 `MemoryBootstrap.refreshStale()`：
+
+1. `findStaleEntries()` 递归扫 `memory/` 下所有非 `CLAUDE.md` 的 `.md`，解析 front-matter 中的 `source` 与 `source_hash`
+2. 对每条比对 `git hash-object <source>` 与记录值
+3. 不匹配的进入 stale 列表 → 调 `refreshFiles(...)` 重生
+
+涵盖 Leader 离线期间代码变化的场景（如开发者在 Leader 不在时手工提交）。
 
 ## 7. 与现有架构的关系
 
@@ -188,8 +209,10 @@ Leader 启动期检测 `${root}/memory/` 为空 → 派一个 builder 角色 wor
 
 ## 8. 验证清单
 
-- ✅ 路径合成单测：5 个场景（基础路径 / 前导斜杠 / 非 .ts 后缀 / 目录索引 / 根索引）
-- ⏳ Bootstrap E2E：清空 memory → 启动 Leader → 期望 packages/**/*.ts 100% 覆盖
-- ⏳ 陈旧检测：手工改源码不刷新 → Leader 启动期告警
-- ⏳ 增量刷新：commit 后只刷新涉及文件，未涉及文件 hash 不变
+- ✅ 路径合成单测：5 个场景（基础路径 / 前导斜杠 / 非 .ts 后缀 / 目录索引 / 根索引）—— `packages/contracts/tests/core/unit/paths.test.ts`
+- ✅ Bootstrap 单测：枚举 / 分组 / populated 哨兵 / 全量布局 / 幂等 / 失败计数 —— `packages/leader/tests/core/unit/memory-bootstrap.test.ts`
+- ✅ 增量刷新单测：覆盖写 + 目录索引重生成 + glob 过滤 —— 同上文件
+- ✅ 陈旧检测单测：source_hash 不匹配检出 + CLAUDE.md 跳过 + refreshStale 一次性闭环 —— 同上文件
+- ✅ Chain-router memory_refresh 路由单测：payload 解析 / 空载 / malformed / 未注入 bootstrap —— `packages/leader/tests/core/unit/chain-router.test.ts`
+- ⏳ E2E：清空 memory → 启动 Leader（真实 claude-cli + ZK）→ 期望 packages/**/*.ts 100% 覆盖、build 链节后涉及文件 source_hash 更新
 - ⏳ Worker 消费验证：build 链节 Bash hook 记录 `Read memory/...` 的实际调用

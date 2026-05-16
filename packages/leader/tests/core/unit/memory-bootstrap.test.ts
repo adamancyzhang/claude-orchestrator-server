@@ -321,6 +321,71 @@ describe("MemoryBootstrap", () => {
     }
   });
 
+  it("findStaleEntries detects mismatched source_hash; skips CLAUDE.md indexes", async () => {
+    const fx = makeFixture();
+    try {
+      const bs = makeBootstrap(fx);
+      await bs.run();
+      // Manually rewrite one memory file's source_hash to a value that
+      // does not match the current source — emulates a source file having
+      // changed without a memory refresh.
+      const memRoot = path.join(fx.cacheRoot, "leader-1", "memory");
+      const helperMem = path.join(memRoot, "packages/alpha/src/helper.md");
+      fs.writeFileSync(
+        helperMem,
+        `---\nsource: packages/alpha/src/helper.ts\nsource_hash: 0000000000000000000000000000000000000000\nupdated_at: 2026-05-01\n---\n## Purpose\nstub\n`,
+        "utf-8",
+      );
+      const stale = await bs.findStaleEntries();
+      // Only helper.md is stale; index.md still matches; CLAUDE.md indexes
+      // (which have no `source` front-matter) are ignored.
+      expect(stale).toHaveLength(1);
+      expect(stale[0].source).toBe("packages/alpha/src/helper.ts");
+      expect(stale[0].recorded_hash).toBe("0".repeat(40));
+      expect(stale[0].current_hash).not.toBe("");
+      expect(stale[0].current_hash).not.toBe(stale[0].recorded_hash);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("refreshStale finds stale entries and regenerates them", async () => {
+    const fx = makeFixture();
+    try {
+      const bs = makeBootstrap(fx);
+      await bs.run();
+      const memRoot = path.join(fx.cacheRoot, "leader-1", "memory");
+      const helperMem = path.join(memRoot, "packages/alpha/src/helper.md");
+      fs.writeFileSync(
+        helperMem,
+        `---\nsource: packages/alpha/src/helper.ts\nsource_hash: 0000000000000000000000000000000000000000\n---\nstub\n`,
+        "utf-8",
+      );
+      const stats = await bs.refreshStale();
+      expect(stats.stale_found).toBe(1);
+      expect(stats.generated).toBe(1);
+      expect(stats.failed).toBe(0);
+      // After refresh, no entries are stale anymore.
+      const remaining = await bs.findStaleEntries();
+      expect(remaining).toHaveLength(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it("refreshStale is a no-op when nothing is stale", async () => {
+    const fx = makeFixture();
+    try {
+      const bs = makeBootstrap(fx);
+      await bs.run();
+      const stats = await bs.refreshStale();
+      expect(stats.stale_found).toBe(0);
+      expect(stats.generated).toBe(0);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it("refreshFiles filters out files not matched by source_globs", async () => {
     const fx = makeFixture();
     try {
