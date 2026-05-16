@@ -160,17 +160,27 @@ template_engine.render(tplName, {
 
 ## 6. 生命周期
 
-### 6.1 首次填充（bootstrap）
+### 6.1 首次填充（用户触发 `/init`）
 
-`MemoryBootstrap`（`packages/leader/src/memory-bootstrap.ts`）在 Leader 启动期由 `packages/orchestrator/src/run.ts` 触发，以后台 Promise 运行（不阻塞 Worker 启动）：
+`MemoryBootstrap`（`packages/leader/src/memory-bootstrap.ts`）**不在 Leader 启动期自动运行**。一次完整 bootstrap 会对 `packages/**/*.ts` 全集逐文件调 claude-cli，~98 次 × ~30 秒 ≈ 50 分钟，并产生相应 token 成本。强制启动期触发既不合理也容易意外。
 
-1. `isPopulated()` 检查 `${root}/memory/CLAUDE.md` 根索引是否存在；若存在则跳过
+正确路径：用户在 TUI 输入框键入 `/init`：
+
+1. TUI → `dispatchUserInput` 发出 `user_input` 类型消息
+2. `LeaderWatcher` → `ChainRouter.route()` → `handleRequirement()`
+3. `handleRequirement` 检测 `content.trim()` 以 `/` 开头 → 调用 `handleSlashCommand()`
+4. `/init` 命中后 `runInitCommand()` 以 fire-and-forget 方式启动后台 Promise（不阻塞消息循环）
+
+Bootstrap 实际执行步骤：
+
+1. `isPopulated()` 检查 `${root}/memory/CLAUDE.md` 根索引是否存在；若存在则跳过（幂等）
 2. `enumerateSources()` 通过 `git ls-files -- 'packages/**/*.ts'` 取全集
 3. `generateFiles(sources, "skip-existing")` 逐文件调 ClaudeRunner，渲染 `worker-memorize-file.md` → 写 `memory/<path>.md`
 4. `generateDirs(grouped)` 按目录调 ClaudeRunner，渲染 `worker-memorize-dir.md`（注入已生成的 Purpose 摘要块）→ 写 `<dir>/CLAUDE.md`
 5. `writeRootMarker(stats)` 写根索引 `memory/CLAUDE.md` 作为 populated 哨兵
+6. 紧接 `refreshStale()` 一次，统一覆盖陈旧 + 全量填充两种状态
 
-失败逐项计数但不中断；幂等。
+失败逐项计数但不中断；进度通过 logger 写入 TUI。重复键入 `/init` 安全。
 
 ### 6.2 增量刷新（commit-driven）
 
@@ -186,15 +196,15 @@ template_engine.render(tplName, {
 
 发送失败不阻塞 Worker 任务完成；解析失败不阻塞链路推进。
 
-### 6.3 启动期陈旧扫描
+### 6.3 陈旧扫描（随 `/init` 触发）
 
-Leader 启动期在 bootstrap 之后调用 `MemoryBootstrap.refreshStale()`：
+`refreshStale()` 不再单独由启动期调用——而是作为 `/init` 的尾巴一并执行：
 
 1. `findStaleEntries()` 递归扫 `memory/` 下所有非 `CLAUDE.md` 的 `.md`，解析 front-matter 中的 `source` 与 `source_hash`
 2. 对每条比对 `git hash-object <source>` 与记录值
 3. 不匹配的进入 stale 列表 → 调 `refreshFiles(...)` 重生
 
-涵盖 Leader 离线期间代码变化的场景（如开发者在 Leader 不在时手工提交）。
+涵盖 Leader 离线期间代码变化（如开发者在 Leader 不在时手工提交）后第一次 `/init` 的恢复路径。日常代码改动由 §6.2 的 commit-driven 增量刷新覆盖。
 
 ## 7. 与现有架构的关系
 
@@ -214,5 +224,6 @@ Leader 启动期在 bootstrap 之后调用 `MemoryBootstrap.refreshStale()`：
 - ✅ 增量刷新单测：覆盖写 + 目录索引重生成 + glob 过滤 —— 同上文件
 - ✅ 陈旧检测单测：source_hash 不匹配检出 + CLAUDE.md 跳过 + refreshStale 一次性闭环 —— 同上文件
 - ✅ Chain-router memory_refresh 路由单测：payload 解析 / 空载 / malformed / 未注入 bootstrap —— `packages/leader/tests/core/unit/chain-router.test.ts`
-- ⏳ E2E：清空 memory → 启动 Leader（真实 claude-cli + ZK）→ 期望 packages/**/*.ts 100% 覆盖、build 链节后涉及文件 source_hash 更新
+- ✅ Chain-router `/init` 路由单测：触发 run + refreshStale / 空白 + 多余参数容错 / 未注入 bootstrap 时安全 no-op / 未知 slash 不误触发 —— 同上文件
+- ⏳ E2E：用户在 TUI 输入 `/init` → 启动 Leader（真实 claude-cli + ZK）→ 期望 packages/**/*.ts 100% 覆盖、build 链节后涉及文件 source_hash 更新
 - ⏳ Worker 消费验证：build 链节 Bash hook 记录 `Read memory/...` 的实际调用

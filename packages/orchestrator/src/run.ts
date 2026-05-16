@@ -198,10 +198,13 @@ export async function runOrchestrator(
     logger: logger.child("chain-audit"),
   });
 
-  // Memory bootstrap is constructed before ChainRouter so we can both:
-  //   (a) kick off the initial fill pass in the background, and
-  //   (b) hand the same instance to ChainRouter so `memory_refresh`
-  //       messages from Workers reuse the same templates + paths.
+  // Memory bootstrap is constructed before ChainRouter so we can hand
+  // the same instance to ChainRouter for both `/init` (user-triggered
+  // full bootstrap + stale sweep) and `memory_refresh` (per-commit
+  // incremental refresh). The bootstrap does NOT run automatically on
+  // startup — the user kicks it explicitly by typing `/init` in the TUI
+  // because a full pass calls claude-cli ~once per source file and is
+  // expensive to launch unsolicited.
   const memoryBootstrap = new MemoryBootstrap({
     cache_paths: cachePaths,
     workspace_root: projectRoot,
@@ -234,27 +237,6 @@ export async function runOrchestrator(
     logger.child("watcher"),
   );
   await leaderWatcher.start();
-
-  // Fire-and-forget bootstrap + stale sweep. On a fresh install the
-  // bootstrap fills the memory tree from `git ls-files`; on subsequent
-  // restarts `run()` is a no-op (root marker present) and the sweep
-  // catches up entries whose stored source_hash drifted while the
-  // Leader was offline. Both runs are detached so Worker spawning can
-  // proceed in parallel — memory is a hint, not a precondition.
-  void (async () => {
-    await memoryBootstrap.run();
-    const stale = await memoryBootstrap.refreshStale();
-    if (stale.stale_found > 0) {
-      logger.info("memory stale refresh complete", {
-        stale_found: stale.stale_found,
-        generated: stale.generated,
-        failed: stale.failed,
-        filtered_out: stale.filtered_out,
-      });
-    }
-  })().catch((err) => {
-    logger.warn("memory bootstrap/refresh failed", { error: String(err) });
-  });
 
   const monitor = new WorkerMonitor(registry, bus);
   await monitor.start();

@@ -169,6 +169,69 @@ export class ChainRouter {
   }
 
   /**
+   * Dispatch a user-typed slash command. Returns `true` if the command
+   * was recognised (regardless of whether the underlying action succeeded)
+   * so the caller can stop further requirement processing. Returns
+   * `false` for unknown commands so a leading `/` in a regular prompt
+   * (e.g. a path that starts with `/`) falls through to the decompose
+   * flow without surprise.
+   *
+   * The actual work is fire-and-forget — slash commands like `/init`
+   * can run for many minutes against claude-cli, and blocking the
+   * message handler would freeze the Leader's incoming-message loop.
+   */
+  private async handleSlashCommand(text: string): Promise<boolean> {
+    const [head, ...args] = text.slice(1).split(/\s+/);
+    const cmd = head.toLowerCase();
+    switch (cmd) {
+      case "init":
+        this.runInitCommand(args);
+        return true;
+      default:
+        this.opts.logger.warn("unknown slash command", { command: cmd });
+        return false;
+    }
+  }
+
+  /**
+   * `/init` — populate the workspace memory tree, then sweep stale
+   * entries. Idempotent: when the root marker already exists `run()`
+   * returns immediately and the sweep only touches entries whose
+   * source_hash drifted. Detached from the message handler with `void`.
+   */
+  private runInitCommand(_args: string[]): void {
+    if (!this.opts.memory_bootstrap) {
+      this.opts.logger.warn("/init: no memory_bootstrap wired");
+      return;
+    }
+    const bootstrap = this.opts.memory_bootstrap;
+    this.opts.logger.info("/init: starting workspace memory bootstrap");
+    void (async () => {
+      const stats = await bootstrap.run();
+      this.opts.logger.info("/init: bootstrap done", {
+        files_generated: stats.files_generated,
+        files_skipped: stats.files_skipped,
+        files_failed: stats.files_failed,
+        dirs_generated: stats.dirs_generated,
+        dirs_failed: stats.dirs_failed,
+      });
+      const stale = await bootstrap.refreshStale();
+      if (stale.stale_found > 0) {
+        this.opts.logger.info("/init: stale entries refreshed", {
+          stale_found: stale.stale_found,
+          generated: stale.generated,
+          failed: stale.failed,
+          filtered_out: stale.filtered_out,
+        });
+      }
+    })().catch((err) => {
+      this.opts.logger.warn("/init: bootstrap/refresh failed", {
+        error: String(err),
+      });
+    });
+  }
+
+  /**
    * Parse a `memory_refresh` payload and forward the changed-files list
    * to MemoryBootstrap. Payload shape:
    *
@@ -237,6 +300,18 @@ export class ChainRouter {
     // chains/<chain_id>/requirement.md and propagates the path to every
     // worker dispatched in the chain.
     const originalRequirement = msg.content;
+    const trimmed = originalRequirement.trim();
+
+    // Slash commands are user-driven control inputs typed in the TUI.
+    // They take priority over decompose because they target the Leader
+    // itself (memory init, future diagnostics) rather than a chain that
+    // needs planning. Unknown commands log a warning and fall through to
+    // the normal requirement flow so a leading `/` in a regular prompt
+    // is not silently lost.
+    if (trimmed.startsWith("/")) {
+      const handled = await this.handleSlashCommand(trimmed);
+      if (handled) return;
+    }
 
     if (this.opts.template_engine.has("worker-decompose.md")) {
       const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
