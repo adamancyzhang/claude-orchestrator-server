@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { extractJson } from "@co/runtime";
 import {
+  ChainConflictError,
   ChainDefSchema,
   EvalDecisionSchema,
   ValidationError,
@@ -384,12 +385,36 @@ export class ChainRouter {
       "utf-8",
     );
     if (this.opts.chain_audit) {
-      await this.opts.chain_audit.openChain(chainDef.chain_id, {
-        created_at: new Date().toISOString(),
-        leader_id: this.opts.leader_id,
-        leader_name: this.opts.leader_name,
-        requirement_path: requirementPath,
-      });
+      try {
+        await this.opts.chain_audit.openChain(chainDef.chain_id, {
+          created_at: new Date().toISOString(),
+          leader_id: this.opts.leader_id,
+          leader_name: this.opts.leader_name,
+          requirement_path: requirementPath,
+        });
+      } catch (err) {
+        if (err instanceof ChainConflictError) {
+          this.opts.logger.error("chain_id conflict — refusing to reopen", {
+            chain_id: chainDef.chain_id,
+            existing_status: err.existing_status,
+            existing_completed_at: err.existing_completed_at,
+          });
+          this.opts.bus.emit({
+            type: "debug_info",
+            message: `chain ${chainDef.chain_id} already ${err.existing_status}; new requirement dropped`,
+          });
+          await this.opts.chain_audit.record(chainDef.chain_id, {
+            event: "chain_id_conflict",
+            payload: {
+              existing_status: err.existing_status,
+              existing_completed_at: err.existing_completed_at,
+              requirement_path: requirementPath,
+            },
+          });
+          return;
+        }
+        throw err;
+      }
       await this.opts.chain_audit.record(chainDef.chain_id, {
         event: "requirement_received",
         payload: { requirement_path: requirementPath },

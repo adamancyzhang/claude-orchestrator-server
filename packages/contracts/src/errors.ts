@@ -78,3 +78,21 @@ export class OrphanRetryExhaustedError extends CoError {
     );
   }
 }
+export class ChainConflictError extends CoError {
+  constructor(
+    chainId: string,
+    public readonly existing_status: string,
+    public readonly existing_completed_at: string | null,
+  ) {
+    super(
+      "CHAIN_ID_CONFLICT",
+      `Chain ${chainId} already exists with status=${existing_status}` +
+        (existing_completed_at ? ` (closed at ${existing_completed_at})` : ""),
+    );
+  }
+}
+export class CommitFailedError extends CoError {
+  constructor(message: string, public readonly stderr: string, cause?: unknown) {
+    super("WORKER_COMMIT_FAILED", message, cause);
+  }
+}

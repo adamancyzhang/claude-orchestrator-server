@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   cachePaths,
+  ChainConflictError,
   type ChainId,
   type ILogger,
   type InstanceId,
@@ -9,7 +10,12 @@ import {
   type TaskLink,
 } from "@co/contracts";
 
-export type ChainStatus = "running" | "completed" | "failed" | "aborted";
+export type ChainStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "aborted"
+  | "merge_failed";
 
 export interface ChainManifest {
   chain_id: ChainId;
@@ -21,6 +27,8 @@ export interface ChainManifest {
   requirement_path: string;
   link_tasks: Record<TaskLink, TaskId | null>;
   link_workers: Record<TaskLink, InstanceId | null>;
+  total_retry_count: number;
+  max_total_retries: number;
 }
 
 export interface ChainOpenMeta {
@@ -28,7 +36,10 @@ export interface ChainOpenMeta {
   leader_id: InstanceId;
   leader_name: string;
   requirement_path: string;
+  max_total_retries?: number;
 }
+
+export const DEFAULT_MAX_TOTAL_RETRIES = 9;
 
 export type ChainAuditEventType =
   | "requirement_received"
@@ -36,6 +47,10 @@ export type ChainAuditEventType =
   | "task_dispatch"
   | "completion_report"
   | "feedback_sent"
+  | "feedback_unresolved"
+  | "chain_id_conflict"
+  | "merge_failure"
+  | "retry_ceiling_exceeded"
   | "chain_closed"
   | "validation_failure";
 
@@ -71,6 +86,17 @@ export class ChainAudit {
       this.opts.cache_paths,
       chainId,
     );
+    // Conflict detection: refuse to overwrite a chain that has reached
+    // any terminal state. Re-opening a still-running chain is allowed and
+    // serves as a no-op upsert for replays.
+    const existing = await this.readManifest(chainId);
+    if (existing && existing.status !== "running") {
+      throw new ChainConflictError(
+        chainId,
+        existing.status,
+        existing.completed_at,
+      );
+    }
     await fs.promises.mkdir(path.dirname(manifestPath), { recursive: true });
     const manifest: ChainManifest = {
       chain_id: chainId,
@@ -94,6 +120,8 @@ export class ChainAudit {
         review: null,
         accept: null,
       },
+      total_retry_count: 0,
+      max_total_retries: meta.max_total_retries ?? DEFAULT_MAX_TOTAL_RETRIES,
     };
     await fs.promises.writeFile(
       manifestPath,
@@ -104,6 +132,37 @@ export class ChainAudit {
       event: "chain_opened",
       payload: { ...meta },
     });
+  }
+
+  /**
+   * Atomically bump `total_retry_count` and return the post-increment
+   * value alongside the manifest's configured ceiling. Used by
+   * ChainRouter to enforce a hard cap on feedback loops.
+   */
+  async incrementRetry(chainId: ChainId): Promise<{
+    total_retry_count: number;
+    max_total_retries: number;
+  } | null> {
+    const manifestPath = cachePaths.chainManifestPath(
+      this.opts.cache_paths,
+      chainId,
+    );
+    const manifest = await this.readManifest(chainId);
+    if (!manifest) return null;
+    manifest.total_retry_count =
+      (manifest.total_retry_count ?? 0) + 1;
+    if (manifest.max_total_retries == null) {
+      manifest.max_total_retries = DEFAULT_MAX_TOTAL_RETRIES;
+    }
+    await fs.promises.writeFile(
+      manifestPath,
+      JSON.stringify(manifest, null, 2),
+      "utf-8",
+    );
+    return {
+      total_retry_count: manifest.total_retry_count,
+      max_total_retries: manifest.max_total_retries,
+    };
   }
 
   async setLinkTask(
