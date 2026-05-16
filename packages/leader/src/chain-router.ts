@@ -72,6 +72,14 @@ export interface ChainRouterOptions {
   leader_name: string;
   cache_paths: cachePaths.CachePathOptions;
   /**
+   * Hard ceiling on the total number of feedback-driven retries a chain
+   * may accumulate before ChainRouter forcibly aborts it. Passed to
+   * `chain_audit.openChain` so it is persisted per-chain (survives leader
+   * restarts) and exposed to `dispatchFeedbackAsRetry` via the manifest.
+   * When omitted, ChainAudit uses `DEFAULT_MAX_TOTAL_RETRIES`.
+   */
+  max_chain_retries?: number;
+  /**
    * Optional. When provided, ChainRouter calls `validate` for every
    * commit it has collected on `close_chain`, in plan→build→verify→
    * review→accept order. Omitted in tests and CLI flows that do not
@@ -391,6 +399,7 @@ export class ChainRouter {
           leader_id: this.opts.leader_id,
           leader_name: this.opts.leader_name,
           requirement_path: requirementPath,
+          max_total_retries: this.opts.max_chain_retries,
         });
       } catch (err) {
         if (err instanceof ChainConflictError) {
@@ -745,6 +754,47 @@ export class ChainRouter {
         link: msg.link ?? null,
       });
       return;
+    }
+    // Enforce the per-chain feedback-retry ceiling before pushing a new
+    // task. The ceiling lives in the chain manifest (see ChainAudit
+    // openChain), survives leader restarts, and protects against runaway
+    // feedback loops (A→B→A→B…). incrementRetry returns null only when
+    // the manifest itself is missing, in which case we proceed without
+    // ceiling enforcement — the fallback degrades to the pre-A5 behavior
+    // rather than blocking ad-hoc flows.
+    if (this.opts.chain_audit) {
+      const counters = await this.opts.chain_audit.incrementRetry(msg.chain_id);
+      if (counters && counters.total_retry_count > counters.max_total_retries) {
+        this.opts.logger.error("chain retry ceiling exceeded — aborting chain", {
+          chain_id: msg.chain_id,
+          total_retry_count: counters.total_retry_count,
+          max_total_retries: counters.max_total_retries,
+        });
+        await this.opts.chain_audit.record(msg.chain_id, {
+          event: "retry_ceiling_exceeded",
+          link: msg.link,
+          worker_id: msg.from_instance,
+          worker_name: msg.from_name,
+          task_id: (msg.task_id as TaskId | null) ?? null,
+          payload: {
+            total_retry_count: counters.total_retry_count,
+            max_total_retries: counters.max_total_retries,
+            feedback_to_worker: feedback,
+          },
+        });
+        await this.opts.chain_audit.closeChain(msg.chain_id, "aborted", {
+          reason: "retry_ceiling_exceeded",
+          total_retry_count: counters.total_retry_count,
+          max_total_retries: counters.max_total_retries,
+        });
+        this.opts.bus.emit({
+          type: "debug_info",
+          message: `chain ${msg.chain_id} aborted: retry ceiling ${counters.max_total_retries} exceeded`,
+        });
+        this.emitChainClosed(msg.chain_id);
+        this.forgetChain(msg.chain_id);
+        return;
+      }
     }
     const prevLink = PREV_LINKS[msg.link] ?? msg.link;
     const priorRetry = await this.lookupPriorRetry(

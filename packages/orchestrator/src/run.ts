@@ -213,6 +213,15 @@ export async function runOrchestrator(
     logger: logger.child("memory-bootstrap"),
   });
 
+  // CO_CHAIN_MAX_RETRIES caps the total feedback retries a chain may
+  // accumulate before ChainRouter forcibly aborts it. Unset → ChainAudit
+  // applies its built-in default (DEFAULT_MAX_TOTAL_RETRIES = 9).
+  const envMaxRetries = process.env.CO_CHAIN_MAX_RETRIES;
+  const maxChainRetries =
+    envMaxRetries && Number.isFinite(Number(envMaxRetries))
+      ? Number(envMaxRetries)
+      : undefined;
+
   const chainRouter = new ChainRouter({
     task_queue: taskQueue,
     message_router: messageRouter,
@@ -227,6 +236,7 @@ export async function runOrchestrator(
     merge_validator: mergeValidator,
     chain_audit: chainAudit,
     memory_bootstrap: memoryBootstrap,
+    max_chain_retries: maxChainRetries,
   });
 
   const leaderWatcher = new LeaderWatcher(

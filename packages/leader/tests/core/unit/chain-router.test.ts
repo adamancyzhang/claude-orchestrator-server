@@ -61,15 +61,22 @@ import { ChainRouter } from "../../../src/chain-router.js";
 import type { ChainAudit, ChainManifest, ChainOpenMeta, ChainAuditEventInput } from "../../../src/chain-audit.js";
 
 /**
- * In-memory ChainAudit fake — mirrors only the methods ChainRouter consumes
- * (openChain, setLinkTask, setLinkWorker, record, closeChain, readManifest).
- * No filesystem I/O, so unit tests stay hermetic.
+ * In-memory ChainAudit fake — mirrors the methods ChainRouter consumes
+ * (openChain, setLinkTask, setLinkWorker, record, closeChain, readManifest,
+ * incrementRetry). No filesystem I/O, so unit tests stay hermetic.
  */
 class FakeChainAudit implements Pick<ChainAudit,
-  "openChain" | "setLinkTask" | "setLinkWorker" | "record" | "closeChain" | "readManifest"
+  | "openChain"
+  | "setLinkTask"
+  | "setLinkWorker"
+  | "record"
+  | "closeChain"
+  | "readManifest"
+  | "incrementRetry"
 > {
   private manifests = new Map<ChainId, ChainManifest>();
   events: ChainAuditEventInput[] = [];
+  closures: { chainId: ChainId; status: string; extra?: Record<string, unknown> }[] = [];
 
   async openChain(chainId: ChainId, meta: ChainOpenMeta): Promise<void> {
     this.manifests.set(chainId, {
@@ -82,6 +89,8 @@ class FakeChainAudit implements Pick<ChainAudit,
       requirement_path: meta.requirement_path,
       link_tasks: { plan: null, build: null, verify: null, review: null, accept: null },
       link_workers: { plan: null, build: null, verify: null, review: null, accept: null },
+      total_retry_count: 0,
+      max_total_retries: meta.max_total_retries ?? 9,
     });
   }
   async setLinkTask(chainId: ChainId, link: TaskLink, taskId: never): Promise<void> {
@@ -95,15 +104,31 @@ class FakeChainAudit implements Pick<ChainAudit,
   async record(_chainId: ChainId, event: ChainAuditEventInput): Promise<void> {
     this.events.push(event);
   }
-  async closeChain(chainId: ChainId, status: "completed" | "failed" | "aborted"): Promise<void> {
+  async closeChain(
+    chainId: ChainId,
+    status: "completed" | "failed" | "aborted" | "merge_failed",
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
     const m = this.manifests.get(chainId);
     if (m) {
       m.status = status;
       m.completed_at = new Date().toISOString();
     }
+    this.closures.push({ chainId, status, extra });
   }
   async readManifest(chainId: ChainId): Promise<ChainManifest | null> {
     return this.manifests.get(chainId) ?? null;
+  }
+  async incrementRetry(chainId: ChainId): Promise<
+    { total_retry_count: number; max_total_retries: number } | null
+  > {
+    const m = this.manifests.get(chainId);
+    if (!m) return null;
+    m.total_retry_count = (m.total_retry_count ?? 0) + 1;
+    return {
+      total_retry_count: m.total_retry_count,
+      max_total_retries: m.max_total_retries,
+    };
   }
 }
 
@@ -288,7 +313,10 @@ function makeInstance(
 const LEADER_ID = asInstanceId("leader-1");
 const CHAIN_ID: ChainId = asChainId("chain-test-001");
 
-function setup(instances: Instance[] = []): {
+function setup(
+  instances: Instance[] = [],
+  opts?: { max_chain_retries?: number },
+): {
   router: ChainRouter;
   queue: TaskQueue;
   bus: FakeBus;
@@ -316,6 +344,7 @@ function setup(instances: Instance[] = []): {
       leader_instance_id: LEADER_ID,
     },
     chain_audit: audit as never,
+    max_chain_retries: opts?.max_chain_retries,
   });
   return { router, queue, bus, msg, audit };
 }
@@ -734,6 +763,90 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
           (e as { message: string }).message.includes("no resolvable target"),
       ),
     ).toBe(true);
+  });
+
+  it("aborts the chain when feedback exceeds max_chain_retries (A5 ceiling)", async () => {
+    // Configure a 1-retry ceiling so the first feedback succeeds and the
+    // second exceeds. Build a chain with planner+builder so feedback has
+    // a resolvable prior-link target (otherwise A6 drops it before A5
+    // gets a chance to count).
+    const tom = makeInstance("tom-01", "Tom", "planner");
+    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const { router, msg, bus, audit, queue } = setup([tom, jerry], {
+      max_chain_retries: 1,
+    });
+    await router.route(chainDefMessage(chainDefJson()));
+    // Drive plan → activate_next so build is dispatched to Jerry and the
+    // manifest records link_workers.build for prev-link resolution.
+    await router.route(
+      completionMessage(
+        "plan",
+        JSON.stringify({
+          decision: "activate_next",
+          reason: "ok",
+          next_link: "build",
+        }),
+        tom.id,
+      ),
+    );
+
+    // First feedback: under the ceiling (post-increment = 1 <= 1).
+    await router.route(
+      completionMessage(
+        "verify",
+        JSON.stringify({
+          decision: "feedback",
+          reason: "first FAILURE",
+          feedback_to_worker: "fix #1",
+        }),
+        asInstanceId("lucy-01"),
+      ),
+    );
+    const dispatchesAfterFirst = msg.sent.filter(
+      (m) => m.type === "task_dispatch" && m.task_description === "fix #1",
+    );
+    expect(dispatchesAfterFirst).toHaveLength(1);
+    const manifestAfterFirst = await audit.readManifest(CHAIN_ID);
+    expect(manifestAfterFirst!.total_retry_count).toBe(1);
+    expect(manifestAfterFirst!.status).toBe("running");
+
+    // Second feedback: post-increment = 2 > 1 → must abort the chain.
+    const beforeSecond = msg.sent.length;
+    await router.route(
+      completionMessage(
+        "verify",
+        JSON.stringify({
+          decision: "feedback",
+          reason: "second FAILURE",
+          feedback_to_worker: "fix #2",
+        }),
+        asInstanceId("lucy-01"),
+      ),
+    );
+    // No new task_dispatch with the second feedback was pushed.
+    expect(
+      msg.sent.slice(beforeSecond).find(
+        (m) => m.type === "task_dispatch" && m.task_description === "fix #2",
+      ),
+    ).toBeUndefined();
+    // No new pending task with description "fix #2" exists.
+    const pending = await queue.listPending();
+    expect(pending.find((t) => t.description === "fix #2")).toBeUndefined();
+    // Chain transitioned to aborted with the ceiling reason.
+    const closure = audit.closures.find((c) => c.chainId === CHAIN_ID);
+    expect(closure).toBeTruthy();
+    expect(closure!.status).toBe("aborted");
+    expect(closure!.extra?.reason).toBe("retry_ceiling_exceeded");
+    // chain_closed event was emitted.
+    expect(
+      bus.emitted.some(
+        (e) => e.type === "chain_closed" && e.chain_id === CHAIN_ID,
+      ),
+    ).toBe(true);
+    // Audit log carries retry_ceiling_exceeded.
+    expect(audit.events.some((e) => e.event === "retry_ceiling_exceeded")).toBe(
+      true,
+    );
   });
 });
 
