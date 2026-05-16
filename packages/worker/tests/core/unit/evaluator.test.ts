@@ -2,10 +2,12 @@
 // Locks in: SelfEvaluator semantics — invokes ClaudeRunner with
 //   `fork_session: true`, retries up to 3 times on parse failure with the
 //   format-hint template appended on subsequent attempts, falls back to
-//   activate_next/close_chain after MAX_RETRIES.
+//   `reject` (never activate_next/close_chain) after MAX_RETRIES so the
+//   quality gate is never silently bypassed at the accept link.
 // Core path because: SelfEvaluator is the only authority for chain
-//   progression decisions; a regression here either stalls chains or
-//   activates the wrong next link.
+//   progression decisions; a regression here either stalls chains or, far
+//   worse, silently advances a chain past a broken evaluator — at accept
+//   that would auto-merge an unreviewed deliverable.
 // Owner subsystem: worker.
 // Primary source files exercised:
 //   - packages/worker/src/evaluator.ts
@@ -147,7 +149,7 @@ describe("SelfEvaluator", () => {
     expect(runner.calls[2].prompt.includes("FORMAT_HINT")).toBe(true);
   });
 
-  it("falls back to activate_next when all attempts fail (non-accept link)", async () => {
+  it("falls back to reject when all attempts fail on a non-accept link", async () => {
     const runner = new RecordingRunner(() => "junk");
     const evalr = evaluatorWith(runner);
     const out = await evalr.evaluate({
@@ -157,12 +159,16 @@ describe("SelfEvaluator", () => {
       task_result_path: "/r/t-3.md",
     });
     const parsed = JSON.parse(out);
-    expect(parsed.decision).toBe("activate_next");
-    expect(parsed.next_link).toBe("build");
+    expect(parsed.decision).toBe("reject");
+    expect(parsed.reason).toContain("link=plan");
     expect(runner.calls).toHaveLength(3);
   });
 
-  it("falls back to close_chain when accept fails 3 times", async () => {
+  it("falls back to reject (NOT close_chain) when accept fails 3 times", async () => {
+    // Regression guard: a previous implementation auto-emitted close_chain
+    // on accept-link self-evaluation failure, which silently merged
+    // unreviewed work. Fallback must always be reject so a human or new
+    // chain can re-run accept.
     const runner = new RecordingRunner(() => "");
     const evalr = evaluatorWith(runner);
     const out = await evalr.evaluate({
@@ -171,7 +177,10 @@ describe("SelfEvaluator", () => {
       msg_vars: {},
       task_result_path: "/r/t-4.md",
     });
-    expect(JSON.parse(out).decision).toBe("close_chain");
+    const parsed = JSON.parse(out);
+    expect(parsed.decision).toBe("reject");
+    expect(parsed.decision).not.toBe("close_chain");
+    expect(parsed.reason).toContain("link=accept");
   });
 
   it("substitutes {{name}} and {{role}} into the evaluate prompt", async () => {

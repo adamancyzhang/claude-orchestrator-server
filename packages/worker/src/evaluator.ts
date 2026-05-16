@@ -23,14 +23,6 @@ export const CHAIN_LINKS: readonly TaskLink[] = [
 
 const MAX_RETRIES = 3;
 
-const NEXT_LINKS: Record<TaskLink, TaskLink | null> = {
-  plan: "build",
-  build: "verify",
-  verify: "review",
-  review: "accept",
-  accept: null,
-};
-
 export interface SelfEvaluatorOptions {
   runner: IClaudeRunner;
   template_engine: ITemplateEngine;
@@ -112,18 +104,18 @@ export class SelfEvaluator {
       }
     }
 
-    this.opts.logger.error(`all ${MAX_RETRIES} eval attempts failed — fallback`);
-    const next = NEXT_LINKS[input.link];
-    if (next) {
-      return JSON.stringify({
-        decision: "activate_next",
-        reason: `auto-advance from ${input.link} after ${MAX_RETRIES} eval failures`,
-        next_link: next,
-      });
-    }
+    // Fallback when self-evaluation cannot produce a schema-valid JSON in
+    // MAX_RETRIES attempts. We deliberately emit `reject` (never
+    // `activate_next` / `close_chain`) so an unreliable evaluator never
+    // silently advances the chain — that would invert the quality gate at
+    // the accept link in particular. Leader's chain_router routes `reject`
+    // to chain abort with full audit.
+    this.opts.logger.error(
+      `all ${MAX_RETRIES} eval attempts failed — emitting reject`,
+    );
     return JSON.stringify({
-      decision: "close_chain",
-      reason: `accept link completed after ${MAX_RETRIES} eval failures`,
+      decision: "reject",
+      reason: `self-evaluation failed after ${MAX_RETRIES} attempts (link=${input.link}) — see eval logs`,
     });
   }
 
