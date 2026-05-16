@@ -26,4 +26,9 @@ export {
   type ChainStatus,
 } from "./chain-audit.js";
 export { LeaderWatcher } from "./watcher.js";
+export {
+  MemoryBootstrap,
+  type BootstrapStats,
+  type MemoryBootstrapOptions,
+} from "./memory-bootstrap.js";
 export * from "./tui/index.js";

@@ -34,6 +34,7 @@ import {
   LeaderEventBus,
   LeaderState,
   LeaderWatcher,
+  MemoryBootstrap,
   MergeValidator,
   StdinKeyboardSource,
   StdoutSink,
@@ -220,6 +221,24 @@ export async function runOrchestrator(
     logger.child("watcher"),
   );
   await leaderWatcher.start();
+
+  // Memory bootstrap: kick off in the background. The pass enumerates
+  // tracked source files via `git ls-files`, asks Claude for a summary
+  // per file, then per directory. Skipped if already populated. Runs
+  // detached from startup so Worker spawning can proceed in parallel —
+  // memory is a hint, not a precondition, and the per-file template
+  // guidance explicitly tells Workers to fall back to source when the
+  // memory entry is missing.
+  const memoryBootstrap = new MemoryBootstrap({
+    cache_paths: cachePaths,
+    workspace_root: projectRoot,
+    runner,
+    template_engine: templateEngine,
+    logger: logger.child("memory-bootstrap"),
+  });
+  void memoryBootstrap.run().catch((err) => {
+    logger.warn("memory bootstrap failed", { error: String(err) });
+  });
 
   const monitor = new WorkerMonitor(registry, bus);
   await monitor.start();
