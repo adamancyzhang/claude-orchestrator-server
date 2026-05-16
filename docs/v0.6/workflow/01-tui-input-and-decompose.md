@@ -68,7 +68,7 @@ await this.opts.message_router.send({
   from_instance: this.opts.leader_id,       // "leader-01"
   from_name: this.opts.leader_name,         // "Leader"
   from_role: "leader",
-  to_instance: this.opts.leader_id,         // ⚠️ 发给自己
+  to_instance: this.opts.leader_id,         // 发给自己
   content,
 });
 ```
@@ -158,7 +158,7 @@ void this.processMessage(msg).finally(() => this.inFlight.delete(msg.id));
 - emit `message_received` 事件 → 触发 TUI 重渲染
 - `await this.chain_router.route(msg as Parameters<ChainRouter["route"]>[0])`
 - emit `message_processed` 事件
-- ⚠️ **没有 dismiss**，消息留在 ZK，仅 `read=true`
+- 没有 dismiss，消息留在 ZK，仅 `read=true`
 
 ### 2.3 ZK 写回
 
@@ -215,7 +215,7 @@ const resultPath = cachePaths.decomposeResultPath(
 await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
 ```
 
-✅ **issue #5 修复**：每条入站消息现在拥有独立子目录 `messages/<message_id>/`，inbound stream-json 落 `inbound.log`、decompose 产物落 `decompose.md`，不再借道 task results 路径，不再有"task_id 强转 TaskId 品牌类型"的污染。路径函数集中在 `packages/contracts/src/paths/cachePaths.ts`，锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
+每条入站消息拥有独立子目录 `messages/<message_id>/`：inbound stream-json 落 `inbound.log`、decompose 产物落 `decompose.md`，不复用 task results 路径。路径函数集中在 `packages/contracts/src/paths/cachePaths.ts`，锁定行为见 `packages/contracts/tests/core/unit/paths.test.ts`。
 
 ### 4.3 模板渲染
 
@@ -235,7 +235,7 @@ const prompt = this.opts.template_engine.render("worker-decompose.md", {
 });
 ```
 
-`worker-decompose.md` 用到 `{{task_description}}`、`{{result_path}}`、`{{name}}` 等变量。✅ issue #2 修复后 `name = leader_name`、`role = "leader"` 被实际替换，prompt 中 `{{name}}` 显示为 `Leader`。
+`worker-decompose.md` 用到 `{{task_description}}`、`{{result_path}}`、`{{name}}` 等变量。`name = leader_name`、`role = "leader"` 在渲染时被替换，prompt 中 `{{name}}` 显示为 `Leader`。
 
 **渲染后 prompt（关键片段）**：
 
@@ -244,7 +244,7 @@ Break down the requirement below into a chain of tasks following the Plan → Bu
 
 ## Step 0: Restore Directory Memory
 
-Read `.claude-orchestrator/docs/Leader/YYYY-MM-DD/CLAUDE.md` (use today's date) to restore session context. ...
+Read `~/.claude-orchestrator/projects/leader-01/docs/Leader/YYYY-MM-DD/CLAUDE.md` (use today's date) to restore session context. ...
 
 ## Requirement
 
@@ -259,7 +259,7 @@ Read `.claude-orchestrator/docs/Leader/YYYY-MM-DD/CLAUDE.md` (use today's date) 
 
 ## Output
 
-Write the result to ~/.claude-orchestrator/projects/leader-01/messages/msg-0000000001/decompose.md. Also save a copy to `.claude-orchestrator/docs/Leader/YYYY-MM-DD/chain-def.json`.
+Write the result to ~/.claude-orchestrator/projects/leader-01/messages/msg-0000000001/decompose.md.
 
 ```json
 { ... template skeleton ... }
@@ -274,7 +274,7 @@ Output ONLY the JSON. No explanation.
 
 `packages/runtime/src/runner.ts` `ClaudeRunner.run()`：
 - 调 `execWithStreaming` (`@co/infra`)
-- ⚠️ **没有 system_prompt**（Leader 自处理 decompose 时不注入身份卡。这是有意的选择——decompose 是 Leader 的本地 reasoning，不需要 worker 身份；保留 ⚠️ 作为读者注意点。）
+- 不注入 system_prompt：Leader 自处理 decompose 是 Leader 的本地 reasoning，不需要 worker 身份卡。
 - 命令形态（简化）：
   ```bash
   claude -p '<rendered prompt>' \
@@ -289,7 +289,6 @@ Output ONLY the JSON. No explanation.
 |------|------|
 | `~/.claude-orchestrator/projects/leader-01/messages/msg-0000000001/inbound.log` | claude-cli stream-json 完整流（system/init + assistant_message + result） |
 | `~/.claude-orchestrator/projects/leader-01/messages/msg-0000000001/decompose.md` | claude 按 `worker-decompose.md` 指令写入的 ChainDef JSON |
-| `.claude-orchestrator/docs/Leader/YYYY-MM-DD/chain-def.json` | 模板要求"也写一份这里"。✅ `{{name}}` 已替换为 `Leader`，路径不再有字面占位符。 |
 
 ### 4.6 claude-cli 出参 — ChainDef 完整 JSON
 
@@ -347,7 +346,7 @@ await this.handleTaskDefinitions(
 
 `extractJson` 会剥掉 ```` ```json ``` ```` 围栏，匹配首个 `{...}` 块。返回纯 JSON 字符串。`originalRequirement` 是 4.3 之前保存的 `msg.content` 副本（在 decompose 覆盖前 capture），后续 §5.2 持久化到 `requirement.md`。
 
-### 4.8 ⚠️ 备选分支：转发 Planner
+### 4.8 备选分支：转发 Planner
 
 若 `template_engine.has("worker-decompose.md") === false`，走 `packages/leader/src/chain-router.ts`：
 
@@ -355,19 +354,19 @@ await this.handleTaskDefinitions(
 const planner = await this.findIdleWorkerByRole("planner");
 if (!planner) {
   this.opts.logger.warn("no planner available — requirement dropped");
-  return;                                  // ⚠️ 需求丢弃，无任何回退
+  return;                                  // 需求丢弃，无任何回退
 }
 await this.opts.message_router.send({
   type: "task_dispatch",
   from_instance: leader_id, ...
   to_instance: planner.id,                 // 发给 Tom
   content: msg.content,
-  link: "plan",                            // ⚠️ 注意 link="plan" 而非 "decompose"
+  link: "plan",                            // 注意 link="plan" 而非 "decompose"
   task_description: msg.content,
 });
 ```
 
-⚠️ 这意味着：转发分支下 Planner 收到的是一条 `link="plan"` 的任务，Planner 会用 `worker-planner-task.md` 模板而非 `worker-decompose.md` —— 与自处理分支语义不同（不会生成 ChainDef）。本贯穿样例不走此分支，详情见 `02-plan-link.md`。
+转发分支下 Planner 收到的是一条 `link="plan"` 的任务，Planner 会用 `worker-planner-task.md` 模板而非 `worker-decompose.md` —— 与自处理分支语义不同（不会生成 ChainDef）。本贯穿样例不走此分支，详情见 `02-plan-link.md`。
 
 ## Step 5 — handleTaskDefinitions → 入队 5 个任务
 
@@ -422,7 +421,7 @@ const firstWorker = firstLink
   : null;
 ```
 
-`findIdleWorkerByRole("planner")` 返回 Tom（`tom-01`）—— 真正按 `status === "idle"` 过滤（✅ Worker 现在会把自己心跳为 busy，详见 `02` §5.1）。
+`findIdleWorkerByRole("planner")` 返回 Tom（`tom-01`）—— 按 `status === "idle"` 过滤（Worker 在处理消息时把自己心跳为 busy，详见 `02` §5.1）。
 
 ### 5.4 循环 push 5 个任务
 
@@ -495,7 +494,7 @@ for (const link of linkOrder) {
 }
 ```
 
-✅ **本轮治理**：`task_doc_path` / `depends_on` / `blocked_by` / `blocked_reason` 四个字段已从 Task schema 完全移除（详见 README §12）。任务推进继续由 `handleCompletionReport.activate_next` 显式 push 新任务 + 派发消息驱动；`core/01-requirement-to-tasks.md` §8 描述的"线性依赖"被设计放弃，因为 Leader-directed dispatch 已经显式承担了这一职责。
+Task schema 中不包含 `task_doc_path` / `depends_on` / `blocked_by` / `blocked_reason` 字段；任务推进由 `handleCompletionReport.activate_next` 显式 push 新任务 + 派发消息驱动，无内建的线性依赖。
 
 ### 5.6 emit chain_activated
 
@@ -536,9 +535,9 @@ if (firstLink && firstTaskId && firstDef) {
 }
 ```
 
-`rememberDispatch` 是 `ChainRouter` 内部包装，直接调 `chain_audit.setLinkWorker(chain_id, link, worker_id)`。**完全持久化**：旧版本是内存 `chainWorkers: Map<ChainId, Map<TaskLink, InstanceId>>`，Leader 进程重启会丢；现在统一写入 manifest.json 的 `link_workers` 字段，重启后 `resolveFeedbackTarget` 仍可恢复（详见 `04` §7.9.1）。
+`rememberDispatch` 是 `ChainRouter` 内部包装，直接调 `chain_audit.setLinkWorker(chain_id, link, worker_id)`，把 link → worker_id 映射持久化到 manifest.json 的 `link_workers` 字段；Leader 进程重启后 `resolveFeedbackTarget` 可恢复（详见 `04` §7.9.1）。
 
-✅ **issue #9 修复 + 本轮巩固**：task_dispatch 现在完整携带 `task_description / task_criteria / original_requirement_path`，从初始 ChainDef 转写而来。下游 worker 不再依赖 worktree 上下文复原任务细节。
+task_dispatch 携带 `task_description / task_criteria / original_requirement_path`，由初始 ChainDef 转写。下游 worker 不依赖 worktree 内的上下文复原任务细节。
 
 ### 5.8 ZK 写入后的 task_dispatch 消息
 
@@ -600,7 +599,6 @@ if (firstLink && firstTaskId && firstDef) {
 | `~/.claude-orchestrator/projects/leader-01/chains/chain-pagination-001/requirement.md` | <1 KB | 原始 user requirement 文本（5.2 持久化） |
 | `~/.claude-orchestrator/projects/leader-01/chains/chain-pagination-001/manifest.json` | <2 KB | ChainManifest 初版，含 link_tasks 5×null（plan 已填）+ link_workers 5×null（plan 已填 tom-01）+ status=running |
 | `~/.claude-orchestrator/projects/leader-01/chains/chain-pagination-001/audit.jsonl` | <1 KB | 已 append `chain_opened` / `requirement_received` / `task_dispatch` 三行 |
-| `.claude-orchestrator/docs/Leader/YYYY-MM-DD/chain-def.json` | 数 KB | claude 按模板写的副本，路径已替换 `{{name}}` 为 `Leader` |
 
 **`manifest.json` 此刻内容（示意）**：
 

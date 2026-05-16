@@ -22,7 +22,7 @@ CO_LINK = `build`，其余与 Plan 一致。
 
 ## 6.4 模板渲染
 
-✅ **issue #9 修复**：本步 vars 完整来自初始 ChainDef，不再退化：
+本步 vars 完整来自初始 ChainDef：
 - `task_title` = `"实现 /api/users 分页查询"`
 - `task_description` = `"按 Plan 实现 controller / service / repository 三层修改..."`
 - `task_criteria` = `"(1) curl -G /api/users -d 'page=2&page_size=5' 返回 200..."`
@@ -47,7 +47,7 @@ The user's original requirement is preserved verbatim at `~/.claude-orchestrator
 
 ## Upstream Artifacts (read first, in order)
 1. Planner blueprint (authoritative): `~/.claude-orchestrator/projects/leader-01/tasks/task-0000000001/result.md`
-2. In-worktree resume copy (only if a previous build attempt exists): `~/.claude-orchestrator/projects/leader-01/docs/Jerry/2026-05-14/build-chain-pagination-001.md`
+2. Self-archive (only if a previous build attempt exists): `~/.claude-orchestrator/projects/leader-01/docs/Jerry/2026-05-14/build-chain-pagination-001.md`
 3. If both are missing → BLOCK and report to Leader via the completion report.
 
 Extract every implementable requirement as a checklist before writing code.
@@ -61,17 +61,17 @@ Implement the requirements in the Planner's blueprint, leaving an evidence trail
 ...
 ```
 
-✅ **issue #2 修复**：`{{name}}` 渲染为 `Jerry`、`{{role}}` 渲染为 `builder`。
+`{{name}}` 渲染为 `Jerry`、`{{role}}` 渲染为 `builder`。
 
-✅ **issue #10 修复 + 本轮巩固（cross-worktree artifact）**：原现状下 Jerry 跨 worktree 读 Tom 的 blueprint 需要 git fetch / cherry-pick，存在断链风险；现在通过 chain-shared cache 路径解决：
+跨 worker artifact 通过 chain-shared cache 路径传递（不依赖 git 跨分支同步）：
 
-1. Tom 完成 plan 时 `WorkerWatcher` 把 blueprint 写到 `projects/leader-01/tasks/task-0000000001/result.md`（`result_path`，与 Leader / 所有 worker 共享）
+1. Tom 完成 plan 时 `WorkerWatcher` 把 blueprint 写到 `projects/leader-01/tasks/task-0000000001/result.md`（`result_path`，chain 共享）
 2. ChainAudit `manifest.json.link_tasks.plan = "task-0000000001"`
 3. Jerry 启动任务时，`WorkerWatcher.collectChainArtifacts` 读 chain manifest（`chains/chain-pagination-001/manifest.json`），按 `cachePaths.taskResultPath` 解析出 Tom 的 result.md 路径
 4. 注入到模板 `{{upstream_plan_artifact}}` 变量
-5. Jerry 直接读 chain-shared cache，跨 worktree 完全可解析；本地 worktree 副本只作"续做时的快速恢复"
+5. Jerry 直接读 chain-shared cache。Jerry 自己的 `local_doc_path` 也落在 cache 下（`docs/Jerry/<date>/build-<chain_id>.md`），作为 worker 自留备份用于续做时快速恢复。
 
-✅ **本轮治理**：`task_doc_path` fallback 已从模板移除（同时从 Task/Message schema 移除），上游 artifact 路径完全依赖 `upstream_*_artifact` 变量。
+上游 artifact 路径完全依赖 `upstream_*_artifact` 变量，不存在 `task_doc_path` 之类 fallback。
 
 ## 6.5 claude-cli 主执行
 
@@ -83,14 +83,19 @@ Implement the requirements in the Planner's blueprint, leaving an evidence trail
 
 ### 6.5.1 期望生成的文件
 
+Cache 产出（`~/.claude-orchestrator/projects/leader-01/`）：
+
 | 路径 | 内容 |
 |------|------|
-| `~/.../projects/leader-01/tasks/task-0000000002/result.md` | traceability-map.md（Leader / 下游 worker 视角） |
-| `~/.../projects/leader-01/docs/Jerry/2026-05-14/build-chain-pagination-001.md` | local_doc_path：同上副本 |
-| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md` | 同上 worktree 副本（Builder 可能也写一份） |
-| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/evidence/*.{md,log,json}` | 测试/构建证据 |
-| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md` | 当日记忆 |
-| `~/work/.../worktrees/Jerry/src/api/users-controller.ts`、`src/api/users-service.ts` 等 | 实际实现代码（贯穿样例） |
+| `tasks/task-0000000002/result.md` | traceability-map.md（chain 共享，下游 worker 读取入口） |
+| `docs/Jerry/2026-05-14/build-chain-pagination-001.md` | local_doc_path（worker 自留备份） |
+| `docs/Jerry/2026-05-14/evidence/*.{md,log,json}` | 测试/构建证据 |
+
+Worktree 内 git 工作区改动（由 commit 承载）：
+
+| 路径 | 内容 |
+|------|------|
+| `~/work/.../worktrees/Jerry/src/api/users-controller.ts`、`src/api/users-service.ts` 等 | 实际实现代码 |
 | `~/work/.../worktrees/Jerry/tests/users.test.ts` | 新增测试 |
 
 **traceability-map.md 内容（示意）**：
@@ -129,20 +134,14 @@ CO_LINK = `build`，env 含 exit_code。
     " M src/api/users-service.ts"
   ],
   "untracked_files": [
-    "tests/users.test.ts",
-    ".claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md",
-    ".claude-orchestrator/docs/Jerry/2026-05-14/evidence/curl-page-2.log",
-    ".claude-orchestrator/docs/Jerry/2026-05-14/evidence/curl-default.log",
-    ".claude-orchestrator/docs/Jerry/2026-05-14/evidence/curl-page-0.log",
-    ".claude-orchestrator/docs/Jerry/2026-05-14/evidence/test-out.log",
-    ".claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md"
+    "tests/users.test.ts"
   ]
 }
 ```
 
-commit log 落 `projects/leader-01/tasks/task-0000000002/commit.log`。
+（traceability-map / evidence / CLAUDE.md 等都写在 cache 而非 worktree git 工作区，不会出现在 `git status` 输出。）
 
-✅ **issue #11 修复**：`execFileSync("git", ["commit", "-m", message], …)` 跳过 shell 解析，message 作为单独 argv 传递。锁定行为见 `packages/worker/tests/core/unit/commit-checker.test.ts`。
+commit log 落 `projects/leader-01/tasks/task-0000000002/commit.log`。`execFileSync("git", ["commit", "-m", message], …)` 跳过 shell 解析，message 作为单独 argv 传递（避免命令注入）。锁定行为见 `packages/worker/tests/core/unit/commit-checker.test.ts`。
 
 ## 6.8 SelfEvaluator
 
@@ -171,9 +170,9 @@ commit log 落 `projects/leader-01/tasks/task-0000000002/commit.log`。
 }
 ```
 
-✅ **issue #3 修复**：模板字段名已对齐 schema（`feedback_to_worker / feedback_target` 等）。
+模板字段名对齐 schema（`feedback_to_worker / feedback_target` 等）。
 
-✅ **本轮治理（feedback 物化为 retry task）**：Leader 收到 build 自评 feedback 后，`ChainRouter.dispatchFeedbackAsRetry` 会 push 一条 retry build task（retry_count++、`description = feedback_to_worker`、`assigned_to = msg.from_instance` 即 jerry-01），通过 `task_dispatch` 派回给 Jerry，Worker 走标准 claimById → run → evaluate 循环。旧 `tasks/task-0000000002/result.md` 不被覆盖，审计可追溯。详情见 `04` §7.9.1（Verifier feedback 同一机制）。
+feedback 物化为 retry task：Leader 收到 build 自评 feedback 后，`ChainRouter.dispatchFeedbackAsRetry` 会 push 一条 retry build task（retry_count++、`description = feedback_to_worker`、`assigned_to = msg.from_instance` 即 jerry-01），通过 `task_dispatch` 派回给 Jerry，Worker 走标准 claimById → run → evaluate 循环。旧 `tasks/task-0000000002/result.md` 不被覆盖，审计可追溯。详情见 `04` §7.9.1（Verifier feedback 同一机制）。
 
 ## 6.9 完成报告 + 收尾
 
@@ -192,7 +191,7 @@ ZK 路径：`/claude-orchestrator/messages/leader-01/msg-0000000003`
   "from_role": "builder",
   "to_instance": "leader-01",
   "to_name": null,
-  "content": "{\"decision\":\"activate_next\",\"reason\":\"all plan requirements implemented; tests passing 0 failures\",\"next_link\":\"verify\",\"commit\":{\"sha\":\"8d5e4b3c0a2f6e7d9c5b4a3e2f1098765432bcde\",\"message\":\"feat(users): paginate /api/users with page/page_size\",\"branch\":\"co/jerry-01\",\"changed_files\":[\" M src/api/users-controller.ts\",\" M src/api/users-service.ts\"],\"untracked_files\":[\"tests/users.test.ts\",\".claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md\",\".claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md\"]}}",
+  "content": "{\"decision\":\"activate_next\",\"reason\":\"all plan requirements implemented; tests passing 0 failures\",\"next_link\":\"verify\",\"commit\":{\"sha\":\"8d5e4b3c0a2f6e7d9c5b4a3e2f1098765432bcde\",\"message\":\"feat(users): paginate /api/users with page/page_size\",\"branch\":\"co/jerry-01\",\"changed_files\":[\" M src/api/users-controller.ts\",\" M src/api/users-service.ts\"],\"untracked_files\":[\"tests/users.test.ts\"]}}",
   "link": "build",
   "task_id": "task-0000000002",
   "chain_id": "chain-pagination-001",
@@ -273,20 +272,18 @@ decision = `activate_next`, next_link = `verify`：
 | `tasks/task-0000000002/result.md` | traceability-map.md |
 | `tasks/task-0000000002/commit.log` | commit message claude 调用日志 |
 | `tasks/task-0000000002/eval-{0,1,2}.log` | self-eval claude 调用日志（视重试） |
-| `docs/Jerry/2026-05-14/build-chain-pagination-001.md` | local_doc_path 副本 |
+| `docs/Jerry/2026-05-14/build-chain-pagination-001.md` | local_doc_path（worker 自留备份） |
+| `docs/Jerry/2026-05-14/evidence/*.{md,log,json}` | 测试/构建证据 |
 | `chains/chain-pagination-001/manifest.json` | `link_tasks.verify = task-0000000003`、`link_workers.verify = lucy-01` 更新 |
 | `chains/chain-pagination-001/audit.jsonl` | append `completion_report`（build）+ `task_dispatch`（verify）两行 |
 
-### Worktree 内文件（Jerry 分支）
+### Worktree 内 git 工作区改动（Jerry 分支）
 
 | 路径 | 内容 |
 |------|------|
 | `~/work/.../worktrees/Jerry/src/api/users-controller.ts` | 改动实现 |
 | `~/work/.../worktrees/Jerry/src/api/users-service.ts` | 改动实现 |
 | `~/work/.../worktrees/Jerry/tests/users.test.ts` | 新增测试 |
-| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/traceability-map.md` | 追溯表 |
-| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/evidence/*.log` | 测试证据 |
-| `~/work/.../worktrees/Jerry/.claude-orchestrator/docs/Jerry/2026-05-14/CLAUDE.md` | 当日记忆 |
 
 ### Git commit
 

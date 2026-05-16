@@ -17,7 +17,7 @@
 - **结构模板**：`templates/agents/worker-identity.md`
 - **角色专属规则（个人 memory）**：`templates/claude-memory/personal-claude-{planner|builder|verifier|reviewer|accepter}.md`
 - **常驻 role 描述（system prompt）**：`templates/agents/worker-{planner|builder|verifier|reviewer|accepter}.md`
-- **拼接位置**：`packages/orchestrator/src/worktree-initializer.ts:265-271` 在创建 worktree 时，把 `personal-claude-{role}.md` 中的 `{{name}}` / `{{role}}` 替换好后再写入 `~/.claude-orchestrator/projects/<leader_id>/docs/<name>/CLAUDE.md`。`packages/runtime/src/runner.ts` 的 `ClaudeRunner.buildIdentityPrompt()` 负责渲染 `worker-identity.md`，最终结果作为 `WorkerWatcherOptions.identity_system_prompt`（`packages/worker/src/watcher.ts:54-72`）。
+- **拼接位置**：`packages/orchestrator/src/worktree-initializer.ts` 在初始化 Worker 时，把 `personal-claude-{role}.md` 中的 `{{name}}` / `{{role}}` 替换好后写入用户目录的 `~/.claude-orchestrator/projects/<leader_id>/docs/<name>/CLAUDE.md`。`packages/runtime/src/runner.ts` 的 `ClaudeRunner.buildIdentityPrompt()` 负责渲染 `worker-identity.md`，最终结果作为 `WorkerWatcherOptions.identity_system_prompt`（`packages/worker/src/watcher.ts:54-72`）。
 - **注入方式**：`packages/worker/src/watcher.ts` 的 `processTask` 把它作为 `runner.run()` 的 `system_prompt` 参数传入，`ClaudeRunner` 通过 `claude --append-system-prompt '<...>' -p '<user prompt>'` 注入。
 - **prompt caching 友好**：身份卡内容与每条任务正交，命中 system prompt cache。
 
@@ -37,11 +37,11 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 
 `ClaudeRunner.buildIdentityPrompt()` 替换 5 个占位符（驼峰）：`{{name}} / {{role}} / {{worktreePath}} / {{worktreeBranch}} / {{instanceId}}`。
 
-## 3. ✅ 模板里的 `{{name}}` 占位符（已统一替换）
+## 3. 模板里的 `{{name}}` 占位符
 
-`worker-identity.md` 中的 `{{name}}` 由 `ClaudeRunner.buildIdentityPrompt()` 替换（驼峰键）。`templates/agents/worker-{role}-task.md`（per-task wrapper）与 `templates/agents/worker-evaluate.md` / `worker-decompose.md` 等中也使用 `{{name}}`（例如 `Read .claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`）。
+`worker-identity.md` 中的 `{{name}}` 由 `ClaudeRunner.buildIdentityPrompt()` 替换（驼峰键）。`templates/agents/worker-{role}-task.md`（per-task wrapper）与 `templates/agents/worker-evaluate.md` / `worker-decompose.md` 等中也使用 `{{name}}`（例如 `Read ~/.claude-orchestrator/projects/<leader_id>/docs/{{name}}/YYYY-MM-DD/CLAUDE.md`）。
 
-**✅ issue #2 修复**：在 `WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement` 的 render vars 中都补传了 `name` 与 `role`：
+`WorkerWatcher.processMessage`、`SelfEvaluator.evaluate`、`ChainRouter.handleRequirement` 的 render vars 中都传 `name` 与 `role`：
 
 | 调用点 | name 来源 | role 来源 |
 |--------|----------|----------|
@@ -49,9 +49,9 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 | `SelfEvaluator.evaluate` | `this.opts.worker_name` | `this.opts.worker_role` |
 | `ChainRouter.handleRequirement`（Leader 自处理 decompose） | `this.opts.leader_name` | 字面 `"leader"` |
 
-Worker 任务模板和自评估模板里的 `{{name}}` / `{{role}}` 现在会被实际替换。锁定行为见 `packages/worker/tests/core/unit/evaluator.test.ts` "substitutes {{name}} and {{role}}"。
+Worker 任务模板和自评估模板里的 `{{name}}` / `{{role}}` 在渲染时会被替换。锁定行为见 `packages/worker/tests/core/unit/evaluator.test.ts` "substitutes {{name}} and {{role}}"。
 
-**✅ personal-claude-{role}.md 已渲染**：`worktree-initializer.ts:267-271` 读 `templates/claude-memory/personal-claude-{role}.md` 后，对内容做 `.replace(/\{\{name\}\}/g, name).replace(/\{\{role\}\}/g, role)`，再写入 worktree 内的 `.claude-orchestrator/docs/<name>/CLAUDE.md`。Worker 在主流程开始时 Read 这份 daily memory，已经是替换好的；身份 prompt 拼接侧也同样使用替换后的内容。
+`personal-claude-{role}.md` 在 worktree 初始化时由 `worktree-initializer.ts` 读取，对内容做 `.replace(/\{\{name\}\}/g, name).replace(/\{\{role\}\}/g, role)`，再写入用户目录的 `~/.claude-orchestrator/projects/<leader_id>/docs/<name>/CLAUDE.md`（与 `cachePaths.ts` 头注释定义的 layout 对齐）。Worker 在主流程开始时 Read 这份角色 memory，已经是替换好的；身份 prompt 拼接侧也同样使用替换后的内容。
 
 ## 4. role → skill / 模板 / 产出 / 权重 总览表
 
@@ -103,7 +103,7 @@ You define the blueprint that all downstream roles follow. Read `.claude/skills/
 
 **能力边界**：需求解析、蓝图设计、Build 步骤拆解、可验证完成标准的拟定。
 **首选 link**：plan（权重 100）。
-**典型产出**：`blueprint.md` 写两份 —— `result_path = projects/leader-01/tasks/<task_id>/result.md`（供 Leader / 下游 worker）和 `local_doc_path = projects/leader-01/docs/Tom/2026-05-14/plan-<chain_id>.md`（worker 自留备份）。
+**典型产出**：`blueprint.md` 写到 cache —— `result_path = projects/leader-01/tasks/<task_id>/result.md`（chain 共享，下游 worker 读取入口）+ `local_doc_path = projects/leader-01/docs/Tom/2026-05-14/plan-<chain_id>.md`（worker 自留备份，cache 下同一根）。
 **禁止**：实现代码 / 模糊验收标准 / 跳过 self-check。
 
 ### 5.2 Jerry — Builder
@@ -120,7 +120,7 @@ You define the blueprint that all downstream roles follow. Read `.claude/skills/
 
 **能力边界**：读 Tom 的 blueprint → 实现 → 生成 traceability-map → 跑测试留证据 → git commit。
 **首选 link**：build（权重 100）。
-**典型产出**：`traceability-map.md` 写到 `tasks/<task_id>/result.md` + `docs/Jerry/<date>/build-<chain_id>.md`；测试证据保存在 worktree 的 `.claude-orchestrator/docs/Jerry/<date>/evidence/`。
+**典型产出**：`traceability-map.md` 写到 cache —— `tasks/<task_id>/result.md`（chain 共享）+ `docs/Jerry/<date>/build-<chain_id>.md`（worker 自留备份）；测试证据保存在 `docs/Jerry/<date>/evidence/`（cache 下同一根）。
 **禁止**：无 Plan 依据的实现 / 把"代码层面已实现"当证据 / 做架构决策（属 Planner 域）。
 
 ### 5.3 Lucy — Verifier
@@ -189,16 +189,15 @@ You define the blueprint that all downstream roles follow. Read `.claude/skills/
 └── leo-01       [EPHEMERAL]  {"id":"leo-01","name":"Leo","role":"accepter","status":"idle",...}
 ```
 
-每个节点的 schema 见 `packages/contracts/src/schemas/instance.ts`。`status` 由 `IInstanceRegistry` 在 `ChainRouter.findIdleWorkerByRole` 时检查（`packages/leader/src/chain-router.ts`）。**✅ status="busy" 现在真的写入 ZK**：`WorkerWatcher.processMessage` 入口前调 `registry.heartbeat(instance_id, { status: "busy", current_task_id })`；try/finally 末尾再回写 `idle`。这下并发派发 / 第二条链时 `findIdleWorkerByRole` 真正按 status 过滤。
+每个节点的 schema 见 `packages/contracts/src/schemas/instance.ts`。`status` 由 `IInstanceRegistry` 在 `ChainRouter.findIdleWorkerByRole` 时检查（`packages/leader/src/chain-router.ts`）。`WorkerWatcher.processMessage` 入口前调 `registry.heartbeat(instance_id, { status: "busy", current_task_id })`；try/finally 末尾再回写 `idle`。`findIdleWorkerByRole` 按 status 过滤，并发派发 / 第二条链时仍能正确选择空闲 worker。
 
 ### 6.1 chain-shared cache 路径速查
 
-下游 worker 读上游产出靠两个机制：
+下游 worker 通过 chain manifest 读上游产出：
 
-1. **Manifest lookup**：`WorkerWatcher.collectChainArtifacts` 读 `~/.claude-orchestrator/projects/<leader_id>/chains/<chain_id>/manifest.json` 的 `link_tasks[<upstream_link>]` 字段，得到上游 task_id，再用 `cachePaths.taskResultPath` 拼出 `tasks/<task_id>/result.md`。结果通过模板变量 `{{upstream_plan_artifact}} / upstream_build_artifact / upstream_verify_artifact / upstream_review_artifact` 注入。
-2. **In-worktree fallback**：每个 worker 都把自己的产出再写一份到 `docs/<name>/<date>/<prefix>-<chain_id>.md`（路径 = `cachePaths.workerLocalDocPath`），供同名 worker 多次任务复用。
+`WorkerWatcher.collectChainArtifacts` 读 `~/.claude-orchestrator/projects/<leader_id>/chains/<chain_id>/manifest.json` 的 `link_tasks[<upstream_link>]` 字段，得到上游 task_id，再用 `cachePaths.taskResultPath` 拼出 `tasks/<task_id>/result.md`。结果通过模板变量 `{{upstream_plan_artifact}} / upstream_build_artifact / upstream_verify_artifact / upstream_review_artifact` 注入。
 
-跨 worktree 时，**只有路径 1 可靠**（不同 worker 在不同分支 / 不同 worktree），因此模板里 4 个 `upstream_*_artifact` 变量是权威读取入口。
+worker 自留备份（`cachePaths.workerLocalDocPath` → `docs/<name>/<date>/<prefix>-<chain_id>.md`）也落在同一 cache 根下，可供同名 worker 多次任务时复用，但不是下游 worker 的读取入口。模板里 4 个 `upstream_*_artifact` 变量是跨 worker 读上游产物的权威入口。
 
 ## 7. 消息收件箱（每个 instance 一个）
 

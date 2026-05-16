@@ -23,14 +23,12 @@
 If any of the three upstream artifacts is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop.
 ```
 
-✅ **issue #10 修复**：Mia 通过 chain-shared cache 路径读 3 份上游 artifact：
+Mia 通过 chain-shared cache 路径读 3 份上游 artifact：
 - `{{upstream_plan_artifact}}` = `~/.../projects/leader-01/tasks/task-0000000001/result.md`（Tom 的 blueprint）
 - `{{upstream_build_artifact}}` = `~/.../projects/leader-01/tasks/task-0000000002/result.md`（Jerry 的 traceability-map）
 - `{{upstream_verify_artifact}}` = `~/.../projects/leader-01/tasks/task-0000000003/result.md`（Lucy 的 verification-map）
 
 由 `WorkerWatcher.collectChainArtifacts` 从 chain manifest 解析得到。
-
-✅ **本轮治理**：`{{task_doc_path}}` 行已从模板移除。
 
 ## 8.5 主任务
 
@@ -42,14 +40,12 @@ claude --append-system-prompt '<Mia identity (reviewer)>' \
   > ~/.claude-orchestrator/projects/leader-01/tasks/task-0000000004/exec-<ts>.log
 ```
 
-期望生成文件：
+期望生成文件（全部在 cache 下，`~/.claude-orchestrator/projects/leader-01/`）：
 
 | 路径 | 内容 |
 |------|------|
-| `~/.../projects/leader-01/tasks/task-0000000004/result.md` | review-judgment.md 副本（Leader / 下游 worker 视角） |
-| `~/.../projects/leader-01/docs/Mia/2026-05-14/review-chain-pagination-001.md` | local_doc_path 副本 |
-| `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/review-judgment.md` | worktree 副本 |
-| `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/CLAUDE.md` | 当日记忆 |
+| `tasks/task-0000000004/result.md` | review-judgment.md（chain 共享，下游 worker 读取入口） |
+| `docs/Mia/2026-05-14/review-chain-pagination-001.md` | local_doc_path（worker 自留备份） |
 
 **review-judgment.md 内容示意**（基于贯穿样例的 FAILURE）：
 
@@ -97,15 +93,15 @@ Specific fix: Add `page_size > 100 → 400 INVALID_PAGE_SIZE` in users-service.t
 }
 ```
 
-✅ **issue #6 修复 + 本轮治理**：Mia 不指定 `feedback_target` 时，`ChainRouter.resolveFeedbackTarget` 读 `manifest.link_workers[PREV_LINKS["review"]]` = `link_workers.verify` = Lucy（verify worker）；持久化到 chain manifest，Leader 重启可恢复。
+Mia 不指定 `feedback_target` 时，`ChainRouter.resolveFeedbackTarget` 读 `manifest.link_workers[PREV_LINKS["review"]]` = `link_workers.verify` = Lucy（verify worker）；持久化到 chain manifest，Leader 重启可恢复。
 
-⚠️ 业务语义注意：Review 默认 feedback 目标是 Verifier。若 Mia 想直接把问题打回 Builder，需显式 `feedback_target = jerry-01`，或通过 Verifier 中转。
+业务语义注意：Review 默认 feedback 目标是 Verifier。若 Mia 想直接把问题打回 Builder，需显式 `feedback_target = jerry-01`，或通过 Verifier 中转。
 
-✅ **本轮治理（feedback 物化为 retry task）**：Leader 收到 review feedback 后，`dispatchFeedbackAsRetry` 会 push 一条 retry verify task（同 `04` §7.9.1 机制），`description = feedback_to_worker`，assign 给 Lucy（或 Mia 显式指定的 target）。Lucy 走标准 claimById → run → evaluate 循环；新 task_id 进入 chain manifest 的 link_tasks.verify，旧 task-0000000003 仍在 completed/ 中供审计。
+feedback 物化为 retry task：Leader 收到 review feedback 后，`dispatchFeedbackAsRetry` 会 push 一条 retry verify task（同 `04` §7.9.1 机制），`description = feedback_to_worker`，assign 给 Lucy（或 Mia 显式指定的 target）。Lucy 走标准 claimById → run → evaluate 循环；新 task_id 进入 chain manifest 的 link_tasks.verify，旧 task-0000000003 仍在 completed/ 中供审计。
 
 ### 8.7.C reject
 
-`worker-evaluate.md` 决策枚举（修复后）现在包含 `reject`；schema 也支持。Review 拒收时输出：
+`worker-evaluate.md` 决策枚举包含 `reject`；schema 也支持。Review 拒收时输出：
 
 ```json
 {
@@ -151,7 +147,7 @@ ZK 路径：`/messages/leader-01/msg-0000000005`
   "from_role": "reviewer",
   "to_instance": "leader-01",
   "to_name": null,
-  "content": "{\"decision\":\"activate_next\",\"reason\":\"All 5 plan intents accepted with 1 minor concern documented for Accepter awareness\",\"next_link\":\"accept\",\"commit\":{\"sha\":\"a1b2c3d4e5f60718293a4b5c6d7e8f9012345abcd\",\"message\":\"review(users): 5 ACCEPT 1 CONCERN — page_size>100 unrejected\",\"branch\":\"co/mia-01\",\"changed_files\":[],\"untracked_files\":[\".claude-orchestrator/docs/Mia/2026-05-14/review-judgment.md\",\".claude-orchestrator/docs/Mia/2026-05-14/CLAUDE.md\"]}}",
+  "content": "{\"decision\":\"activate_next\",\"reason\":\"All 5 plan intents accepted with 1 minor concern documented for Accepter awareness\",\"next_link\":\"accept\",\"commit\":{\"sha\":\"a1b2c3d4e5f60718293a4b5c6d7e8f9012345abcd\",\"message\":\"review(users): 5 ACCEPT 1 CONCERN — page_size>100 unrejected\",\"branch\":\"co/mia-01\",\"changed_files\":[],\"untracked_files\":[]}}",
   "link": "review",
   "task_id": "task-0000000004",
   "chain_id": "chain-pagination-001",
@@ -204,16 +200,9 @@ ZK 路径：`/messages/leader-01/msg-0000000005`
 | `tasks/task-0000000004/result.md` | review-judgment.md |
 | `tasks/task-0000000004/commit.log` | commit message 调用日志 |
 | `tasks/task-0000000004/eval-{0,1,2}.log` | self-eval 调用日志 |
-| `docs/Mia/2026-05-14/review-chain-pagination-001.md` | local_doc_path 副本 |
+| `docs/Mia/2026-05-14/review-chain-pagination-001.md` | local_doc_path（worker 自留备份） |
 | `chains/chain-pagination-001/manifest.json` | `link_tasks.accept = task-0000000005`、`link_workers.accept = leo-01` 更新 |
 | `chains/chain-pagination-001/audit.jsonl` | append `completion_report`（review）+ `task_dispatch`（accept）两行 |
-
-### Worktree 内文件（Mia 分支）
-
-| 路径 | 内容 |
-|------|------|
-| `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/review-judgment.md` | 评审判断 |
-| `~/work/.../worktrees/Mia/.claude-orchestrator/docs/Mia/2026-05-14/CLAUDE.md` | 当日记忆 |
 
 ### Git commit
 
