@@ -220,6 +220,9 @@ export class WorkerWatcher {
       },
     });
 
+    const workspaceMemoryPath = cachePaths.workspaceMemoryRoot(
+      this.opts.cache_paths,
+    );
     const renderPrompt = (retryHint: string): string => {
       if (!link) return msg.content;
       const tplName = LINK_TO_TASK_TEMPLATE[link];
@@ -242,6 +245,7 @@ export class WorkerWatcher {
         upstream_build_artifact: chainArtifacts.build,
         upstream_verify_artifact: chainArtifacts.verify,
         upstream_review_artifact: chainArtifacts.review,
+        workspace_memory_path: workspaceMemoryPath,
         retry_hint: retryHint,
       });
     };

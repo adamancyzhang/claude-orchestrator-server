@@ -15,6 +15,9 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 
 If any of the four upstream artifacts is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop.
 
+## Workspace Memory (fast reference)
+Before validating that a deliverable file actually exists or behaves as claimed, check `{{workspace_memory_path}}/<relative-source-path>.md` (per-file summary) and the `CLAUDE.md` in its parent directory (directory overview). They mirror the project's source tree and capture purpose, public exports, key invariants, and cross-file dependencies. Treat them as **hints, not ground truth** — if a memory file is missing or its `source_hash` is stale, fall back to the source file.
+
 ## Intent
 Make a binary GO / NO-GO call. For each acceptance criterion: does the deliverable exist? Are Verifier FAILUREs resolved? Are Reviewer CONCERNs addressed? Is evidence independently verifiable?
 
