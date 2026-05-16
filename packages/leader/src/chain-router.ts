@@ -591,6 +591,40 @@ export class ChainRouter {
           msg,
           decision.feedback_target ?? null,
         );
+        if (!targetId) {
+          // Neither an explicit target nor a manifest-recorded prev-link
+          // worker is available. Self-routing to msg.from_instance was the
+          // previous fallback; it created death loops where a worker kept
+          // receiving its own feedback. Drop the dispatch and leave an
+          // audit trail so the operator can investigate.
+          this.opts.logger.error(
+            "feedback target unresolved — dropping retry dispatch",
+            {
+              chain_id: msg.chain_id ?? null,
+              link: msg.link ?? null,
+              from_instance: msg.from_instance,
+              explicit_target: decision.feedback_target ?? null,
+            },
+          );
+          this.opts.bus.emit({
+            type: "debug_info",
+            message: `feedback for chain ${msg.chain_id ?? "(none)"}/${msg.link ?? "(none)"} dropped: no resolvable target`,
+          });
+          if (this.opts.chain_audit && msg.chain_id) {
+            await this.opts.chain_audit.record(msg.chain_id, {
+              event: "feedback_unresolved",
+              link: msg.link ?? null,
+              worker_id: msg.from_instance,
+              worker_name: msg.from_name,
+              task_id: (msg.task_id as TaskId | null) ?? null,
+              payload: {
+                feedback_to_worker: decision.feedback_to_worker,
+                explicit_target: decision.feedback_target ?? null,
+              },
+            });
+          }
+          break;
+        }
         await this.dispatchFeedbackAsRetry({
           msg,
           targetId,
@@ -666,13 +700,16 @@ export class ChainRouter {
    *   2. The worker that handled the previous link in this chain (e.g.
    *      Verifier feedback → Builder), looked up via the persisted chain
    *      manifest (`link_workers`). Survives leader restarts.
-   *   3. The sender of the completion report (legacy fallback — keeps
-   *      single-worker / ad-hoc flows unblocked).
+   *
+   * Returns null when neither source is available. The caller MUST treat
+   * null as "drop the dispatch + audit" rather than fall back to the
+   * report sender — self-routing creates death loops and silently loses
+   * the operator's chance to intervene.
    */
   private async resolveFeedbackTarget(
     msg: Message,
     explicit: InstanceId | null,
-  ): Promise<InstanceId> {
+  ): Promise<InstanceId | null> {
     if (explicit) return explicit;
     if (msg.chain_id && msg.link && this.opts.chain_audit) {
       const prevLink = PREV_LINKS[msg.link];
@@ -682,7 +719,7 @@ export class ChainRouter {
         if (prev) return prev;
       }
     }
-    return msg.from_instance;
+    return null;
   }
 
   /**

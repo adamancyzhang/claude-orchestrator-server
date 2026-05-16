@@ -698,10 +698,14 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     expect(fb.type).toBe("task_dispatch");
   });
 
-  it("falls back to msg.from_instance for plan feedback (no prior link to bounce back to)", async () => {
-    // Plan link feedback has no prior link, so the retry task is assigned
-    // to the reporter themselves (legacy behavior, kept for ad-hoc flows).
-    const { router, msg } = setup([]);
+  it("drops feedback when neither explicit target nor prior-link worker is resolvable", async () => {
+    // Plan link feedback has no prior link, and there is no upstream
+    // manifest entry to bounce back to. The previous implementation
+    // silently routed to msg.from_instance, which caused workers to
+    // receive their own feedback — death loop. The new contract is to
+    // drop the dispatch and leave a single feedback_unresolved audit
+    // record + a debug_info TUI event.
+    const { router, msg, bus } = setup([]);
     await router.route(
       completionMessage(
         "plan",
@@ -713,10 +717,23 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
         asInstanceId("tom-01"),
       ),
     );
-    const last = msg.sent.at(-1)!;
-    expect(last.to_instance).toBe(asInstanceId("tom-01"));
-    expect(last.link).toBe("plan");
-    expect(last.task_description).toBe("expand the blueprint");
+    // No new task_dispatch was sent in response to the feedback.
+    expect(
+      msg.sent.find(
+        (m) =>
+          m.type === "task_dispatch" &&
+          m.task_description === "expand the blueprint",
+      ),
+    ).toBeUndefined();
+    // The TUI received a debug_info warning about the dropped feedback.
+    expect(
+      bus.emitted.some(
+        (e) =>
+          e.type === "debug_info" &&
+          typeof (e as { message: string }).message === "string" &&
+          (e as { message: string }).message.includes("no resolvable target"),
+      ),
+    ).toBe(true);
   });
 });
 
