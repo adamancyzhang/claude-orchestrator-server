@@ -8,6 +8,13 @@ export interface EnsureCoRootInput {
   leader_instance_id: InstanceId;
   git_command?: string;
   logger: ILogger;
+  /**
+   * When false, the CO root is initialized as a git repo but no
+   * initial commit is created. Defaults to true for backward
+   * compatibility; sourced from ResolvedConfig.git.auto_commit_init_files
+   * by run.ts.
+   */
+  auto_commit_init_files?: boolean;
 }
 
 const GITIGNORE_ENTRIES = [
@@ -60,11 +67,15 @@ export async function ensureCoRoot(input: EnsureCoRootInput): Promise<string> {
     "utf-8",
   );
 
-  try {
-    run("add .gitignore README.md");
-    run('commit -q -m "init: co-root for leader"');
-  } catch (err) {
-    input.logger.warn("co-root init commit skipped", { error: String(err) });
+  if (input.auto_commit_init_files !== false) {
+    try {
+      run("add .gitignore README.md");
+      run('commit -q -m "init: co-root for leader"');
+    } catch (err) {
+      input.logger.warn("co-root init commit skipped", { error: String(err) });
+    }
+  } else {
+    input.logger.info("co-root init commit skipped by config");
   }
   input.logger.info("co-root initialized", { path: root });
   return root;
