@@ -5,9 +5,14 @@ import {
   ChainConflictError,
   ChainDefSchema,
   EvalDecisionSchema,
+  GitNetworkError,
+  GitPermissionError,
+  MergeConflictError,
   ValidationError,
+  WorktreeLockedError,
   type ChainDef,
   type ChainId,
+  type CompletionCommits,
   type EvalDecision,
   type IClaudeRunner,
   type IEventBus,
@@ -23,16 +28,33 @@ import {
   type Task,
   type TaskId,
   type TaskLink,
+  type UpstreamCommits,
   asTaskId,
   cachePaths,
   asChainId,
 } from "@co/contracts";
 import type { CommitInfo } from "./merge-validator.js";
-import type { ChainAudit } from "./chain-audit.js";
+import type { ChainAudit, LinkCommitRecord } from "./chain-audit.js";
 import type { MemoryBootstrap } from "./memory-bootstrap.js";
 
 export interface IMergeValidator {
   validate(commit: CommitInfo): Promise<MergeDecision>;
+}
+
+export type MergeFailureCategory =
+  | "conflict"
+  | "worktree_locked"
+  | "permission"
+  | "network"
+  | "other";
+
+export interface MergeFailure {
+  link: TaskLink;
+  sha: string;
+  branch: string;
+  message: string;
+  error: string;
+  category: MergeFailureCategory;
 }
 
 const NEXT_LINKS: Record<TaskLink, TaskLink | null> = {
@@ -155,6 +177,26 @@ export class ChainRouter {
 
   private forgetChain(chainId: ChainId): void {
     this.chainCommits.delete(chainId);
+  }
+
+  private async collectUpstreamCommits(
+    chainId: ChainId,
+  ): Promise<UpstreamCommits> {
+    if (!this.opts.chain_audit) return {};
+    // Tolerate older chain-audit shapes / test mocks that predate the
+    // collectUpstreamCommits API.
+    if (typeof this.opts.chain_audit.collectUpstreamCommits !== "function") {
+      return {};
+    }
+    try {
+      return await this.opts.chain_audit.collectUpstreamCommits(chainId);
+    } catch (err) {
+      this.opts.logger.warn("collectUpstreamCommits failed", {
+        chain_id: chainId,
+        error: String(err),
+      });
+      return {};
+    }
   }
 
   async route(msg: Message): Promise<void> {
@@ -489,6 +531,9 @@ export class ChainRouter {
             task_id: asTaskId(firstTaskId),
           });
         }
+        const initialUpstream = await this.collectUpstreamCommits(
+          chainDef.chain_id,
+        );
         await this.opts.message_router.send({
           type: "task_dispatch",
           from_instance: this.opts.leader_id,
@@ -503,6 +548,7 @@ export class ChainRouter {
           task_description: firstDef.description,
           task_criteria: firstDef.criteria,
           original_requirement_path: requirementPath,
+          upstream_commits: initialUpstream,
         });
         await this.rememberDispatch(chainDef.chain_id, firstLink, firstWorker.id);
       } else {
@@ -532,6 +578,38 @@ export class ChainRouter {
           branch: typeof c.branch === "string" ? c.branch : undefined,
         });
       }
+    }
+
+    // New per-link commit envelope (project worktree + CO root docs).
+    // Stored in chain manifest so:
+    //   1. next-link dispatch can populate Message.upstream_commits
+    //   2. close_chain can resolve the accept-link branch to merge
+    // The legacy `commit` field above is kept for backward-compat with
+    // older Workers; either path feeds recordCommit() for MergeValidator
+    // to consume.
+    const commitsField = decision.commits as CompletionCommits | undefined;
+    if (
+      this.opts.chain_audit &&
+      msg.chain_id &&
+      msg.link &&
+      commitsField &&
+      (commitsField.worktree || commitsField.docs) &&
+      typeof this.opts.chain_audit.recordLinkCommit === "function"
+    ) {
+      const record: LinkCommitRecord = {
+        worktree: commitsField.worktree,
+        docs: commitsField.docs,
+        branch: commitsField.branch,
+      };
+      await this.opts.chain_audit
+        .recordLinkCommit(msg.chain_id, msg.link, record)
+        .catch((err) =>
+          this.opts.logger.warn("recordLinkCommit failed", {
+            chain_id: msg.chain_id,
+            link: msg.link,
+            error: String(err),
+          }),
+        );
     }
 
     if (this.opts.chain_audit && msg.chain_id) {
@@ -576,6 +654,13 @@ export class ChainRouter {
               task_id: nextTask.id,
             });
           }
+          // Snapshot of every upstream link's worktree commit so the
+          // next Worker's pre-task rebase can target the immediate
+          // predecessor. Empty {} when no upstream commits exist yet
+          // (e.g. dispatching the planner).
+          const upstreamCommits = await this.collectUpstreamCommits(
+            msg.chain_id,
+          );
           await this.opts.message_router.send({
             type: "task_dispatch",
             from_instance: this.opts.leader_id,
@@ -590,6 +675,7 @@ export class ChainRouter {
             task_description: nextTask.description,
             task_criteria: nextTask.criteria,
             original_requirement_path: requirementPath,
+            upstream_commits: upstreamCommits,
           });
           await this.rememberDispatch(msg.chain_id, nextLink, worker.id);
         }
@@ -644,7 +730,18 @@ export class ChainRouter {
       }
       case "close_chain": {
         if (msg.chain_id) {
-          const failures = await this.runMergeValidation(msg.chain_id);
+          // New model (v0.6+): each Worker pre-task rebases onto its
+          // immediate predecessor's commit, so the accept-link branch
+          // naturally contains a linear chain history M0 ← plan ←
+          // build ← verify ← review ← accept. close_chain merges that
+          // single branch into mainBranch instead of looping through
+          // every link's commit.
+          //
+          // Legacy fallback: when no link_commits exist (older
+          // Workers that don't emit `commits` envelope), fall back to
+          // the per-link iteration in runMergeValidation so existing
+          // chains in flight keep working.
+          const failures = await this.runCloseChainMerge(msg.chain_id);
           if (failures.length > 0) {
             // At least one commit could not be merged to main. Do NOT
             // mark the chain "completed" — that would silently leave
@@ -717,32 +814,98 @@ export class ChainRouter {
   }
 
   /**
-   * Walk the per-chain commit log in P→B→V→R→A order, asking the
-   * MergeValidator for a merge / skip / review_first decision per
-   * commit. Continues past a single-commit failure so other commits
-   * still get evaluated, but collects each failure and returns the
-   * list to the caller. Returns an empty array when no validator is
-   * configured (validation is opt-in) or when no commits were recorded.
-   * The caller (close_chain branch) uses a non-empty return value to
-   * route the chain to "merge_failed" status instead of "completed".
+   * v0.6 close-chain merge strategy. The accept-link branch is the
+   * tip of the linear pre-task-rebase chain (M0 ← plan ← build ←
+   * verify ← review ← accept), so a single merge of that branch
+   * brings the entire chain's worktree changes into main with one
+   * merge commit. Falls back to the legacy per-link iteration when
+   * the chain manifest has no link_commits (Workers older than this
+   * change). Returns the list of failed merges; empty = success.
+   */
+  private async runCloseChainMerge(
+    chainId: ChainId,
+  ): Promise<MergeFailure[]> {
+    const failures: MergeFailure[] = [];
+    if (!this.opts.merge_validator) return failures;
+    if (this.opts.chain_audit) {
+      const manifest = await this.opts.chain_audit.readManifest(chainId);
+      const acceptRecord = manifest?.link_commits?.accept;
+      if (acceptRecord?.worktree && acceptRecord.branch) {
+        try {
+          await this.opts.merge_validator.validate({
+            sha: acceptRecord.worktree,
+            branch: acceptRecord.branch,
+            message: `chain ${chainId} accept`,
+            task_title: `[${chainId}] accept`,
+            task_link: "accept",
+          });
+          return failures;
+        } catch (err) {
+          failures.push({
+            link: "accept",
+            sha: acceptRecord.worktree,
+            branch: acceptRecord.branch,
+            message: `chain ${chainId} accept`,
+            error: this.formatMergeError(err),
+            category: this.categorizeMergeError(err),
+          });
+          return failures;
+        }
+      }
+      // Fall through to legacy path when no accept-link commit was
+      // recorded (e.g. a Worker that doesn't emit `commits` finished
+      // the accept link, or accept produced docs-only changes).
+    }
+    return this.runMergeValidation(chainId);
+  }
+
+  /**
+   * Best-effort classification of a merge error into a human-readable
+   * "error" string for chain-audit. Lock/permission/network errors
+   * carry stderr from MergeValidator's classifyGitError; conflict
+   * errors carry their conflict_files list.
+   */
+  private formatMergeError(err: unknown): string {
+    if (err instanceof MergeConflictError) {
+      return `conflict: ${err.conflict_files.join(", ") || err.message}`;
+    }
+    if (err instanceof WorktreeLockedError) {
+      return `worktree_locked: ${err.stderr || err.message}`;
+    }
+    if (err instanceof GitPermissionError) {
+      return `permission: ${err.stderr || err.message}`;
+    }
+    if (err instanceof GitNetworkError) {
+      return `network: ${err.stderr || err.message}`;
+    }
+    return String(err);
+  }
+
+  private categorizeMergeError(err: unknown): MergeFailureCategory {
+    if (err instanceof MergeConflictError) return "conflict";
+    if (err instanceof WorktreeLockedError) return "worktree_locked";
+    if (err instanceof GitPermissionError) return "permission";
+    if (err instanceof GitNetworkError) return "network";
+    return "other";
+  }
+
+  /**
+   * Legacy fallback: walk the per-chain in-memory commit log in
+   * P→B→V→R→A order, asking the MergeValidator for a decision per
+   * commit. Continues past a single failure so other commits still
+   * get evaluated. Used only when `runCloseChainMerge` could not find
+   * an accept-link record (manifest absent / older Workers).
    */
   private async runMergeValidation(
     chainId: ChainId,
-  ): Promise<
-    Array<{
-      link: TaskLink;
-      sha: string;
-      branch: string;
-      message: string;
-      error: string;
-    }>
-  > {
+  ): Promise<MergeFailure[]> {
     const failures: Array<{
       link: TaskLink;
       sha: string;
       branch: string;
       message: string;
       error: string;
+      category: MergeFailureCategory;
     }> = [];
     if (!this.opts.merge_validator) return failures;
     const commits = this.chainCommits.get(chainId);
@@ -762,7 +925,8 @@ export class ChainRouter {
           sha: commit.sha,
           branch: commit.branch,
           message: commit.message,
-          error: String(err),
+          error: this.formatMergeError(err),
+          category: this.categorizeMergeError(err),
         });
       }
     }
@@ -779,19 +943,30 @@ export class ChainRouter {
    */
   private async pushMergeConflictRetries(
     msg: Message,
-    failures: ReadonlyArray<{
-      link: TaskLink;
-      sha: string;
-      branch: string;
-      message: string;
-      error: string;
-    }>,
+    failures: ReadonlyArray<MergeFailure>,
     requirementPath: string | null,
   ): Promise<void> {
     if (!msg.chain_id || !this.opts.chain_audit) return;
     const manifest = await this.opts.chain_audit.readManifest(msg.chain_id);
     if (!manifest) return;
     for (const f of failures) {
+      // Lock/permission/network failures are not solved by re-dispatching
+      // the same task to the same worker. They need human intervention
+      // and are already recorded in chain-audit's merge_failure events.
+      // Unknown ("other") falls through to a retry because legacy paths
+      // and pre-classification errors should keep their pre-existing
+      // recovery behavior.
+      if (
+        f.category === "worktree_locked" ||
+        f.category === "permission" ||
+        f.category === "network"
+      ) {
+        this.opts.logger.warn(
+          `merge ${f.category} for ${f.link} — no auto retry`,
+          { chain_id: msg.chain_id, sha: f.sha, error: f.error },
+        );
+        continue;
+      }
       const targetId = manifest.link_workers?.[f.link];
       if (!targetId) {
         this.opts.logger.warn(
@@ -973,6 +1148,23 @@ export class ChainRouter {
     if (this.opts.chain_audit) {
       await this.opts.chain_audit.setLinkTask(msg.chain_id, prevLink, newTask.id);
       await this.opts.chain_audit.setLinkWorker(msg.chain_id, prevLink, targetId);
+      // Wipe the rejected link's commit record and everything
+      // downstream so the retried task sees a clean upstream slate.
+      // Without this the retried Worker would still rebase onto the
+      // superseded predecessor's hash. Tolerated when the mock /
+      // older chain-audit lacks the API.
+      if (
+        typeof this.opts.chain_audit.clearLinkCommitsFrom === "function"
+      ) {
+        await this.opts.chain_audit
+          .clearLinkCommitsFrom(msg.chain_id, prevLink)
+          .catch((err) =>
+            this.opts.logger.warn("clearLinkCommitsFrom failed", {
+              chain_id: msg.chain_id,
+              error: String(err),
+            }),
+          );
+      }
       await this.opts.chain_audit.record(msg.chain_id, {
         event: "feedback_sent",
         link: msg.link,
@@ -986,6 +1178,7 @@ export class ChainRouter {
         },
       });
     }
+    const upstreamCommits = await this.collectUpstreamCommits(msg.chain_id);
     await this.opts.message_router.send({
       type: "task_dispatch",
       from_instance: this.opts.leader_id,
@@ -1000,6 +1193,7 @@ export class ChainRouter {
       task_description: feedback,
       task_criteria: "",
       original_requirement_path: requirementPath,
+      upstream_commits: upstreamCommits,
     });
   }
 

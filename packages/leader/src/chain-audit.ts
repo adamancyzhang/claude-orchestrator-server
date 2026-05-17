@@ -8,6 +8,7 @@ import {
   type InstanceId,
   type TaskId,
   type TaskLink,
+  type UpstreamCommits,
 } from "@co/contracts";
 
 export type ChainStatus =
@@ -16,6 +17,20 @@ export type ChainStatus =
   | "failed"
   | "aborted"
   | "merge_failed";
+
+/**
+ * Per-link commit record persisted alongside link_tasks / link_workers.
+ * `worktree` references the per-Worker branch commit in the shared
+ * project repo; `docs` references the CO root commit (may be null when
+ * the Worker had no docs change). `branch` is the Worker's worktree
+ * branch — needed by close_chain so MergeValidator knows which branch
+ * to merge into mainBranch.
+ */
+export interface LinkCommitRecord {
+  worktree: string | null;
+  docs: string | null;
+  branch: string;
+}
 
 export interface ChainManifest {
   chain_id: ChainId;
@@ -27,6 +42,7 @@ export interface ChainManifest {
   requirement_path: string;
   link_tasks: Record<TaskLink, TaskId | null>;
   link_workers: Record<TaskLink, InstanceId | null>;
+  link_commits?: Partial<Record<TaskLink, LinkCommitRecord>>;
   total_retry_count: number;
   max_total_retries: number;
 }
@@ -188,6 +204,94 @@ export class ChainAudit {
       JSON.stringify(manifest, null, 2),
       "utf-8",
     );
+  }
+
+  /**
+   * Record the dual commit hashes the Worker produced for this link
+   * (project worktree commit + CO root docs commit + branch name).
+   * Persisted in manifest.link_commits[link] so downstream link
+   * dispatches can read it back via `collectUpstreamCommits()` to
+   * populate Message.upstream_commits, and close_chain can resolve
+   * the accept-link branch for MergeValidator. Idempotent: calling
+   * twice with the same (chainId, link) overwrites.
+   */
+  async recordLinkCommit(
+    chainId: ChainId,
+    link: TaskLink,
+    commits: LinkCommitRecord,
+  ): Promise<void> {
+    const manifestPath = cachePaths.chainManifestPath(
+      this.opts.cache_paths,
+      chainId,
+    );
+    const manifest = await this.readManifest(chainId);
+    if (!manifest) {
+      this.opts.logger.warn("recordLinkCommit: manifest missing", {
+        chain_id: chainId,
+        link,
+      });
+      return;
+    }
+    manifest.link_commits ??= {};
+    manifest.link_commits[link] = commits;
+    await fs.promises.writeFile(
+      manifestPath,
+      JSON.stringify(manifest, null, 2),
+      "utf-8",
+    );
+  }
+
+  /**
+   * Build the UpstreamCommits map to inject into the next link's
+   * task_dispatch message. Returns only links with non-null worktree
+   * shas — null entries are omitted so Worker code can `if (h)` cleanly.
+   */
+  async collectUpstreamCommits(
+    chainId: ChainId,
+  ): Promise<UpstreamCommits> {
+    const manifest = await this.readManifest(chainId);
+    const out: UpstreamCommits = {};
+    if (!manifest?.link_commits) return out;
+    for (const link of ["plan", "build", "verify", "review"] as const) {
+      const rec = manifest.link_commits[link];
+      if (rec?.worktree) out[link] = rec.worktree;
+    }
+    return out;
+  }
+
+  /**
+   * Wipe link commit records for the rejected link and all downstream
+   * links. Called when a Worker emits a `feedback` decision so the
+   * retried task starts from a clean upstream slate (no stale hashes
+   * pointing at superseded work).
+   */
+  async clearLinkCommitsFrom(
+    chainId: ChainId,
+    fromLink: TaskLink,
+  ): Promise<void> {
+    const manifestPath = cachePaths.chainManifestPath(
+      this.opts.cache_paths,
+      chainId,
+    );
+    const manifest = await this.readManifest(chainId);
+    if (!manifest?.link_commits) return;
+    const order: TaskLink[] = ["plan", "build", "verify", "review", "accept"];
+    const idx = order.indexOf(fromLink);
+    if (idx < 0) return;
+    let mutated = false;
+    for (let i = idx; i < order.length; i++) {
+      if (manifest.link_commits[order[i]] !== undefined) {
+        delete manifest.link_commits[order[i]];
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      await fs.promises.writeFile(
+        manifestPath,
+        JSON.stringify(manifest, null, 2),
+        "utf-8",
+      );
+    }
   }
 
   async setLinkWorker(
