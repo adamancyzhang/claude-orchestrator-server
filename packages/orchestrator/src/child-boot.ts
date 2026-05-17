@@ -22,6 +22,7 @@ import {
   CHAIN_LINKS,
   CommitChecker,
   SelfEvaluator,
+  WorkerDocsCommitter,
   WorkerWatcher,
   registerChildBoot,
   type ChildConfig,
@@ -136,6 +137,20 @@ async function boot(config: ChildConfig): Promise<void> {
     worker_name: config.name,
   });
 
+  // CO root path is `${projects_root}/${leader_instance_id}` (see
+  // cachePaths.coRootDir). All Worker processes share this single
+  // working tree — WorkerDocsCommitter's `git commit --only` is what
+  // keeps concurrent commits from leaking into each other.
+  const coRoot = path.join(config.projects_root, config.leader_instance_id);
+  const docsCommitter = new WorkerDocsCommitter({
+    co_root: coRoot,
+    worker_name: config.name,
+    runner,
+    template_engine: templateEngine,
+    cache_paths: cachePathOpts,
+    logger: logger.child("docs-commit"),
+  });
+
   const hooks = new HookEngine([], logger.child("hooks"));
 
   const watcher = new WorkerWatcher({
@@ -153,9 +168,11 @@ async function boot(config: ChildConfig): Promise<void> {
     hooks,
     evaluator,
     commit_checker: commitChecker,
+    docs_committer: docsCommitter,
     cache_paths: cachePathOpts,
     identity_system_prompt: identitySystemPrompt,
     logger: logger.child("watcher"),
+    git_remote: config.git_remote,
   });
 
   await watcher.start();

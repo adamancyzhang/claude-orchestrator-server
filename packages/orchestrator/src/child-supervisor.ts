@@ -12,6 +12,11 @@ export interface ChildSupervisorOptions {
   projects_root: string;
   leader_instance_id: string;
   debug: boolean;
+  /**
+   * Pass-through of ResolvedConfig.git.remote so the Worker can run
+   * an optional `git fetch` before pre-task rebase. `null` disables.
+   */
+  git_remote: string | null;
   logger: ILogger;
 }
 
@@ -57,6 +62,7 @@ export class ChildSupervisor {
       projects_root: this.opts.projects_root,
       leader_instance_id: this.opts.leader_instance_id,
       debug: this.opts.debug,
+      git_remote: this.opts.git_remote,
     };
     const child = fork(this.opts.child_module_path, [JSON.stringify(env)], {
       stdio: "inherit",

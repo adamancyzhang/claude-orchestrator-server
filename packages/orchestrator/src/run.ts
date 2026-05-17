@@ -284,6 +284,7 @@ export async function runOrchestrator(
     projects_root: resolved.projects_root,
     leader_instance_id: leaderInstance.id,
     debug: input.debug ?? false,
+    git_remote: resolved.git.remote,
     logger: logger.child("supervisor"),
   });
   const workerConfigsForSupervisor = worktreeConfigs.map((c) => ({
