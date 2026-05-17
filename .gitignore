@@ -9,6 +9,7 @@ bin/orchestrator-binary
 .npmrc
 sessions/
 .claude-orchestrator/*
+**/.claude-orchestrator/
 !.claude-orchestrator/docs/
 countlines-cli/
 examples-workspace

@@ -14,6 +14,12 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 
 If any of the three upstream artifacts is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop.
 
+## Upstream Commits
+Your worktree has been rebased onto the verifier's commit. Hashes:
+- Plan: `{{upstream_plan_commit}}`
+- Build: `{{upstream_build_commit}}`
+- Verify: `{{upstream_verify_commit}}`
+
 ## Workspace Memory (fast reference)
 Before judging changes to a source file, check `{{workspace_memory_path}}/<relative-source-path>.md` (per-file summary) and the `CLAUDE.md` in its parent directory (directory overview). They mirror the project's source tree and capture purpose, public exports, key invariants, and cross-file dependencies. Treat them as **hints, not ground truth** — if a memory file is missing or its `source_hash` is stale, fall back to the source file.
 

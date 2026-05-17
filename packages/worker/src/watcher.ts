@@ -323,6 +323,7 @@ export class WorkerWatcher {
       if (!link) return msg.content;
       const tplName = LINK_TO_TASK_TEMPLATE[link];
       if (!this.opts.template_engine.has(tplName)) return msg.content;
+      const upstreamCommits = msg.upstream_commits ?? {};
       return this.opts.template_engine.render(tplName, {
         name: this.opts.worker_name,
         role: this.opts.worker_role,
@@ -341,6 +342,10 @@ export class WorkerWatcher {
         upstream_build_artifact: chainArtifacts.build,
         upstream_verify_artifact: chainArtifacts.verify,
         upstream_review_artifact: chainArtifacts.review,
+        upstream_plan_commit: upstreamCommits.plan ?? "",
+        upstream_build_commit: upstreamCommits.build ?? "",
+        upstream_verify_commit: upstreamCommits.verify ?? "",
+        upstream_review_commit: upstreamCommits.review ?? "",
         workspace_memory_path: workspaceMemoryPath,
         retry_hint: retryHint,
       });

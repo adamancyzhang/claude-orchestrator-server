@@ -183,7 +183,12 @@ export async function initializeWorktrees(
       // worker startup.
       if (resetOnReuse && leaderHead) {
         try {
-          execGitArgs(["checkout", "-q", branch], wtPath);
+          // The worktree should already be on the per-Worker branch
+          // since `git worktree add` checked it out at creation time
+          // and each worktree's HEAD lives in .git/worktrees/<name>/HEAD
+          // independently. Skip a redundant `git checkout` (which can
+          // refuse with "would be overwritten" on dirty index even
+          // when staying on the same branch) and reset/clean directly.
           execGitArgs(["reset", "--hard", leaderHead], wtPath);
           execGitArgs(["clean", "-fdq"], wtPath);
           opts.logger.info(`reused worktree ${name} reset to ${leaderHead.slice(0, 8)}`);

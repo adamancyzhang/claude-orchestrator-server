@@ -287,4 +287,102 @@ describe("ChainAudit", () => {
     const m = await audit.readManifest(chainId);
     expect(m!.status).toBe("running");
   });
+
+  describe("link_commits API (v0.6 hash propagation)", () => {
+    it("recordLinkCommit + collectUpstreamCommits round-trips per-link worktree hashes", async () => {
+      const { audit } = makeAudit();
+      const chainId = asChainId("chain-c");
+      await audit.openChain(chainId, {
+        created_at: "2026-05-17T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req.md",
+      });
+      await audit.recordLinkCommit(chainId, "plan", {
+        worktree: "plan-sha-1",
+        docs: "plan-docs-1",
+        branch: "co/plan-1",
+      });
+      await audit.recordLinkCommit(chainId, "build", {
+        worktree: "build-sha-1",
+        docs: null,
+        branch: "co/build-1",
+      });
+      const upstream = await audit.collectUpstreamCommits(chainId);
+      expect(upstream).toEqual({ plan: "plan-sha-1", build: "build-sha-1" });
+      // Accept is not surfaced as "upstream" (it's the sink, not a
+      // predecessor).
+      await audit.recordLinkCommit(chainId, "accept", {
+        worktree: "accept-sha",
+        docs: null,
+        branch: "co/accept",
+      });
+      const upstream2 = await audit.collectUpstreamCommits(chainId);
+      expect(upstream2).toEqual({
+        plan: "plan-sha-1",
+        build: "build-sha-1",
+      });
+    });
+
+    it("collectUpstreamCommits omits links with null worktree hash", async () => {
+      const { audit } = makeAudit();
+      const chainId = asChainId("chain-d");
+      await audit.openChain(chainId, {
+        created_at: "2026-05-17T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req.md",
+      });
+      await audit.recordLinkCommit(chainId, "plan", {
+        worktree: "plan-sha",
+        docs: null,
+        branch: "co/plan",
+      });
+      // Build link recorded but with NO worktree commit (docs-only
+      // task). Downstream consumers must not see a `build: null` key
+      // in the map — they should fall back to plan as the predecessor.
+      await audit.recordLinkCommit(chainId, "build", {
+        worktree: null,
+        docs: "build-docs",
+        branch: "co/build",
+      });
+      const upstream = await audit.collectUpstreamCommits(chainId);
+      expect(upstream).toEqual({ plan: "plan-sha" });
+      expect("build" in upstream).toBe(false);
+    });
+
+    it("clearLinkCommitsFrom wipes the rejected link AND everything downstream", async () => {
+      const { audit } = makeAudit();
+      const chainId = asChainId("chain-e");
+      await audit.openChain(chainId, {
+        created_at: "2026-05-17T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req.md",
+      });
+      await audit.recordLinkCommit(chainId, "plan", {
+        worktree: "p",
+        docs: null,
+        branch: "co/p",
+      });
+      await audit.recordLinkCommit(chainId, "build", {
+        worktree: "b",
+        docs: null,
+        branch: "co/b",
+      });
+      await audit.recordLinkCommit(chainId, "verify", {
+        worktree: "v",
+        docs: null,
+        branch: "co/v",
+      });
+      // Feedback targets "build" → build, verify, review, accept all clear.
+      await audit.clearLinkCommitsFrom(chainId, "build");
+      const m = await audit.readManifest(chainId);
+      expect(m!.link_commits?.plan?.worktree).toBe("p");
+      expect(m!.link_commits?.build).toBeUndefined();
+      expect(m!.link_commits?.verify).toBeUndefined();
+      const upstream = await audit.collectUpstreamCommits(chainId);
+      expect(upstream).toEqual({ plan: "p" });
+    });
+  });
 });
