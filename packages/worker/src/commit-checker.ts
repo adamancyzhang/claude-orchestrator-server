@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   cachePaths,
   CommitFailedError,
@@ -41,7 +41,7 @@ export class CommitChecker {
     ctx: CommitContext,
     resumeSessionId?: SessionId,
   ): Promise<CommitResult | null> {
-    const status = execSync("git status --porcelain", {
+    const status = execFileSync("git", ["status", "--porcelain"], {
       cwd: this.opts.worktree_path,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -51,11 +51,21 @@ export class CommitChecker {
       return null;
     }
 
-    const { changed, untracked } = parseStatus(status);
+    const { changed, untracked, paths } = parseStatus(status);
+    if (paths.length === 0) {
+      // status was non-empty (e.g. only line endings whitespace) but
+      // parser found no concrete paths. Bail out safely rather than
+      // run `git add` with no targets.
+      this.opts.logger.info("no commit-worthy paths after status parse");
+      return null;
+    }
     const message = await this.generateMessage(ctx, changed, untracked, resumeSessionId);
 
     try {
-      execFileSync("git", ["add", "-A"], {
+      // Add only the explicit paths git status reported. `-A` was too
+      // broad: a stray .env or token.json that .gitignore failed to
+      // catch would have been pulled in along with the real changes.
+      execFileSync("git", ["add", "--", ...paths], {
         cwd: this.opts.worktree_path,
         stdio: "pipe",
       });
@@ -82,7 +92,7 @@ export class CommitChecker {
       );
     }
 
-    const sha = execSync("git rev-parse HEAD", {
+    const sha = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: this.opts.worktree_path,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -145,15 +155,35 @@ function extractStderr(err: unknown): string {
 function parseStatus(status: string): {
   changed: string[];
   untracked: string[];
+  /**
+   * Bare path list (no porcelain code prefix) — what `git add --
+   * <paths>` actually takes. Renames are split into both src and dest
+   * so the index update is complete; deletions are included so the
+   * commit captures the removal.
+   */
+  paths: string[];
 } {
   const changed: string[] = [];
   const untracked: string[] = [];
+  const paths: string[] = [];
   for (const line of status.trim().split("\n")) {
     if (!line) continue;
     const code = line.slice(0, 2);
-    const file = line.slice(3);
-    if (code === "??") untracked.push(file);
-    else changed.push(`${code.trim()} ${file}`);
+    const rest = line.slice(3);
+    if (code === "??") {
+      untracked.push(rest);
+      paths.push(rest);
+      continue;
+    }
+    changed.push(`${code.trim()} ${rest}`);
+    if (rest.includes(" -> ")) {
+      // Rename or copy: "old -> new"; add both for index completeness
+      const [src, dst] = rest.split(" -> ");
+      if (src) paths.push(src.trim());
+      if (dst) paths.push(dst.trim());
+    } else {
+      paths.push(rest);
+    }
   }
-  return { changed, untracked };
+  return { changed, untracked, paths };
 }

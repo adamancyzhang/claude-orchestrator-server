@@ -102,7 +102,16 @@ export async function runOrchestrator(
     createTeamClaudeMdStep(paths.template_dir, projectRoot, logger),
     createSkillsStep(paths.skills_dir, projectRoot, logger),
   ]);
-  commitInitFiles(projectRoot, logger);
+  // Phase 3 used to live further down; we need ResolvedConfig BEFORE
+  // commitInitFiles so the auto_commit_init_files toggle is honored.
+  const resolved = loadConfig({
+    cli_zookeeper: input.zk_hosts,
+    cli_debug: input.debug,
+  });
+  commitInitFiles(projectRoot, logger, {
+    enabled: resolved.git.auto_commit_init_files,
+    branch: resolved.git.auto_commit_init_files_branch,
+  });
 
   // Phase 2: worktrees
   const worktreeConfigs = await initializeWorktrees({
@@ -111,12 +120,6 @@ export async function runOrchestrator(
     template_dir: paths.template_dir,
     skills_dir: paths.skills_dir,
     logger: logger.child("worktree"),
-  });
-
-  // Phase 3: leader
-  const resolved = loadConfig({
-    cli_zookeeper: input.zk_hosts,
-    cli_debug: input.debug,
   });
   const leaderId = asInstanceId(randomUUID().replace(/-/g, ""));
 
@@ -156,6 +159,7 @@ export async function runOrchestrator(
     leader_instance_id: leaderInstance.id,
     git_command: resolved.commands.git,
     logger: logger.child("co-root"),
+    auto_commit_init_files: resolved.git.auto_commit_init_files,
   });
   captureConsoleToFile(coRoot);
 
@@ -191,6 +195,8 @@ export async function runOrchestrator(
     bus,
     logger: logger.child("merge"),
     log_path_for: (key) => path.join(coRoot, "merges", `${key}.log`),
+    merge_target_branch: resolved.git.merge_target_branch,
+    remote: resolved.git.remote,
   });
 
   const chainAudit = new ChainAudit({
@@ -282,6 +288,7 @@ export async function runOrchestrator(
     projects_root: resolved.projects_root,
     leader_instance_id: leaderInstance.id,
     debug: input.debug ?? false,
+    git_remote: resolved.git.remote,
     logger: logger.child("supervisor"),
   });
   const workerConfigsForSupervisor = worktreeConfigs.map((c) => ({
@@ -323,7 +330,20 @@ function ensureCleanWorkspace(projectRoot: string): void {
   }
 }
 
-function commitInitFiles(projectRoot: string, logger: ILogger): void {
+interface CommitInitFilesOptions {
+  enabled: boolean;
+  branch: string | null;
+}
+
+function commitInitFiles(
+  projectRoot: string,
+  logger: ILogger,
+  opts: CommitInitFilesOptions,
+): void {
+  if (!opts.enabled) {
+    logger.info("auto_commit_init_files disabled — skipping init commit");
+    return;
+  }
   let status = "";
   try {
     status = execSync("git status --porcelain", {
@@ -335,6 +355,11 @@ function commitInitFiles(projectRoot: string, logger: ILogger): void {
   }
   if (!status) return;
   try {
+    if (opts.branch) {
+      // Redirect init commits to a dedicated branch so the user's
+      // working branch is not polluted by orchestrator boilerplate.
+      execSync(`git checkout -B ${opts.branch}`, { cwd: projectRoot });
+    }
     execSync("git add -A", { cwd: projectRoot });
     execSync('git commit -m "chore: init orchestrator workspace files"', {
       cwd: projectRoot,

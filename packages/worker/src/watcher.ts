@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import {
   asTaskId,
   cachePaths,
   CommitFailedError,
+  RebaseConflictError,
   type ChainId,
   type IClaudeRunner,
   type IHookEngine,
@@ -16,11 +18,13 @@ import {
   type SessionId,
   type TaskId,
   type TaskLink,
+  type UpstreamCommits,
 } from "@co/contracts";
 import { ClaudeRunner } from "@co/runtime";
 import type { SelfEvaluator } from "./evaluator.js";
 import { CHAIN_LINKS } from "./evaluator.js";
 import type { CommitChecker, CommitResult } from "./commit-checker.js";
+import type { WorkerDocsCommitter } from "./docs-committer.js";
 
 /**
  * Per-link user-message template. The system prompt (identity + standing
@@ -45,6 +49,37 @@ const LINK_TO_LOCAL_PREFIX: Record<TaskLink, string> = {
   accept: "accept",
 };
 
+/**
+ * Pick the immediate predecessor link's commit hash for pre-task
+ * rebase. We rebase onto the *immediate* predecessor (not all
+ * upstream links) because each link rebases onto its predecessor in
+ * turn, so the predecessor's HEAD already contains the full upstream
+ * history. Returns null when there is no upstream commit to rebase
+ * onto (planner, first-link retries, decompose tasks, or upstream
+ * link did not produce a worktree commit).
+ */
+function pickImmediatePredecessor(
+  link: TaskLink,
+  upstream: UpstreamCommits | undefined,
+): string | null {
+  if (!upstream) return null;
+  // Predecessor order is fixed by chain definition. Walk back from
+  // the current link and return the first non-empty hash. Tolerant
+  // to gaps (e.g. accept gets a chain where plan committed but
+  // build/verify/review had no worktree commit — accept still
+  // rebases onto plan).
+  type UpstreamKey = "plan" | "build" | "verify" | "review";
+  const order: UpstreamKey[] = ["plan", "build", "verify", "review"];
+  if (link === "plan") return null;
+  // For "accept": walk the full upstream list back-to-front.
+  const startIdx = link === "accept" ? order.length - 1 : order.indexOf(link as UpstreamKey) - 1;
+  for (let i = startIdx; i >= 0; i--) {
+    const h = upstream[order[i]];
+    if (h) return h;
+  }
+  return null;
+}
+
 const MAX_GENERATION_RETRIES = 3;
 
 interface GenerationFailure {
@@ -67,9 +102,16 @@ export interface WorkerWatcherOptions {
   hooks: IHookEngine;
   evaluator: SelfEvaluator;
   commit_checker: CommitChecker;
+  docs_committer: WorkerDocsCommitter;
   cache_paths: cachePaths.CachePathOptions;
   identity_system_prompt: string;
   logger: ILogger;
+  /**
+   * Optional remote name for pre-task rebase fetches. `null` = purely
+   * local rebase onto upstream commit shas (no fetch). Sourced from
+   * ResolvedConfig.git.remote via child-boot.
+   */
+  git_remote: string | null;
 }
 
 export class WorkerWatcher {
@@ -191,6 +233,59 @@ export class WorkerWatcher {
       }
     }
 
+    // Pre-task rebase onto the immediate predecessor link's commit
+    // hash so this Worker's branch contains all upstream artifacts
+    // before work starts. Skipped for decompose tasks and the plan
+    // link (no upstream). On rebase conflict we abort and feed back
+    // to Leader so a human can investigate — silently auto-resolving
+    // could clobber upstream changes.
+    if (
+      isChainLink &&
+      link !== null &&
+      link !== "decompose"
+    ) {
+      const predecessor = pickImmediatePredecessor(
+        link as TaskLink,
+        msg.upstream_commits,
+      );
+      if (predecessor) {
+        try {
+          await this.preTaskRebase(predecessor);
+        } catch (err) {
+          if (err instanceof RebaseConflictError) {
+            this.opts.logger.error(
+              "pre-task rebase conflicted — reporting as feedback",
+              {
+                task_id: taskId,
+                link,
+                predecessor: predecessor.slice(0, 8),
+                conflicts: err.conflict_files,
+              },
+            );
+            await this.sendForcedFeedbackReport({
+              link: link as TaskLink,
+              msg,
+              resultPath: cachePaths.taskResultPath(
+                this.opts.cache_paths,
+                taskId,
+              ),
+              taskId,
+              stderr: `rebase onto ${predecessor.slice(0, 8)} conflicted: ${err.conflict_files.join(", ")}`,
+            });
+            await this.opts.message_router.dismiss(
+              this.opts.instance_id,
+              msg.id,
+            );
+            return;
+          }
+          this.opts.logger.warn(
+            "pre-task rebase failed (non-conflict) — proceeding without rebase",
+            { error: String(err), predecessor: predecessor.slice(0, 8) },
+          );
+        }
+      }
+    }
+
     // uniqueKey = chain_id when available, else the task id. Drives both
     // the user-message template variable and the in-worktree local copy
     // filename. Chain-shared cache path stays per-(chain,link) folder.
@@ -228,6 +323,7 @@ export class WorkerWatcher {
       if (!link) return msg.content;
       const tplName = LINK_TO_TASK_TEMPLATE[link];
       if (!this.opts.template_engine.has(tplName)) return msg.content;
+      const upstreamCommits = msg.upstream_commits ?? {};
       return this.opts.template_engine.render(tplName, {
         name: this.opts.worker_name,
         role: this.opts.worker_role,
@@ -246,6 +342,10 @@ export class WorkerWatcher {
         upstream_build_artifact: chainArtifacts.build,
         upstream_verify_artifact: chainArtifacts.verify,
         upstream_review_artifact: chainArtifacts.review,
+        upstream_plan_commit: upstreamCommits.plan ?? "",
+        upstream_build_commit: upstreamCommits.build ?? "",
+        upstream_verify_commit: upstreamCommits.verify ?? "",
+        upstream_review_commit: upstreamCommits.review ?? "",
         workspace_memory_path: workspaceMemoryPath,
         retry_hint: retryHint,
       });
@@ -350,6 +450,7 @@ export class WorkerWatcher {
 
     let commit: CommitResult | null = null;
     let commitFailure: CommitFailedError | null = null;
+    let docsSha: string | null = null;
     if (link && CHAIN_LINKS.includes(link as TaskLink)) {
       try {
         commit = await this.opts.commit_checker.check(
@@ -374,6 +475,27 @@ export class WorkerWatcher {
           );
         } else {
           throw err;
+        }
+      }
+      // CO root docs commit — runs whether or not worktree commit
+      // succeeded, so docs surface even when the chain ultimately
+      // feeds back. The committer scopes itself to docs/<worker>/
+      // and uses `git commit --only -- <paths>` so it is safe to run
+      // concurrently with other workers sharing the CO root.
+      if (!commitFailure) {
+        try {
+          docsSha = await this.opts.docs_committer.commitIfChanged(
+            {
+              task_id: taskId,
+              link: link as TaskLink,
+              task_title: msg.task_title ?? link,
+            },
+            result.session_id ?? undefined,
+          );
+        } catch (err) {
+          this.opts.logger.warn("docs commit threw unexpectedly", {
+            error: String(err),
+          });
         }
       }
       // Best-effort workspace memory refresh: tell the Leader which
@@ -427,6 +549,7 @@ export class WorkerWatcher {
           resultPath,
           taskId,
           commit,
+          docsSha,
           result.session_id ?? undefined,
         );
       }
@@ -533,6 +656,7 @@ export class WorkerWatcher {
     resultPath: string,
     taskId: TaskId,
     commit: CommitResult | null,
+    docsSha: string | null,
     resumeSessionId: SessionId | undefined,
   ): Promise<void> {
     const evalContent = await this.opts.evaluator.evaluate({
@@ -549,21 +673,34 @@ export class WorkerWatcher {
     });
 
     let body = evalContent;
-    if (commit) {
+    if (commit || docsSha) {
       try {
         const json = JSON.parse(evalContent);
-        json.commit = {
-          sha: commit.sha,
-          message: commit.message,
+        // New `commits` envelope carries BOTH project worktree commit
+        // and CO root docs commit so Leader can propagate them as
+        // upstream_commits to the next link's task. Legacy `commit`
+        // field is retained alongside for backward-compatible parsers.
+        json.commits = {
+          worktree: commit?.sha ?? null,
+          docs: docsSha,
           branch: this.opts.worktree_branch,
-          changed_files: commit.changed_files,
-          untracked_files: commit.untracked_files,
         };
+        if (commit) {
+          json.commit = {
+            sha: commit.sha,
+            message: commit.message,
+            branch: this.opts.worktree_branch,
+            changed_files: commit.changed_files,
+            untracked_files: commit.untracked_files,
+          };
+        }
         body = JSON.stringify(json);
       } catch {
-        body =
-          evalContent +
-          `\nCommit: ${commit.sha.slice(0, 7)} - ${commit.message}`;
+        const tag = commit
+          ? `\nCommit: ${commit.sha.slice(0, 7)} - ${commit.message}`
+          : "";
+        const docsTag = docsSha ? `\nDocs commit: ${docsSha.slice(0, 7)}` : "";
+        body = evalContent + tag + docsTag;
       }
     }
 
@@ -579,6 +716,105 @@ export class WorkerWatcher {
       chain_id: msg.chain_id ?? null,
       result_path: resultPath,
     });
+  }
+
+  /**
+   * Rebase the Worker's own branch onto the immediate predecessor
+   * link's commit so the in-progress task sees the upstream artifacts
+   * in git. With the project repo's shared `.git`, this commit is
+   * already reachable locally — no `git fetch` needed unless the
+   * Worker is operating against an out-of-process remote (rare).
+   *
+   * Conflict → RebaseConflictError so caller can report feedback.
+   * Other errors propagate as plain Error so the caller can log and
+   * proceed without a rebase rather than block the chain.
+   */
+  private async preTaskRebase(targetSha: string): Promise<void> {
+    // Skip when worker branch already contains targetSha. Avoids the
+    // "rebase noop" that still touches the worktree.
+    try {
+      execFileSync(
+        "git",
+        ["merge-base", "--is-ancestor", targetSha, "HEAD"],
+        {
+          cwd: this.opts.worktree_path,
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+      this.opts.logger.debug("pre-task rebase skipped (ancestor)", {
+        target: targetSha.slice(0, 8),
+      });
+      return;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status !== 1) {
+        // unexpected; fall through and attempt rebase anyway
+        this.opts.logger.debug("merge-base --is-ancestor probe failed", {
+          error: String(err),
+        });
+      }
+    }
+    // Optional fetch when remote is configured. Failure to fetch is
+    // non-fatal — the sha is usually already in shared .git.
+    if (this.opts.git_remote) {
+      try {
+        execFileSync(
+          "git",
+          ["fetch", this.opts.git_remote, targetSha],
+          {
+            cwd: this.opts.worktree_path,
+            stdio: "pipe",
+          },
+        );
+      } catch (err) {
+        this.opts.logger.debug("pre-task fetch failed (non-fatal)", {
+          error: String(err),
+        });
+      }
+    }
+    try {
+      execFileSync("git", ["rebase", targetSha], {
+        cwd: this.opts.worktree_path,
+        stdio: "pipe",
+      });
+      this.opts.logger.info("pre-task rebase succeeded", {
+        target: targetSha.slice(0, 8),
+      });
+    } catch (err) {
+      // Check whether rebase is mid-conflict — diagnosed via the
+      // presence of .git/REBASE_HEAD or non-empty unmerged paths.
+      let conflicts: string[] = [];
+      try {
+        const out = execFileSync(
+          "git",
+          ["diff", "--name-only", "--diff-filter=U"],
+          {
+            cwd: this.opts.worktree_path,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        );
+        conflicts = out.split("\n").filter(Boolean);
+      } catch {
+        // ignore
+      }
+      try {
+        execFileSync("git", ["rebase", "--abort"], {
+          cwd: this.opts.worktree_path,
+          stdio: "pipe",
+        });
+      } catch {
+        // ignore: state may already be clean
+      }
+      if (conflicts.length > 0) {
+        throw new RebaseConflictError(
+          `rebase onto ${targetSha.slice(0, 8)} conflicted`,
+          conflicts,
+          err,
+        );
+      }
+      throw err instanceof Error ? err : new Error(String(err));
+    }
   }
 
   /**

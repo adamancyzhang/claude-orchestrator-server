@@ -11,6 +11,12 @@ export interface ChildConfig {
   projects_root: string;
   leader_instance_id: InstanceId;
   debug: boolean;
+  /**
+   * Optional git remote name for pre-task rebase fetches. `null` means
+   * the Worker performs rebases purely against local refs (shared
+   * `.git` with the project repo already provides the upstream sha).
+   */
+  git_remote: string | null;
 }
 
 /**

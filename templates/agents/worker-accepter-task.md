@@ -15,6 +15,15 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 
 If any of the four upstream artifacts is missing, write a single-line BLOCKED report to `result_path` naming the missing artifact and stop.
 
+## Upstream Commits
+Your worktree has been rebased onto the reviewer's commit. Hashes:
+- Plan: `{{upstream_plan_commit}}`
+- Build: `{{upstream_build_commit}}`
+- Verify: `{{upstream_verify_commit}}`
+- Review: `{{upstream_review_commit}}`
+
+Your accept commit closes the chain; Leader merges this branch into the main branch after close_chain.
+
 ## Workspace Memory (fast reference)
 Before validating that a deliverable file actually exists or behaves as claimed, check `{{workspace_memory_path}}/<relative-source-path>.md` (per-file summary) and the `CLAUDE.md` in its parent directory (directory overview). They mirror the project's source tree and capture purpose, public exports, key invariants, and cross-file dependencies. Treat them as **hints, not ground truth** — if a memory file is missing or its `source_hash` is stale, fall back to the source file.
 

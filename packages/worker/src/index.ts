@@ -15,6 +15,11 @@ export {
   type CommitResult,
 } from "./commit-checker.js";
 export {
+  WorkerDocsCommitter,
+  type WorkerDocsCommitterOptions,
+  type DocsCommitContext,
+} from "./docs-committer.js";
+export {
   registerChildBoot,
   startWorkerChild,
   type ChildBoot,

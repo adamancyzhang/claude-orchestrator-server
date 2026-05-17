@@ -29,10 +29,39 @@ export interface InitStatusEntry {
   decision: InitStatusDecision;
 }
 
+export interface GitConfig {
+  /**
+   * Explicit branch name MergeValidator should merge into. When unset,
+   * falls back to leader's HEAD at validate() time. Useful when the
+   * orchestrator boots on a feature branch but should still merge
+   * back into `main` / `master`.
+   */
+  merge_target_branch: string | null;
+  /**
+   * Remote name to fetch from before merges and from worker pre-task
+   * rebases. `null` disables all fetch/rebase-from-remote behavior
+   * (purely local flow). Defaults to "origin".
+   */
+  remote: string | null;
+  /**
+   * When false, orchestrator does not auto-commit init files in the
+   * project root or CO root at startup. Defaults to true for backward
+   * compatibility.
+   */
+  auto_commit_init_files: boolean;
+  /**
+   * Optional separate branch to redirect init-file commits to. When
+   * non-null, the orchestrator runs `git checkout -B <branch>` before
+   * the init commit so the user's working branch is not polluted.
+   */
+  auto_commit_init_files_branch: string | null;
+}
+
 export interface ResolvedConfig {
   zk: ZkConfig;
   projects_root: string;
   commands: CommandsConfig;
+  git: GitConfig;
   hooks: readonly HookCommand[];
   init_status: readonly InitStatusEntry[];
   instance_id: InstanceId | null;

@@ -15,6 +15,7 @@ import {
   type MessageType,
   type TaskLink,
 } from "../enums.js";
+import { UpstreamCommitsSchema, type UpstreamCommits } from "./task.js";
 
 export const MessageSchema = z.object({
   id: z.string().transform(asMessageId).default(""),
@@ -36,6 +37,7 @@ export const MessageSchema = z.object({
   reply_to: z.string().transform(asMessageId).nullable().default(null),
   read: z.boolean().default(false),
   created_at: z.string(),
+  upstream_commits: UpstreamCommitsSchema.optional(),
 });
 export type Message = z.infer<typeof MessageSchema>;
 
@@ -56,4 +58,5 @@ export interface SendMessageInput {
   result_path?: string | null;
   original_requirement_path?: string | null;
   reply_to?: MessageId | null;
+  upstream_commits?: UpstreamCommits;
 }

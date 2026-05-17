@@ -176,6 +176,42 @@ describe("CommitChecker failure surfacing", () => {
     expect(result).toBeNull();
   });
 
+  it("scopes `git add` to paths git-status reports, not -A (Issue #9)", async () => {
+    // Pre-#9 used `git add -A`, which would have picked up any
+    // unrelated file appearing in the worktree between status read
+    // and commit (e.g. a stray .env the user dropped in). The fix
+    // passes the exact path list git-status returned. We model the
+    // "unrelated file appears mid-flight" hazard by writing two
+    // files: status sees only the first one because the second is
+    // .gitignored, so the commit must contain only the first.
+    const repo = initRepo();
+    fs.writeFileSync(path.join(repo, ".gitignore"), "secrets.env\n");
+    fs.writeFileSync(path.join(repo, "change.txt"), "intended");
+    fs.writeFileSync(path.join(repo, "secrets.env"), "TOKEN=xyz");
+    // Status now reports change.txt + .gitignore as untracked
+    // (secrets.env is excluded). After commit, only those two should
+    // be in the tree.
+    const checker = makeChecker(repo, "feat: legit change");
+    const result = await checker.check({
+      link: "build",
+      task_id: asTaskId("task-scope"),
+      task_title: "t",
+      task_description: "d",
+    });
+    expect(result).not.toBeNull();
+    // List files in the new commit
+    const treeFiles = execFileSync(
+      "git",
+      ["show", "--name-only", "--pretty=format:", "HEAD"],
+      { cwd: repo, encoding: "utf-8" },
+    )
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    expect(treeFiles.sort()).toEqual([".gitignore", "change.txt"].sort());
+    expect(treeFiles).not.toContain("secrets.env");
+  });
+
   it("throws CommitFailedError when `git commit` itself fails", async () => {
     // Install a pre-commit hook that exits non-zero so the real `git
     // commit` invocation fails. Verifies the worker subsystem can no

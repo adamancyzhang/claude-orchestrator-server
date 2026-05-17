@@ -15,6 +15,22 @@ import {
   type TaskPriority,
 } from "../enums.js";
 
+/**
+ * Per-link commit hashes for upstream artifacts, addressed to the
+ * downstream link of a chain. Each entry references the Worker's
+ * project-repo commit produced when that link completed. The downstream
+ * Worker rebases its worktree onto the immediate predecessor's hash
+ * before starting work, so the final accept-link branch contains the
+ * full chain history linearly.
+ */
+export const UpstreamCommitsSchema = z.object({
+  plan: z.string().nullable().optional(),
+  build: z.string().nullable().optional(),
+  verify: z.string().nullable().optional(),
+  review: z.string().nullable().optional(),
+});
+export type UpstreamCommits = z.infer<typeof UpstreamCommitsSchema>;
+
 export const TaskSchema = z.object({
   id: z.string().transform(asTaskId).default(""),
   title: z.string(),
@@ -39,6 +55,7 @@ export const TaskSchema = z.object({
   duration_seconds: z.number().nullable().default(null),
   leader_only: z.boolean().default(false),
   result: z.string().nullable().default(null),
+  upstream_commits: UpstreamCommitsSchema.optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -56,6 +73,7 @@ export interface CreateTaskInput {
   assigned_to?: InstanceId | null;
   assigned_to_name?: string | null;
   leader_only?: boolean;
+  upstream_commits?: UpstreamCommits;
 }
 
 export interface ClaimRecord {

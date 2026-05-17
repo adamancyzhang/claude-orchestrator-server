@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   loadProjectWorktreeConfig,
@@ -51,6 +51,18 @@ function getWorktreeBranch(name: string): string {
 
 function execGit(args: string, cwd: string): string {
   return execSync(`git ${args}`, {
+    cwd,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+}
+
+function execGitArgs(args: string[], cwd: string): string {
+  // execFileSync variant used wherever we touch user-controlled values
+  // (branch names, paths). The legacy `execGit(string, cwd)` is fine
+  // for hard-coded git invocations within this file but we prefer the
+  // args-array form for any new code added here.
+  return execFileSync("git", args, {
     cwd,
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
@@ -129,6 +141,13 @@ export interface InitializeWorktreesOptions {
   template_dir: string;
   skills_dir: string;
   logger: ILogger;
+  /**
+   * When true (default), reused worktrees are reset hard to the
+   * project's current HEAD before reuse. Prevents starting a new
+   * task on top of a previous run's dirty state. Set false only for
+   * tests that purposefully inspect post-shutdown worktree state.
+   */
+  reset_on_reuse?: boolean;
 }
 
 export async function initializeWorktrees(
@@ -144,11 +163,42 @@ export async function initializeWorktrees(
   );
 
   const configs: WorktreeConfig[] = [];
+  const resetOnReuse = opts.reset_on_reuse ?? true;
+  let leaderHead = "";
+  try {
+    leaderHead = execGitArgs(["rev-parse", "HEAD"], opts.project_root);
+  } catch {
+    leaderHead = "";
+  }
   for (const { name, role } of assignments) {
     const existing = existingConfig[name];
     const wtPath = path.join(worktreeRoot, name);
     const branch = getWorktreeBranch(name);
     if (existing && fs.existsSync(wtPath)) {
+      // Reset the reused worktree back to the leader's HEAD so the
+      // new task starts from a known-clean slate. Without this, a
+      // previous run's uncommitted modifications or stranded
+      // mid-rebase state would leak into the new task. Best-effort:
+      // if any step fails we log and continue rather than block
+      // worker startup.
+      if (resetOnReuse && leaderHead) {
+        try {
+          // The worktree should already be on the per-Worker branch
+          // since `git worktree add` checked it out at creation time
+          // and each worktree's HEAD lives in .git/worktrees/<name>/HEAD
+          // independently. Skip a redundant `git checkout` (which can
+          // refuse with "would be overwritten" on dirty index even
+          // when staying on the same branch) and reset/clean directly.
+          execGitArgs(["reset", "--hard", leaderHead], wtPath);
+          execGitArgs(["clean", "-fdq"], wtPath);
+          opts.logger.info(`reused worktree ${name} reset to ${leaderHead.slice(0, 8)}`);
+        } catch (err) {
+          opts.logger.warn(
+            `worktree ${name} reset failed; continuing without clean slate`,
+            { error: String(err) },
+          );
+        }
+      }
       configs.push({
         name,
         role: existing.role,
