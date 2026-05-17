@@ -191,6 +191,8 @@ export async function runOrchestrator(
     bus,
     logger: logger.child("merge"),
     log_path_for: (key) => path.join(coRoot, "merges", `${key}.log`),
+    merge_target_branch: resolved.git.merge_target_branch,
+    remote: resolved.git.remote,
   });
 
   const chainAudit = new ChainAudit({
