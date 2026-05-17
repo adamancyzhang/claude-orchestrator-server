@@ -96,3 +96,23 @@ export class CommitFailedError extends CoError {
     super("WORKER_COMMIT_FAILED", message, cause);
   }
 }
+export class WorktreeLockedError extends CoError {
+  constructor(message: string, public readonly stderr: string = "", cause?: unknown) {
+    super("WORKTREE_LOCKED", message, cause);
+  }
+}
+export class GitPermissionError extends CoError {
+  constructor(message: string, public readonly stderr: string = "", cause?: unknown) {
+    super("GIT_PERMISSION_DENIED", message, cause);
+  }
+}
+export class GitNetworkError extends CoError {
+  constructor(message: string, public readonly stderr: string = "", cause?: unknown) {
+    super("GIT_NETWORK_FAILED", message, cause);
+  }
+}
+export class RebaseConflictError extends CoError {
+  constructor(message: string, public readonly conflict_files: string[] = [], cause?: unknown) {
+    super("REBASE_CONFLICT", message, cause);
+  }
+}

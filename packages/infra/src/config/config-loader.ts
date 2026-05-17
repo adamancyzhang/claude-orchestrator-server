@@ -3,6 +3,7 @@ import * as path from "node:path";
 import {
   asInstanceId,
   type CommandsConfig,
+  type GitConfig,
   type HookCommand,
   type InitStatusEntry,
   type InstanceRole,
@@ -23,6 +24,7 @@ interface RawConfig {
   cache_dir?: string;
   zookeeper?: Partial<ZkConfig>;
   commands?: Partial<CommandsConfig>;
+  git?: Partial<GitConfig>;
   hooks?: readonly HookCommand[];
   init_status?: readonly InitStatusEntry[];
   debug?: boolean;
@@ -41,6 +43,15 @@ function defaultCommands(): CommandsConfig {
   return {
     claude_cli: "claude --dangerously-skip-permissions --permission-mode dontAsk",
     git: "git",
+  };
+}
+
+function defaultGit(): GitConfig {
+  return {
+    merge_target_branch: null,
+    remote: "origin",
+    auto_commit_init_files: true,
+    auto_commit_init_files_branch: null,
   };
 }
 
@@ -93,6 +104,12 @@ export function loadConfig(input: LoadConfigInput = {}): ResolvedConfig {
     ...(project.commands ?? {}),
   };
 
+  const git: GitConfig = {
+    ...defaultGit(),
+    ...(global.git ?? {}),
+    ...(project.git ?? {}),
+  };
+
   const hooks = (project.hooks ?? global.hooks ?? []) as readonly HookCommand[];
   const initStatus = (global.init_status ?? []) as readonly InitStatusEntry[];
 
@@ -100,6 +117,7 @@ export function loadConfig(input: LoadConfigInput = {}): ResolvedConfig {
     zk,
     projects_root: projectsRoot,
     commands,
+    git,
     hooks,
     init_status: initStatus,
     instance_id: project.instance_id ? asInstanceId(project.instance_id) : null,
