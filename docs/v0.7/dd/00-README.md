@@ -159,7 +159,7 @@ grep -rn "v0.7 NEW" docs/v0.7/dd/
 grep -rn "rc0-v0.6\|v0.6/dd\|rc1-v0.6\|v0.5/" docs/v0.7/dd/
 ```
 
-> 注：`docs/v0.7/dd/03-identity-and-roles.md` 中可能提到 PRD §7 引用的 `../../rc0-v0.6/workflow/00-identity-cards.md`（来源于 PRD 自身的脚注），DD 不再引用 rc0-v0.6 设计。
+> 注：v0.6 及更早版本的旧文档目录（`v0.5/` / `v0.6/` / `rc0-v0.6/` / `rc1-v0.6/`）已从仓库移除；DD 与 PRD 都不再引用旧版本设计,所有交叉引用只指向 `docs/v0.7/` 内部。
 
 ---
 
@@ -181,5 +181,5 @@ grep -rn "rc0-v0.6\|v0.6/dd\|rc1-v0.6\|v0.5/" docs/v0.7/dd/
 
 - **代码实现**：DD 仅给 schema、伪代码、状态机、时序。具体 TS 实现留给后续 PR。
 - **测试用例**：单元/集成测试设计在 v0.7 DD 范围之外；候选独立目录 `docs/v0.7/test-plan/`。
-- **验收 checklist**：PRD README §5 提到该 checklist 沿用 `../../rc0-v0.6/acceptance-checklist.md`；v0.7 NEW 部分的验收勾选项可基于 §4 FR 矩阵中"主文件 + 完成判定"自行扩展。
+- **验收 checklist**：v0.7 不再维护独立 acceptance-checklist 文档（旧 RC0 版本已随 `rc0-v0.6/` 目录移除）。验收以 PRD `04-functional-requirements.md` 每条 FR 末尾的"done 判定"为准,v0.7 NEW 验收项已嵌入对应 FR 的判定列。
 - **运维手册**：备份、监控、容量规划等不在 v0.7 DD 范围。

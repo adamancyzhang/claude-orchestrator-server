@@ -191,6 +191,6 @@ claude --append-system-prompt '<3 段身份卡>' \
 
 ## 7. 引用
 
-- 完整 5 个 Worker 身份卡实例：`../../rc0-v0.6/workflow/00-identity-cards.md` §5（注：示例中 `builder` 需读作 v0.7 的 `executor`；尚未出现 `explorer` 身份卡，详见 v0.7 DD 后续补全）
+- 身份卡的生成规则与三段拼接：`../dd/03-identity-and-roles.md`（含 6 个 Worker 角色的身份卡构造,涵盖 v0.7 NEW `executor` 与 `explorer`）
 - role × link 权重表的代码定义：`packages/contracts/src/roleWeights.ts`
 - 名称池：`packages/orchestrator/src/worktree-initializer.ts`
