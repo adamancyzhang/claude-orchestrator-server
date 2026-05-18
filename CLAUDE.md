@@ -218,19 +218,26 @@ Context store (`/context`) is not implemented — no paths exist in `paths.ts`.
 
 ## Testing
 
-Tests use **Vitest** and live under `packages/*/tests/`. Each workspace package has its own vitest config and `tests/CLAUDE.md` that mirrors the canonical [Testing Standards](tests/CLAUDE.md).
+Tests use **Vitest** and live under `packages/*/tests/`. Each workspace package has its own `vitest.config.ts`, its `test` / `test:watch` scripts, and its own `tests/CLAUDE.md` that mirrors the canonical [Testing Standards](tests/CLAUDE.md).
 
-**Unit tests have been removed in v0.7.** The only retained automated test is the cross-cutting integration test at `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts`, which exercises the full Plan → Build → Verify → Review → Accept chain over a real ZooKeeper with `claude-cli` stubbed. New behavioral locks MUST be expressed as integration, e2e, or manual tests — see [`tests/CLAUDE.md`](tests/CLAUDE.md) for the full convention.
+**All test files have been removed in v0.7 — unit, integration, e2e, and manual.** The test infrastructure (vitest configs, scripts, `tests/` directories) is intentionally preserved as a baseline for reintroducing tests. Running `pnpm test` today reports "no test files found" per package; that is expected.
+
+New tests MUST follow the directory layout in [`tests/CLAUDE.md`](tests/CLAUDE.md):
+- `tests/core/integration/` — multi-module flows over real ZooKeeper.
+- `tests/core/e2e/` — full leader+worker runs.
+- `tests/core/manual/` — `claude-cli` + ZK smoke scripts.
+- `tests/scratch/YYYY-MM-DD/<feature>/` — ephemeral iteration tests (3-day retention).
+- Do **not** create `tests/core/unit/` — unit tests were retired in v0.7.
 
 ZooKeeper must be running (`docker-compose up -d`) before invoking integration/e2e tests.
 
 ```bash
-# Full suite (all packages, sequential)
+# Full suite (all packages, sequential) — currently reports "no tests"
 pnpm test
 
 # Single package
 pnpm --filter @co/orchestrator test
 
 # Single file inside a package directory
-npx vitest run tests/core/integration/workflow-acceptance.test.ts
+npx vitest run tests/core/integration/<file>.test.ts
 ```

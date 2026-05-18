@@ -1,10 +1,10 @@
 # Testing Standards
 
 Authoritative testing convention for **humans and AI agents** (Claude Code) working on this repository.
-MUST be read before adding or modifying any test file.
+MUST be read before adding the first test file back to this repository.
 Language is directive: **MUST**, **MUST NOT**, **PREFER**.
 
-> **Note (v0.7):** Unit tests have been removed from this repository. The only retained automated test is the cross-cutting integration test under `packages/orchestrator/tests/core/integration/`. New behavioral locks MUST be expressed as integration, e2e, or manual tests — not unit tests.
+> **Note (v0.7):** All test files — unit, integration, e2e, manual, and scratch — have been removed from this repository. **Test infrastructure is intentionally preserved**: each workspace package keeps its `vitest.config.ts`, its `test` / `test:watch` npm scripts, and its `tests/` directory with this `CLAUDE.md`. Running `pnpm test` today is expected to report "no tests found" per package; that is the current baseline. This document governs how new tests MUST be reintroduced.
 
 ---
 
@@ -12,7 +12,7 @@ Language is directive: **MUST**, **MUST NOT**, **PREFER**.
 
 This document governs all tests under `packages/*/tests/`. It exists to:
 
-- Prevent the test suite from becoming a graveyard of one-off scratch tests.
+- Prevent the test suite from becoming a graveyard of one-off scratch tests once tests are reintroduced.
 - Ensure expensive dependencies (real ZooKeeper, real `claude-cli`) are governed by explicit trust rules rather than ad-hoc mocks.
 - Give AI agents a self-contained reference for scope decisions, file placement, and comment templates.
 
@@ -22,7 +22,7 @@ If you are an AI agent: consult §6 (Scope Decision Flow) before writing any tes
 
 ## 2. Directory Layout
 
-Each package owns its own `tests/` tree under `packages/<pkg>/tests/`:
+Each package owns its own `tests/` tree under `packages/<pkg>/tests/`. Currently every `tests/` directory is empty except for this `CLAUDE.md`. When tests are reintroduced, they MUST be placed under the layout below:
 
 ```
 packages/<pkg>/tests/
@@ -46,7 +46,7 @@ packages/<pkg>/tests/
 | `core/manual/` | Node.js scripts hitting real claude-cli + ZK | Permanent |
 | `scratch/YYYY-MM-DD/<feature>/` | In-progress iteration tests | 3 days maximum |
 
-Unit tests are no longer maintained. If a behavior can only be exercised in isolation, the preferred place for it is `core/manual/` (with a documented script) — not a unit test reintroduced under `core/unit/`.
+Unit tests are **not** part of the layout. Behaviors that can only be exercised in isolation MUST go in `core/manual/` (with a documented script) rather than under `core/unit/`. Do not create a `core/unit/` directory.
 
 ---
 
@@ -130,7 +130,6 @@ Files without this header are subject to deletion during any triage pass.
 - Primary source modules: `packages/infra/src/zk/client.ts`, `packages/coordination/src/task-queue.ts`, `packages/coordination/src/instance-registry.ts`, `packages/coordination/src/message-router.ts`, `packages/leader/src/watcher.ts`, `packages/leader/src/recovery.ts`, `packages/worker/src/watcher.ts`.
 - `claude-cli` MUST be stubbed in integration tests (record `TRUST-JUSTIFICATION`).
 - Each test file creates and tears down its own ZK subtree via `vi.hoisted()` + `beforeAll`/`afterAll`.
-- The cross-cutting flagship integration test is `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts`, which exercises the full Plan → Build → Verify → Review → Accept chain.
 
 ### 4.3 `core/e2e/`
 
@@ -199,8 +198,8 @@ When developing a feature or fixing a bug, use this table to determine the minim
 | Change touches | Minimum required test scope |
 |---|---|
 | `packages/contracts/src/paths/**` or `packages/infra/src/zk/client.ts` | Full `pnpm test` — ZK paths are cross-cutting; every subsystem depends on them |
-| `packages/leader/src/**` | `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts` + one e2e smoke if available |
-| `packages/worker/src/**` | `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts` + one e2e smoke if available |
+| `packages/leader/src/**` | A new `tests/core/integration/` test in `@co/leader` or `@co/orchestrator` + one e2e smoke if applicable |
+| `packages/worker/src/**` | A new `tests/core/integration/` test in `@co/worker` or `@co/orchestrator` + one e2e smoke if applicable |
 | `packages/runtime/src/template.ts` | Manual verification via `tests/core/manual/` (no unit tests are kept) |
 | `packages/runtime/src/runner.ts` | One e2e smoke in `tests/core/e2e/`, or a manual run via `tests/core/manual/` |
 | `packages/orchestrator/src/**` | `tests/core/integration/` + `tests/core/e2e/` |
@@ -210,11 +209,13 @@ When developing a feature or fixing a bug, use this table to determine the minim
 | `templates/` or `skills/` | No automated tests; manual verification via `tests/core/manual/` |
 | `docs/` or `*.md` only | None |
 
+Note: today every cell that asks for a `tests/core/*` test means **author one** — the suite is currently empty.
+
 ### Rule of thumb
 
-- Change crosses the leader/worker boundary → run the integration test in `packages/orchestrator/`.
-- Change modifies a ZK path constant → run full `pnpm test`.
-- Change is isolated to one module with no cross-module side effects → write a `tests/scratch/` test for it, or extend the orchestrator integration test if behavior must be locked in.
+- Change crosses the leader/worker boundary → add an integration test in `@co/orchestrator` exercising the full chain.
+- Change modifies a ZK path constant → run full `pnpm test` once the suite has been seeded.
+- Change is isolated to one module with no cross-module side effects → write a `tests/scratch/` test for it, or extend an integration test if behavior must be locked in.
 
 ### Triggering full regression
 
@@ -296,8 +297,10 @@ When a scratch test proves it covers a meaningful behavioral invariant:
 
 ## 9. Running Tests
 
+Test infrastructure (`vitest.config.ts`, `test` / `test:watch` scripts) is preserved per package. Until tests are reintroduced, every command below will report "no test files found" — that is expected.
+
 ```bash
-# Full suite (all core tests across the workspace)
+# Full suite (all packages, sequential)
 pnpm test                                         # pnpm -r --workspace-concurrency=1 test
 
 # Single package
@@ -307,7 +310,7 @@ pnpm --filter @co/orchestrator test
 pnpm --filter @co/orchestrator test:watch
 
 # Single file (inside a package directory)
-npx vitest run tests/core/integration/workflow-acceptance.test.ts
+npx vitest run tests/core/integration/<file>.test.ts
 
 # Narrowed directory
 npx vitest run tests/core/integration
@@ -320,7 +323,7 @@ npx vitest run tests/core/integration/*.slow.test.ts
 npx vitest run tests/scratch/2026-05-14/my-feature
 
 # Manual tests (real claude-cli + real ZK)
-node tests/core/manual/claude-cli-smoke.mjs
+node tests/core/manual/<script>.mjs
 ```
 
 ZooKeeper must be running for integration, e2e, and manual tests:
