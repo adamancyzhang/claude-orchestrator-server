@@ -9,21 +9,21 @@
 ### 1.1 close_chain 单向，不可逆开
 
 - **当前行为**：链关闭（status = `completed` / `aborted` / `merge_failed` / `failed`）后，无 API 重新激活
-- **用户影响**：accept 签字后任何回归发现的问题，需新建 chain 重做；不可复用旧 chain 的 plan/build 产出
+- **用户影响**：accept 签字后任何回归发现的问题，需新建 chain 重做；不可复用旧 chain 的 plan/execute 产出
 - **回避方法**：开新需求时使用新的 chain_id；写新 plan
 - **v0.7 是否修复**：候选。引入 `chain_audit.reopenChain(chainId)` API + `/abort` / `/replay` / `/reopen` 三个 TUI 命令
 
 ### 1.2 跨级 feedback 实用性受限
 
 - **当前行为**：默认 feedback 只回退一步（PREV_LINKS）。Worker 可显式提供 `feedback_target` 跨级，但 Worker 在自身 worktree 子进程中无法读 chain manifest 获取上游 worker 的 instance_id，因此跨级 target 实际只能由人工注入
-- **用户影响**：Review 想直接退给 Builder、Accept 想直接退给 Builder 的场景受限
+- **用户影响**：Review 想直接退给 Executor、Accept 想直接退给 Executor 的场景受限
 - **回避方法**：依靠默认的"一步一步往回退"路径；保证每个中间 link 都能正确反馈
 - **v0.7 是否修复**：候选。在 worker prompt 中注入 `{{prev_link_workers_json}}`（manifest.link_workers 的 JSON）让 Worker 能选择跨级目标
 
 ### 1.3 跨级 feedback 下游产物不自动失效
 
-- **当前行为**：即使发生跨级 feedback（Review 显式 feedback_target=Builder），中间 link（Verify）的旧 completed task 与 `manifest.link_tasks["verify"]` 仍指向旧 task_id；新 build 完成 activate_next 时复用旧 verify pending task（如有）或新建
-- **用户影响**：旧 verify 报告基于过时 build 跑出，但仍可能影响 review 的输入
+- **当前行为**：即使发生跨级 feedback（Review 显式 feedback_target=Executor），中间 link（Verify）的旧 completed task 与 `manifest.link_tasks["verify"]` 仍指向旧 task_id；新 execute 完成 activate_next 时复用旧 verify pending task（如有）或新建
+- **用户影响**：旧 verify 报告基于过时 execute 跑出，但仍可能影响 review 的输入
 - **回避方法**：人工评估是否需清理 manifest；默认走单步反馈避免
 - **v0.7 是否修复**：候选
 
@@ -43,7 +43,7 @@
 
 ### 1.6 Plan 链节可选但模板默认仍生成
 
-- **当前行为**：`ChainDef.tasks.plan` 在 schema 中可为 null，链可跳过 plan 直接从 build 开始；但默认 `worker-decompose.md` 模板始终生成 plan
+- **当前行为**：`ChainDef.tasks.plan` 在 schema 中可为 null，链可跳过 plan 直接从 execute 开始；但默认 `worker-decompose.md` 模板始终生成 plan
 - **用户影响**：可定制化跳过 plan，但模板未提供示例
 - **回避方法**：定制 `worker-decompose.md` 显式输出 `"plan": null`
 - **v0.7 是否修复**：候选（文档与模板均给示例）
@@ -135,19 +135,59 @@
 - **回避方法**：使用 `@co/coordination` 包写自定义脚本
 - **v0.7 是否修复**：候选（按需求）
 
-## 6. 必须通过验收的事项
+## 6. v0.7 NEW：自主循环模式（`--magic`）边界
 
-为避免误把上述边界当作待修缺陷，明确以下场景必须纳入 v0.6 RC0 验收范围：
+### 6.1 Explorer 不可读跨 chain 历史上下文
 
-- 单链 P→B→V→R→A 全程顺利的"快乐路径"
+- **当前行为**：Explorer 在评估时只读到当前 chain 的 manifest 与各 link result.md，不读取 sibling chain 或祖先 chain 的产出
+- **用户影响**：长跑式探索时缺乏全局记忆，可能在不同 chain 中重复提出相似需求
+- **回避方法**：通过 workspace memory（FR-28 ~ FR-30）注入项目级共享状态；或人工在某轮 Ctrl+C 中断后注入新种子需求
+- **v0.7 是否修复**：v0.7 内不计划；候选 v0.8
+
+### 6.2 spawn_chain 不会继承 max_total_retries 余量
+
+- **当前行为**：新 chain 的 `total_retry_count` 从 0 起算，与父 chain 解耦
+- **用户影响**：单 magic 跑出 N 条链可能累计反馈次数远高于 9
+- **回避方法**：通过 `--magic-max-chains` 控制总链数 + `CO_CHAIN_MAX_RETRIES` 控制单链
+- **v0.7 是否修复**：保留当前行为（设计如此，避免父链反馈消耗子链余量）
+
+### 6.3 magic 循环不自动停于"已达成"判断
+
+- **当前行为**：是否停止 magic 循环完全由 Explorer 自评估的 `spawn_chain` / `close_chain` 决定；系统不提供"任务已经做完"的智能判断
+- **用户影响**：Explorer 模板质量直接决定循环何时停；糟糕 prompt 可能让 Explorer 永远输出 `spawn_chain`
+- **回避方法**：依赖 `--magic-max-chains` 兜底；定期审阅 Explorer 的 `worker-explorer.md` 模板与 chain manifest
+- **v0.7 是否修复**：保留；不计划引入"任务完成度"自动判定
+
+### 6.4 spawn_chain 仅在 explore link 合法
+
+- **当前行为**：任何其它 link 输出 `spawn_chain` 被视作 ValidationError，链直接 reject 转 `aborted`
+- **用户影响**：自定义模板若不慎让非 explorer 输出 spawn_chain 会触发链终止
+- **回避方法**：审计模板，确保 `worker-{role}.md` 不含 `spawn_chain` 提示
+- **v0.7 是否修复**：保留（封闭式协议，避免误用）
+
+### 6.5 v0.7 与 v0.6 协议不兼容、不混跑
+
+- **当前行为**：`PROTOCOL_VERSION = "0.7.0"` 强校验；v0.7 Worker 拒绝连接 v0.6 Leader，反之亦然
+- **用户影响**：升级需停机重启全栈；运行中混跑被禁止
+- **回避方法**：所有节点同步升级；保留 v0.6 包可回滚但不能并存
+- **v0.7 是否修复**：保留（协议优先原则）
+
+## 7. 必须通过验收的事项
+
+为避免误把上述边界当作待修缺陷，明确以下场景必须纳入 v0.7 验收范围：
+
+- 单链 P→E→V→R→A 全程顺利的"快乐路径"（默认模式）
+- **[v0.7 NEW]** `--magic` 模式 P→E→V→R→A→Explore→（spawn_chain → 第二条链 → 第二条链完整闭环）的循环路径
+- **[v0.7 NEW]** Explorer 输出 `close_chain` 终止循环路径
+- **[v0.7 NEW]** `--magic-max-chains M` 达上限时 `spawn_chain` 被降级
 - 任一链节 feedback 单步回退到上一链节
 - Worker 子进程崩溃后 `task_recovered` + 子进程重启（≤3 次）
 - close_chain 正常合并到 main
-- close_chain 合并冲突路径走 `merge_failed` + Builder retry（FR-17 / R-02）
+- close_chain 合并冲突路径走 `merge_failed` + Executor retry（FR-17 / R-02）
 - commit 失败回退为 feedback（FR-21 / R-01）
 - 反馈累计超过 `max_total_retries` 链转 `aborted`（FR-18 / R-04）
 - 不可解析 feedback 静默丢弃（FR-19 / R-05）
 - chain_id 重用冲突拒绝（FR-20 / R-06）
 - evaluator 三连失败一律 `reject`（FR-22 / R-03）
 
-详见 `../../rc0-v0.6/acceptance-checklist.md`。
+详见 `../../rc0-v0.6/acceptance-checklist.md`（其中 A-* / R-* 条目仍然适用；v0.7 NEW 验收项需在 v0.7 DD 阶段补充新的 acceptance checklist）。

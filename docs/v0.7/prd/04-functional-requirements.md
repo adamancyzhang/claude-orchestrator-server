@@ -18,6 +18,7 @@
 | 8. 恢复 | FR-23 ~ FR-25 |
 | 9. 审计与缓存 | FR-26 ~ FR-27 |
 | 10. Workspace memory | FR-28 ~ FR-30 |
+| **11. v0.7 NEW：自主循环调度** | **FR-31 ~ FR-35** |
 
 ---
 
@@ -76,9 +77,9 @@
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | 20 个拟人化名称池；启动时按 `planner > builder > verifier > reviewer > accepter` 优先级填充；6 个 Worker 时第 6 个补 builder |
+| 一句话 | 20 个拟人化名称池；启动时按 `planner > executor > verifier > reviewer > accepter` 优先级填充；6 个 Worker 时第 6 个补 executor |
 | 用户价值 | TUI 中能用易记的名字区分 Worker |
-| 完成判定 | (a) 启动 6 Worker，TEAM 出现 6 个名字来自池；(b) role 分配满足优先级；(c) 启动 7 Worker，第 7 个为 builder |
+| 完成判定 | (a) 启动 6 Worker，TEAM 出现 6 个名字来自池；(b) role 分配满足优先级；(c) 启动 7 Worker，第 7 个为 executor |
 | 追溯 | A-06 |
 
 ### FR-07 — Git Worktree 隔离
@@ -107,27 +108,27 @@
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | plan → build → verify → review → accept 五环节固定顺序；NEXT_LINKS / PREV_LINKS 与 CHAIN_LINKS 在 Leader 与 Worker 两处同步定义 |
+| 一句话 | plan → execute → verify → review → accept 五环节固定顺序；**[v0.7 NEW]** `--magic` 模式下追加 explore 第 6 环；NEXT_LINKS / PREV_LINKS 与 CHAIN_LINKS 在 Leader 与 Worker 两处同步定义 |
 | 用户价值 | 明确的"做什么 → 做完了什么 → 谁来验"流水线 |
 | 完成判定 | (a) Leader `NEXT_LINKS`/`PREV_LINKS` 与 Worker `CHAIN_LINKS` 一致；(b) 输入 "hello world" 需求后 EVENT LOG 依次出现 5 次 `task_dispatch` 与最后的 `chain_closed` |
 | 追溯 | A-02 |
 
-### FR-10 — EvalDecision 四态
+### FR-10 — EvalDecision 五态 **[v0.7 五态]**
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | Worker 自评估输出 `activate_next` / `feedback` / `reject` / `close_chain` 四态 JSON；ChainRouter 按态机械路由 |
-| 用户价值 | 链路推进规则封闭、可审计 |
-| 完成判定 | (a) `activate_next` 路径正常推进；(b) `feedback` 派 retry 给上一 link；(c) `reject` 转链 `aborted`；(d) `close_chain` 触发 MergeValidator |
-| 追溯 | A-03 |
+| 一句话 | Worker 自评估输出 `activate_next` / `feedback` / `reject` / `close_chain` / **[v0.7 NEW] `spawn_chain`** 五态 JSON；ChainRouter 按态机械路由 |
+| 用户价值 | 链路推进规则封闭、可审计；新增 `spawn_chain` 让 Explorer 自主起新链 |
+| 完成判定 | (a) `activate_next` 路径正常推进；(b) `feedback` 派 retry 给上一 link；(c) `reject` 转链 `aborted`；(d) `close_chain` 触发 MergeValidator 合并并关链；(e) **[v0.7 NEW]** `spawn_chain` 仅在 explore link 合法，触发 MergeValidator 关现链 + 用 Explorer 提供的新需求开下一 chain（新 chain_id）；非 explore link 发出 `spawn_chain` 视作 `ValidationError` 被 reject |
+| 追溯 | A-03 + v0.7 NEW |
 
 ### FR-11 — ChainDef 拆解（plan 可选）
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | decompose 模板输出 ChainDef JSON 含 `plan` / `build` / `verify` / `review` / `accept` 5 任务；`plan` 字段允许为 null |
-| 用户价值 | 简单需求可跳过 plan 直接 build |
-| 完成判定 | (a) 默认 5 任务入 pending；(b) `"plan": null` 时只有 4 任务入 pending，首任务为 build |
+| 一句话 | decompose 模板输出 ChainDef JSON 含 `plan` / `execute` / `verify` / `review` / `accept` 5 任务（`--magic` 模式追加 `explore` 第 6 任务）；`plan` 字段允许为 null |
+| 用户价值 | 简单需求可跳过 plan 直接 execute |
+| 完成判定 | (a) 默认 5 任务入 pending；(b) `"plan": null` 时只有 4 任务入 pending，首任务为 execute；(c) **[v0.7 NEW]** `--magic` 启用时 6 任务入 pending，末任务为 explore |
 | 追溯 | A-04 |
 
 ---
@@ -149,7 +150,7 @@
 |------|------|
 | 一句话 | chain-link 任务执行完毕后 CommitChecker 自动 `git add -A && git commit`；commit message 由 claude 按 `worker-commit-message.md` 生成（≤72 字符），失败 fallback `chore: auto-commit from {Name}` |
 | 用户价值 | Worker 产出无需操作员手 commit |
-| 完成判定 | (a) Build 完成后 Worker worktree `git log -1` 有新 commit；(b) commit message 首行 ≤72 字符 |
+| 完成判定 | (a) Execute 完成后 Worker worktree `git log -1` 有新 commit；(b) commit message 首行 ≤72 字符 |
 | 追溯 | A-16 |
 
 ### FR-14 — Lifecycle hooks
@@ -183,13 +184,13 @@
 | 完成判定 | (a) 跑通一条链后 main 分支多 5 个 `--no-ff` merge commit（每 link 一个）；(b) `~/.../chains/<chain_id>/manifest.json` `status: "completed"` 且 `completed_at` 已写 |
 | 追溯 | A-18 |
 
-### FR-17 — `merge_failed` 终态 + Builder retry
+### FR-17 — `merge_failed` 终态 + Executor retry
 
 | 字段 | 内容 |
 |------|------|
 | 一句话 | runMergeValidation 遇任一冲突 → 收集失败列表（不再吞噬）→ `closeChain(chainId, "merge_failed", { failures })` → 发射 `chain_merge_failed` 事件 → 对每个失败 link 从 `manifest.link_workers` 查 Worker，push 一条 priority=0、assigned_to=该 Worker、link=失败 link 的 retry task；TUI 红字渲染 `MERGE_FAILED chain <id>: N branch(es) ...` |
-| 用户价值 | 主分支永远只接受成功 merge；冲突显式回到原 Builder 解决，用户实时可见 |
-| 完成判定 | (a) 构造冲突场景后 EVENT LOG 出现红色 `MERGE_FAILED chain <id>`；(b) 对应 Builder 收件箱出现新 task_dispatch，描述含 "Merge conflict on branch ..."；(c) `manifest.json` status = `merge_failed` 而非 `completed`；(d) `ChainStatus` 枚举显式包含 `merge_failed` |
+| 用户价值 | 主分支永远只接受成功 merge；冲突显式回到原 Executor 解决，用户实时可见 |
+| 完成判定 | (a) 构造冲突场景后 EVENT LOG 出现红色 `MERGE_FAILED chain <id>`；(b) 对应 Executor 收件箱出现新 task_dispatch，描述含 "Merge conflict on branch ..."；(c) `manifest.json` status = `merge_failed` 而非 `completed`；(d) `ChainStatus` 枚举显式包含 `merge_failed` |
 | 追溯 | R-02（含 R-07） |
 
 ---
@@ -201,7 +202,7 @@
 | 字段 | 内容 |
 |------|------|
 | 一句话 | chain manifest 持久化 `total_retry_count` 与 `max_total_retries`（默认 9，`CO_CHAIN_MAX_RETRIES` 环境变量覆写）；超限链强制 `aborted` 不再 push |
-| 用户价值 | 防止"verify ↔ build 死循环"耗尽资源 |
+| 用户价值 | 防止"verify ↔ execute 死循环"耗尽资源；`--magic` 下也限制 chain → chain 循环不能无限通过反复 feedback 内部链路 |
 | 完成判定 | (a) 设 `CO_CHAIN_MAX_RETRIES=2` 后第 3 次反馈被阻止；(b) 该链 manifest.status = `aborted`，extra.reason = `retry_ceiling_exceeded`；(c) audit.jsonl 含 `retry_ceiling_exceeded`；(d) 不设环境变量时默认 9 |
 | 追溯 | R-04 |
 
@@ -317,7 +318,7 @@
 |------|------|
 | 一句话 | Worker commit 后发 `memory_refresh` 消息给 Leader → ChainRouter 接收 → MemoryBootstrap 重新生成被改文件的卡片 |
 | 用户价值 | memory 卡片永远与最新源码对齐 |
-| 完成判定 | Builder 修改并 commit `packages/leader/src/chain-router.ts` 后，等数秒该文件 memory 卡片的 `source_hash` 更新 |
+| 完成判定 | Executor 修改并 commit `packages/leader/src/chain-router.ts` 后，等数秒该文件 memory 卡片的 `source_hash` 更新 |
 | 追溯 | A-13 |
 
 ### FR-30 — 陈旧扫描（`refreshStale`）
@@ -328,6 +329,57 @@
 | 用户价值 | 手工 commit 或外部脚本写入也能被发现 |
 | 完成判定 | 手工修改源文件并 commit（未触发 worker） → 下次 `/init` 时 EVENT LOG 出现 "stale entries refreshed" |
 | 追溯 | A-14 |
+
+---
+
+## 11. v0.7 NEW：自主循环调度
+
+本节是 v0.7 相对 v0.6 RC0 的增量需求。三条 FR 互相耦合：FR-31（Explorer 角色）+ FR-32（`--magic` 启动开关）+ FR-33（`spawn_chain` 决策）共同构成"链 → 链"循环。
+
+### FR-31 — Explorer 角色与 Explore 链节 **[v0.7 NEW]**
+
+| 字段 | 内容 |
+|------|------|
+| 一句话 | 新增 `explorer` role 与 `explore` link，作为 `--magic` 模式下责任链的第 6 环；Explorer 接到任务后查阅当前 chain 全部产出（plan / execute / verify / review / accept 的 result.md + commit 历史 + chain manifest），输出"下一轮需求草案"以及 `spawn_chain` 或 `close_chain` 自评估决策 |
+| 用户价值 | 把"下一步做什么"决策从人工 → 自主；适用于长跑式探索、研究型项目、持续重构等开放问题 |
+| 完成判定 | (a) `TaskLinkSchema` 新增 `explore` 枚举值；`InstanceRoleSchema` 新增 `explorer`；(b) `templates/agents/worker-explorer.md` + `worker-explorer-task.md` + `templates/claude-memory/personal-claude-explorer.md` 三个模板存在；(c) `roleWeights.ts` explorer × explore = 100、其它 link = 10-20，其它 role × explore = 10-20；(d) skill `task-exploration` 存在；(e) `--magic` 启动时 6 Worker 中 1 个 explorer 被分配 |
+| 追溯 | v0.7 NEW |
+
+### FR-32 — `--magic` 启动开关 **[v0.7 NEW]**
+
+| 字段 | 内容 |
+|------|------|
+| 一句话 | `claude-orchestrator run --worker N --magic` 启用自主循环模式：role 分配按 `planner > executor > verifier > reviewer > accepter > explorer` 顺序填充；ChainRouter.handleRequirement 调用 decompose 时附加 `magic=true` 上下文，ChainDef 必含 explore 第 6 任务；TUI 标题栏显示 `[MAGIC]` 徽标 |
+| 用户价值 | 操作员一键打开循环调度；不影响默认模式的简洁性 |
+| 完成判定 | (a) `--magic` 启动后 TUI 标题栏出现 `[MAGIC]`；(b) 不带 `--magic` 启动时 ChainDef 输出 5 任务（无 explore）；(c) `--magic` 启动且 `--worker 6` 时 TEAM 面板出现 1 个 explorer；(d) `--magic` + `--worker 7+` 时第 7 个 Worker 为 executor（探索者只配 1 个） |
+| 追溯 | v0.7 NEW |
+
+### FR-33 — `spawn_chain` 决策与链 → 链派生 **[v0.7 NEW]**
+
+| 字段 | 内容 |
+|------|------|
+| 一句话 | EvalDecision 新增 `spawn_chain` 状态；仅在 explore link 合法；Explorer 输出 `spawn_chain` + `next_requirement: <string>` 时 ChainRouter 执行：(1) MergeValidator 关闭当前 chain（成功则 status=`completed`，失败则 `merge_failed` + executor retry，与默认 `close_chain` 一致）；(2) 用 `next_requirement` 内容作为新需求 push 到 `/messages/{leader_id}/msg-*`（type=`user_input`，附 `spawned_from: <parent_chain_id>` 元字段）；(3) 新 chain_id 由 ChainRouter 生成，新 manifest 记录 `parent_chain_id` 与 `chain_depth`（链深度），audit.jsonl 在两条 chain 中分别记 `chain_spawned (child=<id>)` 与 `chain_spawned_from (parent=<id>)` |
+| 用户价值 | 自主循环；链与链显式相连（parent / depth），便于审计与可视化 |
+| 完成判定 | (a) explore link Worker 输出 `spawn_chain` + `next_requirement` 后 EVENT LOG 出现 `chain_spawned chain-N → chain-N+1`；(b) 新 chain manifest 含 `parent_chain_id` 与 `chain_depth = N`；(c) Explorer 输出 `close_chain` 时链正常关闭，无新 chain 创建；(d) 非 explore link 发出 `spawn_chain` 时 ChainRouter 视作 ValidationError，记 audit `invalid_decision` 并把链 reject 转 `aborted` |
+| 追溯 | v0.7 NEW |
+
+### FR-34 — `--magic` 模式下的循环硬上限 **[v0.7 NEW]**
+
+| 字段 | 内容 |
+|------|------|
+| 一句话 | `--magic` 循环的链深度受全局 `--magic-max-chains M`（默认 `unlimited`，可由 env `CO_MAGIC_MAX_CHAINS` 覆写）约束；达到上限时 Leader 阻塞 `spawn_chain` 派发，将其降级为 `close_chain` 行为并记 audit `magic_depth_exhausted` |
+| 用户价值 | 防止 Explorer 决策错误导致无限循环；操作员保留兜底闸阀 |
+| 完成判定 | (a) `--magic --magic-max-chains 3` 启动后跑到第 3 条 chain 的 explore link 时 EVENT LOG 出现 `[debug] magic loop depth 3 reached: spawn_chain demoted to close_chain`；(b) 不指定时无上限，仅 Ctrl+C / 单链 `max_total_retries` 控制；(c) audit.jsonl 含 `magic_depth_exhausted` |
+| 追溯 | v0.7 NEW |
+
+### FR-35 — `--magic` 模式下 ChainAudit manifest 扩展 **[v0.7 NEW]**
+
+| 字段 | 内容 |
+|------|------|
+| 一句话 | chain manifest 新增 `parent_chain_id: ChainId \| null`、`child_chain_ids: ChainId[]`、`chain_depth: number`、`magic_mode: boolean` 四字段；status 终态枚举不变；audit.jsonl 新增 `chain_spawned` / `chain_spawned_from` / `magic_depth_exhausted` 三种事件 |
+| 用户价值 | 一次 `--magic` 跑形成的链森林可被审计、可视化、人工审阅 |
+| 完成判定 | (a) `--magic` 跑完 ≥2 条 chain 后 `~/.../chains/<chain_id>/manifest.json` 含上述字段；(b) 顶层非 `--magic` 模式下 `magic_mode=false`、`parent_chain_id=null`、`chain_depth=0`；(c) 子 chain 的 `parent_chain_id` 指向父 chain，父 chain 的 `child_chain_ids` 含子 chain_id |
+| 追溯 | v0.7 NEW |
 
 ---
 
@@ -344,11 +396,14 @@
 | FR-07 | A-07 | FR-22 | R-03 |
 | FR-08 | A-08 | FR-23 | A-19 |
 | FR-09 | A-02 | FR-24 | A-20 |
-| FR-10 | A-03 | FR-25 | A-21 |
-| FR-11 | A-04 | FR-26 | A-22 |
+| FR-10 | A-03 + v0.7 NEW（spawn_chain） | FR-25 | A-21 |
+| FR-11 | A-04 + v0.7 NEW（explore optional） | FR-26 | A-22 |
 | FR-12 | A-15 | FR-27 | A-23 |
 | FR-13 | A-16 | FR-28 | A-12 |
 | FR-14 | A-24 | FR-29 | A-13 |
 | FR-15 | A-17 | FR-30 | A-14 |
+| **FR-31** | **v0.7 NEW**（explorer 角色） | **FR-34** | **v0.7 NEW**（--magic-max-chains） |
+| **FR-32** | **v0.7 NEW**（--magic flag） | **FR-35** | **v0.7 NEW**（chain manifest 扩展） |
+| **FR-33** | **v0.7 NEW**（spawn_chain）|  |  |
 
-合计：30 条 FR ↔ 24 项 A 功能 + 6 项 R 修复（R-07 并入 FR-17 内 ChainStatus 表述）。所有 31 项原 A/R 编号均有 FR 对应位置。
+合计：35 条 FR = 24 项 A 功能继承（含 FR-10/FR-11 在 v0.7 内扩展）+ 6 项 R 修复（R-07 并入 FR-17 ChainStatus 表述）+ 5 项 v0.7 NEW（FR-31 ~ FR-35）。

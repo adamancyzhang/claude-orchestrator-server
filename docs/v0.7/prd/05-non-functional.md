@@ -24,7 +24,9 @@
 | chain_id 冲突 | 重写已终态 chain 的 manifest 被拒绝（抛 `ChainConflictError`）；原 manifest 不被覆盖；audit 记 `chain_id_conflict` |
 | commit 失败 | 强制 feedback 回同 Worker；retry 计入 `total_retry_count` |
 | evaluator 三连失败 | 强制 `reject`（不论 link），链转 `aborted`；不允许 "无声 close_chain" 绕过质量门 |
-| 合并冲突 | `runMergeValidation` 收集失败列表（不再吞噬）；close_chain 命中失败时链转 `merge_failed`，对每个失败 link 派 retry 给原 Builder |
+| 合并冲突 | `runMergeValidation` 收集失败列表（不再吞噬）；close_chain 命中失败时链转 `merge_failed`，对每个失败 link 派 retry 给原 Executor |
+| **[v0.7 NEW]** `--magic` 循环深度上限 | `--magic-max-chains M`（默认 `unlimited`），`CO_MAGIC_MAX_CHAINS` 环境变量覆写；达上限时 `spawn_chain` 决策被 Leader 降级为 `close_chain`、不再创建下一条 chain；audit 记 `magic_depth_exhausted` |
+| **[v0.7 NEW]** Explorer 自我熔断 | Explorer 自评估失败 3 次仍触发 reject-only fallback（FR-22）；这种情况下不会跨链传播，magic 循环自动终止 |
 
 详见 `../../rc0-v0.6/dd/error-and-recovery.md` §10 ~ §12 与 `04-functional-requirements.md` 第 6 / 7 域。
 
@@ -36,7 +38,7 @@
 | ZK 单节点容量 | ZK 原生限制 1 MiB；result 超过 64 KiB 落盘并以 `file://` 引用 |
 | TUI 渲染节流 | TUI 在每个事件后重绘（ANSI escape-code），EVENT LOG 滚动保留最近 100 条 |
 | `--fork-session` 干净分支 | SelfEvaluator 每次重试 `--fork-session` 消除格式错误输出的锚定效应 |
-| 并发上限 | Worker 数默认 6，最小 6（保证 5 个 role + 1 个 builder 兜底）；上限不硬约束（仅受机器资源限制） |
+| 并发上限 | Worker 数默认 6，最小 6（默认模式：5 个 role + 1 个 executor 兜底；**[v0.7 NEW]** `--magic` 模式：6 个 role 精确匹配）；上限不硬约束（仅受机器资源限制） |
 
 ## 4. 安全
 
@@ -94,10 +96,22 @@ Worktree 配置（<worktree>/.claude-orchestrator/config.json）
 | chain 反馈硬上限 | env `CO_CHAIN_MAX_RETRIES` | 默认 9 |
 | worktree 段落 | 项目根 | 启动时由 WorktreeInitializer 写入 |
 | 单 Worker 身份 | worktree 内 | name / role / instance_id |
+| **[v0.7 NEW]** 自主循环开关 | CLI `--magic` flag | 默认关闭；启用后启用 explore 链节 + spawn_chain 决策 |
+| **[v0.7 NEW]** 自主循环深度上限 | CLI `--magic-max-chains M` / env `CO_MAGIC_MAX_CHAINS` | 默认 `unlimited`；与 `--magic` 配合，控制 `spawn_chain` 派生新 chain 的最大层数 |
 
 ### 6.3 CLI 命令面
 
 仅 `run` 与 `config` 两个 CLI 子命令开放给操作员；任务/消息/实例的 push/poll/claim 等不再以 CLI 形式开放（v0.5 曾有 13 命令）。脚本化操作通过 `@co/coordination` 包封装。该简化列入 `06-boundaries.md` §5.3。
+
+`run` 子命令在 v0.7 接受的关键 flag：
+
+| flag | 默认 | 说明 |
+|------|------|------|
+| `--worker N` | 6 | Worker 数；最小 6 |
+| `-z <hosts>` | 全局配置 / 127.0.0.1:2181 | ZK 连接地址 |
+| `--debug` | false | 启用 prompt 与执行 trace 打印 |
+| **[v0.7 NEW]** `--magic` | false | 启用自主循环（追加 explore 链节 + spawn_chain 决策） |
+| **[v0.7 NEW]** `--magic-max-chains M` | unlimited | `--magic` 模式下 chain 派生层数上限 |
 
 详见 `../../rc0-v0.6/dd/config-and-cli.md`。
 
@@ -105,9 +119,10 @@ Worktree 配置（<worktree>/.claude-orchestrator/config.json）
 
 | 字段 | 值 |
 |------|----|
-| `PROTOCOL_VERSION` | `"0.6.0"` |
+| `PROTOCOL_VERSION` | **[v0.7 升级]** `"0.7.0"` |
+| 升版本原因 | `TaskLinkSchema` 把 `"build"` 改名 `"execute"`（enum 重命名）、新增 `"explore"`；`EvalDecisionSchema` 新增 `"spawn_chain"`；`InstanceRoleSchema` 把 `"builder"` 改 `"executor"`、新增 `"explorer"`；`ChainManifest` 新增 `parent_chain_id` / `child_chain_ids` / `chain_depth` / `magic_mode` 4 字段。`build` → `execute` 与 `builder` → `executor` 是破坏性重命名 |
 | 版本校验时机 | Worker 启动时读取 `/leader` 节点的协议版本字段；不匹配即退出 |
-| v0.7 是否升版本 | 否。v0.7 PRD 阶段无破坏性 contract 变更，沿用 `0.6.0`。当 `@co/contracts` 出现破坏性变更（删字段、改字段名、收窄类型、改语义）时才升 `0.7.0` |
-| 不可破坏性变更 | 新增 optional 字段、新增 enum 值（后端兼容）、新增接口方法（带默认实现）—— 这些在 v0.7 维护期允许直接做 |
+| 与 v0.6 兼容性 | **不兼容**。v0.7 Worker / Leader 禁止与 v0.6 混跑；升级时需停机重启全栈 |
+| v0.7 后续不可破坏性变更 | 新增 optional 字段、新增 enum 值（后端兼容）、新增接口方法（带默认实现）—— 在 v0.7 维护期允许直接做 |
 
 效果：多版本 Worker 与 Leader 混跑被禁止，强制全栈版本一致。
