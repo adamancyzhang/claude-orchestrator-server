@@ -100,7 +100,7 @@ describe("TaskQueue.assign", () => {
   it("pins a pending task to an instance without transitioning to claimed", async () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
-    const task = await queue.push({ title: "build it", link: "build", priority: 1 });
+    const task = await queue.push({ title: "build it", link: "execute", priority: 1 });
     expect(task.assigned_to).toBeNull();
 
     const worker = asInstanceId("worker-jerry-01");
@@ -120,7 +120,7 @@ describe("TaskQueue.assign", () => {
   it("returns null when the task is no longer pending", async () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
-    const task = await queue.push({ title: "x", link: "build", priority: 1 });
+    const task = await queue.push({ title: "x", link: "execute", priority: 1 });
     // Claim it (removes the pending node).
     await queue.claimById(task.id, asInstanceId("worker-a"));
     const updated = await queue.assign(task.id, asInstanceId("worker-b"), "B");
@@ -130,7 +130,7 @@ describe("TaskQueue.assign", () => {
   it("subsequent assign() overwrites a prior assignment on the same pending task", async () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
-    const task = await queue.push({ title: "x", link: "build", priority: 1 });
+    const task = await queue.push({ title: "x", link: "execute", priority: 1 });
     await queue.assign(task.id, asInstanceId("worker-a"), "A");
     const updated = await queue.assign(task.id, asInstanceId("worker-b"), "B");
     expect(updated!.assigned_to).toBe(asInstanceId("worker-b"));

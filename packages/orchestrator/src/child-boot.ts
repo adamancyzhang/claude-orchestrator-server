@@ -89,10 +89,11 @@ async function boot(config: ChildConfig): Promise<void> {
   // claude-cli prompt caching can keep them hot across tasks.
   const ROLE_TO_SYSTEM_TEMPLATE: Record<string, string> = {
     planner: "worker-planner.md",
-    builder: "worker-builder.md",
+    executor: "worker-executor.md",
     verifier: "worker-verifier.md",
     reviewer: "worker-reviewer.md",
     accepter: "worker-accepter.md",
+    explorer: "worker-explorer.md",
   };
   const identityTpl = templateEngine.has("worker-identity.md")
     ? templateEngine.load("worker-identity.md")

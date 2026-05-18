@@ -28,10 +28,11 @@ interface MutableWorker {
 
 const LINK_TO_ROLE: Record<string, InstanceRole> = {
   plan: "planner",
-  build: "builder",
+  execute: "executor",
   verify: "verifier",
   review: "reviewer",
   accept: "accepter",
+  explore: "explorer",
 };
 
 export class LeaderState implements ILeaderStateView {
@@ -40,6 +41,8 @@ export class LeaderState implements ILeaderStateView {
   private _in_progress: Task[] = [];
   private _events: LeaderEvent[] = [];
   private _selected = 0;
+  private _magic_mode = false;
+  private _magic_max_chains: number | null = null;
 
   get workers(): readonly WorkerInfo[] {
     return this._workers as readonly WorkerInfo[];
@@ -55,6 +58,12 @@ export class LeaderState implements ILeaderStateView {
   }
   get selected_worker_index(): number {
     return this._selected;
+  }
+  get magic_mode(): boolean {
+    return this._magic_mode;
+  }
+  get magic_max_chains(): number | null {
+    return this._magic_max_chains;
   }
 
   setSelectedWorkerIndex(idx: number): void {
@@ -167,6 +176,11 @@ export class LeaderState implements ILeaderStateView {
         this._in_progress = this._in_progress.filter((t) => t.id !== event.task_id);
         break;
       }
+      case "magic_mode_configured": {
+        this._magic_mode = event.magic_mode;
+        this._magic_max_chains = event.magic_max_chains;
+        break;
+      }
       case "task_blocked":
       case "task_recovered":
       case "task_dependency_resolved":
@@ -176,6 +190,8 @@ export class LeaderState implements ILeaderStateView {
       case "chain_activated":
       case "chain_closed":
       case "chain_merge_failed":
+      case "chain_spawned":
+      case "magic_depth_exhausted":
       case "debug_info":
       case "stream_chunk":
         break;

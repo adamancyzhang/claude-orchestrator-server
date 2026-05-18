@@ -255,6 +255,15 @@ function eventToString(event: LeaderEvent): string {
       const branches = event.failures.map((f) => f.branch).join(", ");
       return `MERGE_FAILED chain ${event.chain_id}: ${event.failures.length} branch(es) [${branches}] — retry tasks pushed`;
     }
+    // v0.7 NEW
+    case "chain_spawned":
+      return `chain_spawned ${event.parent_chain_id} → ${event.child_chain_id} (depth=${event.chain_depth})`;
+    case "magic_depth_exhausted":
+      return `[debug] magic loop depth ${event.chain_depth} reached --magic-max-chains=${event.max_chains}: spawn_chain demoted to close_chain (chain ${event.chain_id})`;
+    case "magic_mode_configured":
+      return event.magic_mode
+        ? `magic mode enabled (max_chains=${event.magic_max_chains ?? "unlimited"})`
+        : `magic mode disabled`;
     case "debug_info":
       return `[debug] ${event.message}`;
     case "stream_chunk":
@@ -373,6 +382,12 @@ export function composeFrame(input: ComposeFrameInput): string {
   });
   out += box(cols - 2, line, hint);
 
-  out += `\n${DIM}Leader: ${leader_name} | Tab=next worker | 1-9 jump | Ctrl+C quit${RESET}`;
+  // v0.7 NEW — [MAGIC] badge surfaces magic-mode + the configured cap
+  // so operators can tell at a glance whether spawn_chain decisions
+  // will be honored.
+  const magicBadge = state.magic_mode
+    ? ` ${BOLD}[MAGIC]${RESET}${DIM}(max=${state.magic_max_chains ?? "∞"})${RESET}`
+    : "";
+  out += `\n${DIM}Leader: ${leader_name}${RESET}${magicBadge}${DIM} | Tab=next worker | 1-9 jump | Ctrl+C quit${RESET}`;
   return out;
 }

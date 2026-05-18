@@ -9,7 +9,7 @@ The user's original requirement is preserved verbatim at `{{original_requirement
 
 ## Upstream Artifacts (read first, in order)
 1. Planner blueprint: `{{upstream_plan_artifact}}`
-2. Builder traceability map: `{{upstream_build_artifact}}`
+2. Executor traceability map: `{{upstream_execute_artifact}}`
 3. Verifier verification map: `{{upstream_verify_artifact}}`
 4. Reviewer judgment: `{{upstream_review_artifact}}`
 
@@ -18,7 +18,7 @@ If any of the four upstream artifacts is missing, write a single-line BLOCKED re
 ## Upstream Commits
 Your worktree has been rebased onto the reviewer's commit. Hashes:
 - Plan: `{{upstream_plan_commit}}`
-- Build: `{{upstream_build_commit}}`
+- Execute: `{{upstream_execute_commit}}`
 - Verify: `{{upstream_verify_commit}}`
 - Review: `{{upstream_review_commit}}`
 

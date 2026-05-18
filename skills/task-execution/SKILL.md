@@ -1,20 +1,20 @@
 ---
 name: task-execution
-description: Guided task execution for the Builder role. Use when the Builder claims a task from the orchestrator queue and needs to execute it — reading the blueprint, making code changes, running verification, and reporting results with full traceability from every code change back to the Plan. Triggers on keywords like "执行任务", "开始构建", "claim task", "build", "implement", "开发", "写代码", or when a Builder has claimed a task and is ready to work. Complements task-traceability as the foundational traceability layer.
+description: Guided task execution for the Executor role. Use when the Executor claims a task from the orchestrator queue and needs to execute it — reading the blueprint, making code changes, running verification, and reporting results with full traceability from every code change back to the Plan. Triggers on keywords like "执行任务", "开始构建", "claim task", "execute", "implement", "开发", "写代码", or when an Executor has claimed a task and is ready to work. Complements task-traceability as the foundational traceability layer.
 ---
 
 # Task Execution
 
-> 执行不是凭感觉写代码，是理解蓝图 → 精准实现 → 自证正确 → 记录可追溯的完整闭环。本技能与 [[task-traceability]] 协作，确保 Builder 的每次执行产出可被 Verifier 独立验证，每个代码变更都可追溯到具体的 Plan 要求。
+> 执行不是凭感觉写代码，是理解蓝图 → 精准实现 → 自证正确 → 记录可追溯的完整闭环。本技能与 [[task-traceability]] 协作，确保 Executor 的每次执行产出可被 Verifier 独立验证，每个代码变更都可追溯到具体的 Plan 要求。
 
 ---
 
 ## 何时触发
 
-- Worker 通过 `claude-orchestrator claim-task` 认领了 build 类型的任务
+- Worker 通过 `claude-orchestrator claim-task` 认领了 execute 类型的任务
 - 用户说"开始执行"、"开始构建"、"implement this task"
-- Leader 直接分配了 build 任务给 Builder
-- 任务蓝图中标记为 build 的项需要开工
+- Leader 直接分配了 execute 任务给 Executor
+- 任务蓝图中标记为 execute 的项需要开工
 
 ---
 
@@ -34,7 +34,7 @@ claude-orchestrator get-context --key plan-<目标slug>
 
 从任务和蓝图中提取：
 - 本任务的验收标准（具体到命令和文件路径）
-- 前序依赖任务的产出物（Plan 的输出、上游 Build 的产出）
+- 前序依赖任务的产出物（Plan 的输出、上游 Execute 的产出）
 - 本任务的预期产出物
 
 如果蓝图不在共享上下文中，通过消息向 Planner 索要。
@@ -127,9 +127,9 @@ claude-orchestrator complete-task \
 
 ## 与其他技能的协作
 
-- **[[task-traceability]]**：基础层。Builder 严格遵循追溯 → 执行 → 映射 → 举证 → 记录的五步法。每个代码变更必须追溯至 Plan 的具体要求，映射到实现，附带测试证据，并通过 commit hash 记录回任务文档。
-- **[[task-planning]]**：Builder 依赖 Planner 的蓝图和追溯链来理解执行范围。如果蓝图有歧义，反馈给 Planner 澄清。
-- **[[task-verification]]**：Verifier 将独立验证 Builder 的产出。Builder 的自测和可追溯记录降低了 Verifier 发现基础问题的概率。
+- **[[task-traceability]]**：基础层。Executor 严格遵循追溯 → 执行 → 映射 → 举证 → 记录的五步法。每个代码变更必须追溯至 Plan 的具体要求，映射到实现，附带测试证据，并通过 commit hash 记录回任务文档。
+- **[[task-planning]]**：Executor 依赖 Planner 的蓝图和追溯链来理解执行范围。如果蓝图有歧义，反馈给 Planner 澄清。
+- **[[task-verification]]**：Verifier 将独立验证 Executor 的产出。Executor 的自测和可追溯记录降低了 Verifier 发现基础问题的概率。
 
 ---
 
@@ -137,6 +137,6 @@ claude-orchestrator complete-task \
 
 - **不读蓝图直接写代码**：跳过 Step 1-2，凭任务标题猜测需求。结果往往偏离 Planner 的设计意图。
 - **越界修改**：顺手"优化"了无关代码。增加了 Reviewer 的审查负担和 Verifier 的验证范围，可能引入新 bug。
-- **不跑验收命令就报完成**：验收标准写明了 `npm test -- foo`，但 Builder 没跑就说完成了。Verifier 一跑就挂。
-- **跳过自测结果记录**：只完成了代码，但验收标准要求产出截图/测试报告，Builder 没产出。Verifier 无法验证。
+- **不跑验收命令就报完成**：验收标准写明了 `npm test -- foo`，但 Executor 没跑就说完成了。Verifier 一跑就挂。
+- **跳过自测结果记录**：只完成了代码，但验收标准要求产出截图/测试报告，Executor 没产出。Verifier 无法验证。
 - **commit 没签自己的名**：commit hash 记录了但签名用的是别人。追溯链断了——谁做的不可知。

@@ -1,4 +1,4 @@
-# {{name}} — Builder
+# {{name}} — Executor
 
 You produce verifiable results according to the Planner's blueprint. Read `.claude/skills/task-execution/SKILL.md` for your detailed process. Use `.claude/skills/task-traceability/SKILL.md` as the foundational traceability layer.
 

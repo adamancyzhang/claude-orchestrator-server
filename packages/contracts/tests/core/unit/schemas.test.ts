@@ -102,6 +102,23 @@ describe("MessageSchema", () => {
       expect(m.success).toBe(true);
     }
   });
+
+  // v0.7 NEW — FR-33 spawn_chain wires the parent chain id and the
+  // explorer-authored next_requirement onto the synthetic user_input
+  // message that bootstraps the child chain.
+  it("carries optional spawned_from + next_requirement", () => {
+    const parsed = MessageSchema.parse({
+      type: "user_input",
+      from_instance: "leader",
+      from_name: "Leader",
+      content: "explorer's next requirement text",
+      created_at: "2026-05-14T00:00:00Z",
+      spawned_from: "chain-parent-123",
+      next_requirement: "explorer's next requirement text",
+    });
+    expect(parsed.spawned_from).toBe("chain-parent-123");
+    expect(parsed.next_requirement).toBe("explorer's next requirement text");
+  });
 });
 
 describe("ChainDefSchema", () => {
@@ -111,10 +128,26 @@ describe("ChainDefSchema", () => {
       chain_title: "demo",
       tasks: {
         plan: null,
-        build: { title: "b", description: "", criteria: "", priority: 1 },
+        execute: { title: "e", description: "", criteria: "", priority: 1 },
         verify: { title: "v", description: "", criteria: "", priority: 1 },
         review: { title: "r", description: "", criteria: "", priority: 1 },
         accept: { title: "a", description: "", criteria: "", priority: 1 },
+      },
+    };
+    expect(ChainDefSchema.safeParse(def).success).toBe(true);
+  });
+
+  it("accepts optional explore task (v0.7 magic mode)", () => {
+    const def = {
+      chain_id: "c-2",
+      chain_title: "magic",
+      tasks: {
+        plan: { title: "p", description: "", criteria: "", priority: 1 },
+        execute: { title: "e", description: "", criteria: "", priority: 1 },
+        verify: { title: "v", description: "", criteria: "", priority: 1 },
+        review: { title: "r", description: "", criteria: "", priority: 1 },
+        accept: { title: "a", description: "", criteria: "", priority: 1 },
+        explore: { title: "x", description: "", criteria: "", priority: 1 },
       },
     };
     expect(ChainDefSchema.safeParse(def).success).toBe(true);
@@ -126,10 +159,10 @@ describe("EvalDecisionSchema", () => {
     const d = EvalDecisionSchema.parse({
       decision: "activate_next",
       reason: "ok",
-      next_link: "build",
+      next_link: "execute",
     });
     if (d.decision !== "activate_next") throw new Error("wrong variant");
-    expect(d.next_link).toBe("build");
+    expect(d.next_link).toBe("execute");
   });
 
   it("parses feedback with feedback_to_worker", () => {
@@ -153,6 +186,34 @@ describe("EvalDecisionSchema", () => {
       reason: "done",
     });
     expect(d.decision).toBe("close_chain");
+  });
+
+  // v0.7 NEW — FR-33 schema lock for spawn_chain.
+  it("parses spawn_chain with next_requirement", () => {
+    const d = EvalDecisionSchema.parse({
+      decision: "spawn_chain",
+      reason: "ready for a follow-up iteration",
+      next_requirement: "Add caching to the export endpoint",
+    });
+    if (d.decision !== "spawn_chain") throw new Error("wrong variant");
+    expect(d.next_requirement).toBe("Add caching to the export endpoint");
+  });
+
+  it("rejects spawn_chain without next_requirement", () => {
+    const r = EvalDecisionSchema.safeParse({
+      decision: "spawn_chain",
+      reason: "ready",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects spawn_chain with empty next_requirement", () => {
+    const r = EvalDecisionSchema.safeParse({
+      decision: "spawn_chain",
+      reason: "ready",
+      next_requirement: "",
+    });
+    expect(r.success).toBe(false);
   });
 
   it("rejects unknown decision values", () => {

@@ -52,7 +52,7 @@ export class InstanceRegistry implements IInstanceRegistry {
     const instance: Instance = parseInstance({
       id,
       name: input.name,
-      role: input.role ?? "builder",
+      role: input.role ?? "executor",
       status: "idle",
       current_task_id: input.current_task_id ?? null,
       connected_since: utcNow(),

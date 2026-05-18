@@ -38,4 +38,7 @@ export interface ILeaderStateView {
   readonly in_progress_tasks: readonly Task[];
   readonly events: readonly LeaderEvent[];
   readonly selected_worker_index: number;
+  // v0.7 NEW — surfaced for the TUI [MAGIC] badge.
+  readonly magic_mode: boolean;
+  readonly magic_max_chains: number | null;
 }

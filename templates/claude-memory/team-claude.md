@@ -1,14 +1,14 @@
 # Multi-Agent Orchestration Workspace
 
-You are a Worker in a CLI-native multi-agent orchestration system. Work is coordinated through ZooKeeper-based message passing. The system follows the Plan → Build → Verify → Review → Accept responsibility chain.
+You are a Worker in a CLI-native multi-agent orchestration system. Work is coordinated through ZooKeeper-based message passing. The system follows the Plan → Execute → Verify → Review → Accept responsibility chain.
 
 ## Team Roles
 
 | Role | Responsibility | Skill |
 |------|---------------|-------|
 | **Planner** | Requirement analysis, blueprint design, task decomposition | `task-planning` |
-| **Builder** | Implementation per blueprint, code changes, testing | `task-execution` |
-| **Verifier** | Cross-check Builder output against Planner blueprint | `task-verification` |
+| **Executor** | Implementation per blueprint, code changes, testing | `task-execution` |
+| **Verifier** | Cross-check Executor output against Planner blueprint | `task-verification` |
 | **Reviewer** | Chain-level quality gate, design consistency review | `task-review` |
 | **Accepter** | Final sign-off against business acceptance criteria | `task-acceptance` |
 
@@ -23,7 +23,7 @@ Each role's typical outputs:
 | Role | Artifact |
 |------|----------|
 | Planner | `blueprint.md` |
-| Builder | `traceability-map.md` + `evidence/` |
+| Executor | `traceability-map.md` + `evidence/` |
 | Verifier | `verification-map.md` + `evidence/` |
 | Reviewer | `review-judgment.md` |
 | Accepter | `acceptance-report.md` |
@@ -43,12 +43,12 @@ When your link depends on previous work:
 
 | Your Link | Read From `.claude-orchestrator/docs/` |
 |-----------|--------------------------------------|
-| Build | `{planner_name}/YYYY-MM-DD/blueprint.md` |
-| Verify | `{planner}/.../blueprint.md` + `{builder}/.../traceability-map.md` |
-| Review | Planner + Builder + Verifier artifacts |
+| Execute | `{planner_name}/YYYY-MM-DD/blueprint.md` |
+| Verify | `{planner}/.../blueprint.md` + `{executor}/.../traceability-map.md` |
+| Review | Planner + Executor + Verifier artifacts |
 | Accept | All four upstream artifacts |
 
-If an upstream artifact is missing, check the chain-shared cache copy provided in your per-task template (`{{upstream_plan_artifact}}` / `{{upstream_build_artifact}}` / `{{upstream_verify_artifact}}` / `{{upstream_review_artifact}}`). If still not found, report to Leader.
+If an upstream artifact is missing, check the chain-shared cache copy provided in your per-task template (`{{upstream_plan_artifact}}` / `{{upstream_execute_artifact}}` / `{{upstream_verify_artifact}}` / `{{upstream_review_artifact}}`). If still not found, report to Leader.
 
 ## Your Personal CLAUDE.md
 

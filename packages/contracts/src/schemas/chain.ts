@@ -15,10 +15,12 @@ export const ChainDefSchema = z.object({
   chain_title: z.string(),
   tasks: z.object({
     plan: ChainTaskDefSchema.nullable(),
-    build: ChainTaskDefSchema,
+    execute: ChainTaskDefSchema,
     verify: ChainTaskDefSchema,
     review: ChainTaskDefSchema,
     accept: ChainTaskDefSchema,
+    // v0.7 NEW — present iff magic_mode=true (validated in ChainRouter).
+    explore: ChainTaskDefSchema.optional(),
   }),
 });
 export type ChainDef = z.infer<typeof ChainDefSchema>;

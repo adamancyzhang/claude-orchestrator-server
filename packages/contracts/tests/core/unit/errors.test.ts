@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   ClaudeRunnerError,
   HookError,
+  MagicDepthExhaustedError,
   MergeConflictError,
   OrphanRetryExhaustedError,
   ProtocolVersionMismatchError,
@@ -36,6 +37,8 @@ const EXPECTED_CODES: ReadonlyArray<[new (...a: never[]) => Error, string]> = [
   [MergeConflictError, "MERGE_CONFLICT"],
   [WorktreeError, "WORKTREE_FAILED"],
   [OrphanRetryExhaustedError, "ORPHAN_RETRY_EXHAUSTED"],
+  // v0.7 NEW — FR-34 lock for --magic-max-chains demotion path.
+  [MagicDepthExhaustedError, "MAGIC_DEPTH_EXHAUSTED"],
 ];
 
 describe("CoError subclasses expose stable codes", () => {
@@ -49,6 +52,8 @@ describe("CoError subclasses expose stable codes", () => {
         ? new MergeConflictError("conflict", [])
         : Ctor === OrphanRetryExhaustedError
         ? new OrphanRetryExhaustedError("task-1", 3)
+        : Ctor === MagicDepthExhaustedError
+        ? new MagicDepthExhaustedError(3, 3)
         : new (Ctor as new (msg?: string) => Error)("test");
     expect((instance as unknown as { code: string }).code).toBe(expected);
   });

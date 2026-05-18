@@ -24,8 +24,8 @@ describe("TemplateEngine", () => {
     const dir = makeTempDir();
     fs.writeFileSync(path.join(dir, "x.md"), "Hello {{name}}, role {{role}}.");
     const tpl = new TemplateEngine({ primary_dir: dir });
-    expect(tpl.render("x.md", { name: "Tom", role: "builder" })).toBe(
-      "Hello Tom, role builder.",
+    expect(tpl.render("x.md", { name: "Tom", role: "executor" })).toBe(
+      "Hello Tom, role executor.",
     );
   });
 

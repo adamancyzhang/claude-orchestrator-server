@@ -34,19 +34,21 @@ import type { WorkerDocsCommitter } from "./docs-committer.js";
  */
 const LINK_TO_TASK_TEMPLATE: Record<TaskLink | "decompose", string> = {
   plan: "worker-planner-task.md",
-  build: "worker-builder-task.md",
+  execute: "worker-executor-task.md",
   verify: "worker-verifier-task.md",
   review: "worker-reviewer-task.md",
   accept: "worker-accepter-task.md",
+  explore: "worker-explorer-task.md",
   decompose: "worker-decompose.md",
 };
 
 const LINK_TO_LOCAL_PREFIX: Record<TaskLink, string> = {
   plan: "plan",
-  build: "build",
+  execute: "execute",
   verify: "verify",
   review: "review",
   accept: "accept",
+  explore: "explore",
 };
 
 /**
@@ -66,13 +68,27 @@ function pickImmediatePredecessor(
   // Predecessor order is fixed by chain definition. Walk back from
   // the current link and return the first non-empty hash. Tolerant
   // to gaps (e.g. accept gets a chain where plan committed but
-  // build/verify/review had no worktree commit — accept still
+  // execute/verify/review had no worktree commit — accept still
   // rebases onto plan).
-  type UpstreamKey = "plan" | "build" | "verify" | "review";
-  const order: UpstreamKey[] = ["plan", "build", "verify", "review"];
+  // v0.7 NEW — `accept` is added to the upstream chain because the
+  // explore link rebases on top of accept's commit. The list omits
+  // explore itself because no link follows it.
+  type UpstreamKey = "plan" | "execute" | "verify" | "review" | "accept";
+  const order: UpstreamKey[] = [
+    "plan",
+    "execute",
+    "verify",
+    "review",
+    "accept",
+  ];
   if (link === "plan") return null;
-  // For "accept": walk the full upstream list back-to-front.
-  const startIdx = link === "accept" ? order.length - 1 : order.indexOf(link as UpstreamKey) - 1;
+  // For "explore": walk the full upstream list back-to-front (accept
+  // → review → verify → execute → plan). Other links read their own
+  // index minus one as the start of the walk.
+  const startIdx =
+    link === "explore"
+      ? order.length - 1
+      : order.indexOf(link as UpstreamKey) - 1;
   for (let i = startIdx; i >= 0; i--) {
     const h = upstream[order[i]];
     if (h) return h;
@@ -339,13 +355,15 @@ export class WorkerWatcher {
         content: msg.content,
         original_requirement_path: msg.original_requirement_path ?? "",
         upstream_plan_artifact: chainArtifacts.plan,
-        upstream_build_artifact: chainArtifacts.build,
+        upstream_execute_artifact: chainArtifacts.execute,
         upstream_verify_artifact: chainArtifacts.verify,
         upstream_review_artifact: chainArtifacts.review,
+        upstream_accept_artifact: chainArtifacts.accept,
         upstream_plan_commit: upstreamCommits.plan ?? "",
-        upstream_build_commit: upstreamCommits.build ?? "",
+        upstream_execute_commit: upstreamCommits.execute ?? "",
         upstream_verify_commit: upstreamCommits.verify ?? "",
         upstream_review_commit: upstreamCommits.review ?? "",
+        upstream_accept_commit: upstreamCommits.accept ?? "",
         workspace_memory_path: workspaceMemoryPath,
         retry_hint: retryHint,
       });
@@ -606,11 +624,18 @@ export class WorkerWatcher {
     link: TaskLink | "decompose" | null,
   ): Promise<{
     plan: string;
-    build: string;
+    execute: string;
     verify: string;
     review: string;
+    accept: string;
   }> {
-    const empty = { plan: "", build: "", verify: "", review: "" };
+    const empty = {
+      plan: "",
+      execute: "",
+      verify: "",
+      review: "",
+      accept: "",
+    };
     if (!msg.chain_id || !link || link === "decompose") return empty;
     const chainId = msg.chain_id as ChainId;
     let manifest: { link_tasks?: Record<string, string | null> } | null = null;
@@ -633,20 +658,25 @@ export class WorkerWatcher {
       );
     };
     const plan = lookup("plan");
-    const build = lookup("build");
+    const execute = lookup("execute");
     const verify = lookup("verify");
     const review = lookup("review");
+    const accept = lookup("accept");
     switch (link as TaskLink) {
       case "plan":
         return empty;
-      case "build":
-        return { plan, build: "", verify: "", review: "" };
+      case "execute":
+        return { plan, execute: "", verify: "", review: "", accept: "" };
       case "verify":
-        return { plan, build, verify: "", review: "" };
+        return { plan, execute, verify: "", review: "", accept: "" };
       case "review":
-        return { plan, build, verify, review: "" };
+        return { plan, execute, verify, review: "", accept: "" };
       case "accept":
-        return { plan, build, verify, review };
+        return { plan, execute, verify, review, accept: "" };
+      // v0.7 NEW — explore reads every upstream link's result.md so
+      // the Explorer can decide spawn vs close with full context.
+      case "explore":
+        return { plan, execute, verify, review, accept };
     }
   }
 

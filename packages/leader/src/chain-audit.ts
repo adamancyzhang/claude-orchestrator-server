@@ -45,6 +45,15 @@ export interface ChainManifest {
   link_commits?: Partial<Record<TaskLink, LinkCommitRecord>>;
   total_retry_count: number;
   max_total_retries: number;
+  // v0.7 NEW — Chain Forest fields. parent_chain_id is null for root
+  // chains. child_chain_ids is append-only as spawn_chain derives
+  // children. chain_depth is the parent depth + 1. magic_mode pins
+  // whether this chain was opened under `--magic` so the routing
+  // decisions are stable across leader restarts.
+  parent_chain_id: ChainId | null;
+  child_chain_ids: ChainId[];
+  chain_depth: number;
+  magic_mode: boolean;
 }
 
 export interface ChainOpenMeta {
@@ -53,6 +62,12 @@ export interface ChainOpenMeta {
   leader_name: string;
   requirement_path: string;
   max_total_retries?: number;
+  // v0.7 NEW — required at openChain time so the manifest pins the
+  // chain's place in the forest. Root chains pass parent_chain_id=null
+  // and chain_depth=0.
+  parent_chain_id?: ChainId | null;
+  chain_depth?: number;
+  magic_mode?: boolean;
 }
 
 export const DEFAULT_MAX_TOTAL_RETRIES = 9;
@@ -68,7 +83,12 @@ export type ChainAuditEventType =
   | "merge_failure"
   | "retry_ceiling_exceeded"
   | "chain_closed"
-  | "validation_failure";
+  | "validation_failure"
+  // v0.7 NEW
+  | "invalid_decision"
+  | "chain_spawned"
+  | "chain_spawned_from"
+  | "magic_depth_exhausted";
 
 export interface ChainAuditEventInput {
   event: ChainAuditEventType;
@@ -124,20 +144,26 @@ export class ChainAudit {
       requirement_path: meta.requirement_path,
       link_tasks: {
         plan: null,
-        build: null,
+        execute: null,
         verify: null,
         review: null,
         accept: null,
+        explore: null,
       },
       link_workers: {
         plan: null,
-        build: null,
+        execute: null,
         verify: null,
         review: null,
         accept: null,
+        explore: null,
       },
       total_retry_count: 0,
       max_total_retries: meta.max_total_retries ?? DEFAULT_MAX_TOTAL_RETRIES,
+      parent_chain_id: meta.parent_chain_id ?? null,
+      child_chain_ids: [],
+      chain_depth: meta.chain_depth ?? 0,
+      magic_mode: meta.magic_mode ?? false,
     };
     await fs.promises.writeFile(
       manifestPath,
@@ -252,7 +278,7 @@ export class ChainAudit {
     const manifest = await this.readManifest(chainId);
     const out: UpstreamCommits = {};
     if (!manifest?.link_commits) return out;
-    for (const link of ["plan", "build", "verify", "review"] as const) {
+    for (const link of ["plan", "execute", "verify", "review", "accept"] as const) {
       const rec = manifest.link_commits[link];
       if (rec?.worktree) out[link] = rec.worktree;
     }
@@ -275,7 +301,7 @@ export class ChainAudit {
     );
     const manifest = await this.readManifest(chainId);
     if (!manifest?.link_commits) return;
-    const order: TaskLink[] = ["plan", "build", "verify", "review", "accept"];
+    const order: TaskLink[] = ["plan", "execute", "verify", "review", "accept", "explore"];
     const idx = order.indexOf(fromLink);
     if (idx < 0) return;
     let mutated = false;
@@ -313,10 +339,11 @@ export class ChainAudit {
     }
     manifest.link_workers ??= {
       plan: null,
-      build: null,
+      execute: null,
       verify: null,
       review: null,
       accept: null,
+      explore: null,
     };
     manifest.link_workers[link] = workerId;
     await fs.promises.writeFile(
@@ -381,9 +408,52 @@ export class ChainAudit {
     );
     try {
       const raw = await fs.promises.readFile(manifestPath, "utf-8");
-      return JSON.parse(raw) as ChainManifest;
+      const parsed = JSON.parse(raw) as Partial<ChainManifest>;
+      // v0.7 NEW — v0.6 manifests lack the four forest fields. Coerce
+      // them to defaults so the rest of the leader treats legacy chains
+      // as root chains in non-magic mode.
+      const manifest: ChainManifest = {
+        ...(parsed as ChainManifest),
+        parent_chain_id: parsed.parent_chain_id ?? null,
+        child_chain_ids: parsed.child_chain_ids ?? [],
+        chain_depth: parsed.chain_depth ?? 0,
+        magic_mode: parsed.magic_mode ?? false,
+      };
+      return manifest;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * v0.7 NEW — append a child chain id to a parent chain's manifest.
+   * Called by ChainRouter immediately after openChain'ing the child
+   * chain so the parent's manifest.child_chain_ids reflects the
+   * forest topology. Idempotent: skips if child already present.
+   */
+  async appendChildChain(
+    parentChainId: ChainId,
+    childChainId: ChainId,
+  ): Promise<void> {
+    const manifestPath = cachePaths.chainManifestPath(
+      this.opts.cache_paths,
+      parentChainId,
+    );
+    const manifest = await this.readManifest(parentChainId);
+    if (!manifest) {
+      this.opts.logger.warn("appendChildChain: parent manifest missing", {
+        parent_chain_id: parentChainId,
+        child_chain_id: childChainId,
+      });
+      return;
+    }
+    if (!manifest.child_chain_ids.includes(childChainId)) {
+      manifest.child_chain_ids.push(childChainId);
+      await fs.promises.writeFile(
+        manifestPath,
+        JSON.stringify(manifest, null, 2),
+        "utf-8",
+      );
     }
   }
 }

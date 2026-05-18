@@ -32,16 +32,32 @@ export const BUILTIN_NAMES = [
 
 export const ROLE_PRIORITY: InstanceRole[] = [
   "planner",
-  "builder",
+  "executor",
   "verifier",
   "reviewer",
   "accepter",
 ];
 
-export function assignRoles(count: number): InstanceRole[] {
-  if (count <= ROLE_PRIORITY.length) return ROLE_PRIORITY.slice(0, count);
-  const roles: InstanceRole[] = [...ROLE_PRIORITY];
-  for (let i = ROLE_PRIORITY.length; i < count; i++) roles.push("builder");
+// v0.7 NEW — magic-mode role fill order. The 6th worker is the
+// explorer (run.ts enforces N >= 6); 7+ workers default to executor
+// (FR-32: only one explorer per cluster).
+export const MAGIC_ROLE_PRIORITY: InstanceRole[] = [
+  "planner",
+  "executor",
+  "verifier",
+  "reviewer",
+  "accepter",
+  "explorer",
+];
+
+export function assignRoles(
+  count: number,
+  magicMode = false,
+): InstanceRole[] {
+  const priority = magicMode ? MAGIC_ROLE_PRIORITY : ROLE_PRIORITY;
+  if (count <= priority.length) return priority.slice(0, count);
+  const roles: InstanceRole[] = [...priority];
+  for (let i = priority.length; i < count; i++) roles.push("executor");
   return roles;
 }
 
@@ -112,8 +128,9 @@ export function generateFallbackNames(
 export function generateWorkerNames(
   count: number,
   usedNames: Set<string>,
+  magicMode = false,
 ): Array<{ name: string; role: InstanceRole }> {
-  const roles = assignRoles(count);
+  const roles = assignRoles(count, magicMode);
   const available = BUILTIN_NAMES.filter((n) => !usedNames.has(n));
 
   if (available.length >= count) {
@@ -148,13 +165,20 @@ export interface InitializeWorktreesOptions {
    * tests that purposefully inspect post-shutdown worktree state.
    */
   reset_on_reuse?: boolean;
+  // v0.7 NEW — when true the 6th worker is assigned role=explorer
+  // instead of the default executor.
+  magic_mode?: boolean;
 }
 
 export async function initializeWorktrees(
   opts: InitializeWorktreesOptions,
 ): Promise<WorktreeConfig[]> {
   const usedNames = await scanExistingNames(opts.project_root);
-  const assignments = generateWorkerNames(opts.worker_count, usedNames);
+  const assignments = generateWorkerNames(
+    opts.worker_count,
+    usedNames,
+    opts.magic_mode === true,
+  );
   const existingConfig = loadProjectWorktreeConfig();
   const worktreeRoot = path.join(
     opts.project_root,

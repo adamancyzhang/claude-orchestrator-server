@@ -1,19 +1,21 @@
 // CORE-RETENTION
 // Locks in TWO things:
 //   (1) pure name + role assignment helpers — assignRoles fills 5
-//       roles before defaulting to extra builders; generateWorkerNames
+//       roles before defaulting to extra executors; generateWorkerNames
 //       consumes the builtin 20-name pool first then falls back to
 //       alphabet-suffix placeholders; both skip names already in use.
-//   (2) Issue-6 fix: when a worktree is reused across orchestrator
+//   (2) v0.7 NEW: when magicMode=true, assignRoles slots the 6th worker
+//       as explorer (FR-32 lock); without --magic the 6th worker is an
+//       executor.
+//   (3) Issue-6 fix: when a worktree is reused across orchestrator
 //       restarts, initializeWorktrees resets it hard to the project
 //       HEAD and cleans untracked files so the next task starts from
 //       a known-good state. Without this, stale mid-task files leak
 //       across runs and the new task runs on garbage.
 // Core path because: name+role assignment is durable across restarts;
 //   regressions silently re-issue names that collide with existing
-//   worktrees. Worktree reuse without reset was the silent failure
-//   mode that let an orphaned task's working tree fool a fresh task
-//   into committing the wrong content.
+//   worktrees. The magic-mode 6th-slot rule is the only differentiation
+//   between default and --magic startup beyond CLI flags.
 // Owner subsystem: orchestrator.
 // Primary source files exercised:
 //   - packages/orchestrator/src/worktree-initializer.ts
@@ -65,15 +67,48 @@ class CapturingLogger implements ILogger {
 describe("assignRoles", () => {
   it("returns ROLE_PRIORITY[:count] for small counts", () => {
     expect(assignRoles(1)).toEqual(["planner"]);
-    expect(assignRoles(3)).toEqual(["planner", "builder", "verifier"]);
+    expect(assignRoles(3)).toEqual(["planner", "executor", "verifier"]);
     expect(assignRoles(5)).toEqual(ROLE_PRIORITY);
   });
 
-  it("fills overflow with additional builders", () => {
+  it("fills overflow with additional executors (default mode)", () => {
     expect(assignRoles(7)).toEqual([
       ...ROLE_PRIORITY,
-      "builder",
-      "builder",
+      "executor",
+      "executor",
+    ]);
+  });
+
+  // v0.7 NEW — FR-32 lock on the 6th-slot role under --magic.
+  it("magic mode: 6th worker is the explorer, 7+ are executors", () => {
+    expect(assignRoles(6, true)).toEqual([
+      "planner",
+      "executor",
+      "verifier",
+      "reviewer",
+      "accepter",
+      "explorer",
+    ]);
+    expect(assignRoles(8, true)).toEqual([
+      "planner",
+      "executor",
+      "verifier",
+      "reviewer",
+      "accepter",
+      "explorer",
+      "executor",
+      "executor",
+    ]);
+  });
+
+  it("default mode (magic=false) keeps the 6th worker as executor", () => {
+    expect(assignRoles(6, false)).toEqual([
+      "planner",
+      "executor",
+      "verifier",
+      "reviewer",
+      "accepter",
+      "executor",
     ]);
   });
 });

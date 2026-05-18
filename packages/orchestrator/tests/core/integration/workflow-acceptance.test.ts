@@ -182,7 +182,7 @@ class MockClaudeRunner implements IClaudeRunner {
             chain_title: "Test chain — paginate users",
             tasks: {
               plan: makeTaskDef("Plan: paginate /api/users", "Design pagination interface"),
-              build: makeTaskDef("Build: paginate /api/users", "Implement page/page_size"),
+              execute: makeTaskDef("Build: paginate /api/users", "Implement page/page_size"),
               verify: makeTaskDef("Verify: paginate /api/users", "Test pagination correctness"),
               review: makeTaskDef("Review: paginate /api/users", "Quality gate"),
               accept: makeTaskDef("Accept: paginate /api/users", "Final GO/NO-GO"),
@@ -226,7 +226,7 @@ function classifyPrompt(prompt: string): PromptKind {
 }
 
 function detectEvalLink(prompt: string): TaskLink {
-  const m = prompt.match(/Link.*?:\s*(plan|build|verify|review|accept)/);
+  const m = prompt.match(/Link.*?:\s*(plan|execute|verify|review|accept|explore)/);
   if (m) return m[1] as TaskLink;
   return "plan";
 }
@@ -422,9 +422,9 @@ describe("v0.6 RC0 full workflow acceptance (real ZK, mocked claude-cli)", () =>
       plan: JSON.stringify({
         decision: "activate_next",
         reason: "blueprint complete",
-        next_link: "build",
+        next_link: "execute",
       }),
-      build: JSON.stringify({
+      execute: JSON.stringify({
         decision: "activate_next",
         reason: "implementation done",
         next_link: "verify",
@@ -531,7 +531,7 @@ describe("v0.6 RC0 full workflow acceptance (real ZK, mocked claude-cli)", () =>
     // Start 5 workers, one per chain role.
     const roleNames: Array<{ name: string; role: string }> = [
       { name: "Tom", role: "planner" },
-      { name: "Jerry", role: "builder" },
+      { name: "Jerry", role: "executor" },
       { name: "Lucy", role: "verifier" },
       { name: "Mia", role: "reviewer" },
       { name: "Leo", role: "accepter" },
@@ -607,13 +607,13 @@ describe("v0.6 RC0 full workflow acceptance (real ZK, mocked claude-cli)", () =>
     // workers. link_workers tracks who handled what.
     const lws = manifest!.link_workers;
     expect(lws.plan).toBeTruthy();
-    expect(lws.build).toBeTruthy();
+    expect(lws.execute).toBeTruthy();
     expect(lws.verify).toBeTruthy();
     expect(lws.review).toBeTruthy();
     expect(lws.accept).toBeTruthy();
     // Each link should have a task recorded.
     expect(manifest!.link_tasks.plan).toBeTruthy();
-    expect(manifest!.link_tasks.build).toBeTruthy();
+    expect(manifest!.link_tasks.execute).toBeTruthy();
     expect(manifest!.link_tasks.verify).toBeTruthy();
     expect(manifest!.link_tasks.review).toBeTruthy();
     expect(manifest!.link_tasks.accept).toBeTruthy();

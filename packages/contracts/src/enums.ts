@@ -5,15 +5,23 @@ export type InstanceStatus = z.infer<typeof InstanceStatusSchema>;
 
 export const InstanceRoleSchema = z.enum([
   "planner",
-  "builder",
+  "executor",
   "verifier",
   "reviewer",
   "accepter",
+  "explorer",
   "leader",
 ]);
 export type InstanceRole = z.infer<typeof InstanceRoleSchema>;
 
-export const TaskLinkSchema = z.enum(["plan", "build", "verify", "review", "accept"]);
+export const TaskLinkSchema = z.enum([
+  "plan",
+  "execute",
+  "verify",
+  "review",
+  "accept",
+  "explore",
+]);
 export type TaskLink = z.infer<typeof TaskLinkSchema>;
 
 export const TaskStatusSchema = z.enum([
@@ -43,6 +51,7 @@ export const EvalDecisionKindSchema = z.enum([
   "feedback",
   "reject",
   "close_chain",
+  "spawn_chain",
 ]);
 export type EvalDecisionKind = z.infer<typeof EvalDecisionKindSchema>;
 

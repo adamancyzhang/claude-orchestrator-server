@@ -38,6 +38,12 @@ export const MessageSchema = z.object({
   read: z.boolean().default(false),
   created_at: z.string(),
   upstream_commits: UpstreamCommitsSchema.optional(),
+  // v0.7 NEW — populated when this user_input message was injected by
+  // ChainRouter on a `spawn_chain` decision. `spawned_from` points at
+  // the parent chain id; `next_requirement` is the Explorer-authored
+  // requirement that bootstraps the child chain.
+  spawned_from: z.string().transform(asChainId).optional(),
+  next_requirement: z.string().optional(),
 });
 export type Message = z.infer<typeof MessageSchema>;
 
@@ -59,4 +65,6 @@ export interface SendMessageInput {
   original_requirement_path?: string | null;
   reply_to?: MessageId | null;
   upstream_commits?: UpstreamCommits;
+  spawned_from?: ChainId;
+  next_requirement?: string;
 }

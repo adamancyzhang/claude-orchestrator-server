@@ -190,8 +190,8 @@ describe("WorkerDocsCommitter", () => {
     const bobCommitter = makeCommitter(coRoot, "Bob", "docs(Bob): build");
     const bobSha = await bobCommitter.commitIfChanged({
       task_id: asTaskId("task-bob"),
-      link: "build",
-      task_title: "build",
+      link: "execute",
+      task_title: "execute",
     });
     expect(bobSha).toBeTruthy();
     const bobFiles = listCommitFiles(coRoot, bobSha!);

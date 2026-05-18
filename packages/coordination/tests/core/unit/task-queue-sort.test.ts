@@ -114,17 +114,17 @@ describe("TaskQueue.claim sort", () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
     await queue.push({ title: "review", link: "review", priority: 1 });
-    await queue.push({ title: "build", link: "build", priority: 1 });
+    await queue.push({ title: "execute", link: "execute", priority: 1 });
 
-    const claimed = await queue.claim(asInstanceId("worker-1"), "builder");
-    expect(claimed?.title).toBe("build");
+    const claimed = await queue.claim(asInstanceId("worker-1"), "executor");
+    expect(claimed?.title).toBe("execute");
   });
 
   it("prefers explicit assigned_to over weight", async () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
     const me = asInstanceId("worker-X");
-    await queue.push({ title: "no-match", link: "build", priority: 1 });
+    await queue.push({ title: "no-match", link: "execute", priority: 1 });
     await queue.push({
       title: "for-me",
       link: "review",
@@ -132,20 +132,20 @@ describe("TaskQueue.claim sort", () => {
       assigned_to: me,
     });
 
-    const claimed = await queue.claim(me, "builder");
+    const claimed = await queue.claim(me, "executor");
     expect(claimed?.title).toBe("for-me");
   });
 
   it("ties broken by priority then FIFO", async () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
-    await queue.push({ title: "first", link: "build", priority: 1 });
-    await queue.push({ title: "high", link: "build", priority: 0 });
-    await queue.push({ title: "second", link: "build", priority: 1 });
+    await queue.push({ title: "first", link: "execute", priority: 1 });
+    await queue.push({ title: "high", link: "execute", priority: 0 });
+    await queue.push({ title: "second", link: "execute", priority: 1 });
 
-    const c1 = await queue.claim(asInstanceId("a"), "builder");
+    const c1 = await queue.claim(asInstanceId("a"), "executor");
     expect(c1?.title).toBe("high");
-    const c2 = await queue.claim(asInstanceId("b"), "builder");
+    const c2 = await queue.claim(asInstanceId("b"), "executor");
     expect(c2?.title).toBe("first");
   });
 
@@ -158,13 +158,13 @@ describe("TaskQueue.claim sort", () => {
       leader_only: true,
     });
 
-    expect(await queue.claim(asInstanceId("worker"), "builder")).toBeNull();
+    expect(await queue.claim(asInstanceId("worker"), "executor")).toBeNull();
   });
 
   it("returns null when no pending tasks", async () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
-    expect(await queue.claim(asInstanceId("a"), "builder")).toBeNull();
+    expect(await queue.claim(asInstanceId("a"), "executor")).toBeNull();
   });
 });
 
@@ -173,13 +173,13 @@ describe("TaskQueue.claimById", () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
     // Push three tasks; pick the middle one regardless of role weight.
-    await queue.push({ title: "a", link: "build", priority: 1 });
+    await queue.push({ title: "a", link: "execute", priority: 1 });
     const target = await queue.push({
       title: "b",
       link: "review",
       priority: 1,
     });
-    await queue.push({ title: "c", link: "build", priority: 1 });
+    await queue.push({ title: "c", link: "execute", priority: 1 });
 
     const claimer = asInstanceId("worker-x");
     const claimed = await queue.claimById(target.id, claimer);
@@ -198,7 +198,7 @@ describe("TaskQueue.claimById", () => {
   it("returns null when the task is no longer pending (already claimed / completed)", async () => {
     const zk = new FakeZkClient();
     const queue = new TaskQueue({ zk });
-    const t = await queue.push({ title: "a", link: "build", priority: 1 });
+    const t = await queue.push({ title: "a", link: "execute", priority: 1 });
     const me = asInstanceId("worker-x");
     expect(await queue.claimById(t.id, me)).not.toBeNull();
     // Second attempt — pending node no longer exists.
