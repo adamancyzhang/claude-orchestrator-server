@@ -12,18 +12,32 @@
 
 PRD 只描述上述 3 类用户在产品形态下的预期体验；系统内 6 个 role 是系统本身的工作者，不是用户。
 
-## 2. 系统内 6 个 role 全景
+## 2. 系统内 role 全景
+
+默认模式 6 个 role（Leader + 5 Worker role）；`--magic` 模式追加 Explorer，共 7 个 role。
 
 | role | 责任链位置 | 核心职责 | 默认 system prompt |
 |------|-----------|---------|-------------------|
 | `leader` | 协调者（不在链中） | 接收需求 → 拆解任务链 → 调度 Worker → 跟踪闭环 → 合并到 main | 由 `worker-decompose.md` / `worker-merge-decision.md` 临时承载 |
 | `planner` | 链首：定义 | 把握整体方向、定义任务蓝图、拆解执行路径 | `templates/agents/worker-planner.md` |
-| `builder` | 链中：执行 | 按蓝图实现代码，产出可验证的 commit | `templates/agents/worker-builder.md` |
-| `verifier` | 链中：验证 | 验证 Builder 产出与蓝图的一致性，发现偏离 | `templates/agents/worker-verifier.md` |
+| **[v0.7 rename]** `executor`（旧名 `builder`） | 链中：执行 | 按蓝图实现代码，产出可验证的 commit | `templates/agents/worker-executor.md` |
+| `verifier` | 链中：验证 | 验证 Executor 产出与蓝图的一致性，发现偏离 | `templates/agents/worker-verifier.md` |
 | `reviewer` | 链中：审查 | 审查产出是否符合设计意图，签发 Pass/Revise | `templates/agents/worker-reviewer.md` |
-| `accepter` | 链尾：验收 | 从业务需求角度签 Go/No-Go | `templates/agents/worker-accepter.md` |
+| `accepter` | 链尾：验收（默认模式终态） | 从业务需求角度签 Go/No-Go | `templates/agents/worker-accepter.md` |
+| **[v0.7 NEW]** `explorer` | 链尾：探索（`--magic` 终态） | 在签收后审视当前 chain 的产出与遗留，提出下一轮需求草案；自评估输出 `spawn_chain`（起新链）或 `close_chain`（停止循环） | `templates/agents/worker-explorer.md` |
 
-每个 role 同时拥有一份责任链 skill（`.claude/skills/task-{planning|execution|verification|review|acceptance}`）与一份 per-task wrapper 模板（`worker-{role}-task.md`），所有 role 共享底层 `task-traceability` 流程（Trace → Execute → Map → Evidence → Record）。
+每个 role 同时拥有一份责任链 skill（`.claude/skills/task-{planning|execution|verification|review|acceptance|exploration}`）与一份 per-task wrapper 模板（`worker-{role}-task.md`），所有 role 共享底层 `task-traceability` 流程（Trace → Execute → Map → Evidence → Record）。
+
+链节 ↔ role 对应关系（`--magic` 启用后追加 `explore`）：
+
+| link | 偏好 role | 是否默认存在 |
+|------|----------|------------|
+| `plan` | `planner` | 是 |
+| **[v0.7 rename]** `execute`（旧 `build`） | `executor` | 是 |
+| `verify` | `verifier` | 是 |
+| `review` | `reviewer` | 是 |
+| `accept` | `accepter` | 是 |
+| **[v0.7 NEW]** `explore` | `explorer` | 仅 `--magic` 模式 |
 
 ## 3. 名称 - 角色解耦
 
@@ -35,11 +49,17 @@ PRD 只描述上述 3 类用户在产品形态下的预期体验；系统内 6 �
 
 ### 3.2 角色按优先级填充
 
-启动时按 `planner > builder > verifier > reviewer > accepter` 顺序填充：
+默认模式（无 `--magic`），启动时按 `planner > executor > verifier > reviewer > accepter` 顺序填充：
 
 - 5 Worker：每个 role 各 1 个
-- 6 Worker（默认）：填到 accepter 后，第 6 个再补一个 builder（覆盖"build 是瓶颈"的典型负载）
-- N > 6：第 7 个以后均为 builder
+- 6 Worker（默认）：填到 accepter 后，第 6 个再补一个 executor（覆盖"execute 是瓶颈"的典型负载）
+- N > 6：第 7 个以后均为 executor
+
+**[v0.7 NEW]** `--magic` 模式启动时按 `planner > executor > verifier > reviewer > accepter > explorer` 顺序填充：
+
+- 6 Worker（默认，最小）：每个 role 各 1 个（6 角色精确匹配）
+- 7 Worker：填到 explorer 后第 7 个补 executor
+- N > 7：第 8 个以后均为 executor
 
 ### 3.3 名称-角色绑定持久化
 
@@ -49,13 +69,16 @@ PRD 只描述上述 3 类用户在产品形态下的预期体验；系统内 6 �
 {
   "worktree": {
     "Tom":    { "name": "Tom",    "role": "planner",  "path": "...", "branch": "claude-orchestrator/Tom-workspace",    "instance_id": "..." },
-    "Jerry":  { "name": "Jerry",  "role": "builder",  "path": "...", "branch": "claude-orchestrator/Jerry-workspace",  "instance_id": "..." },
+    "Jerry":  { "name": "Jerry",  "role": "executor", "path": "...", "branch": "claude-orchestrator/Jerry-workspace",  "instance_id": "..." },
     "Lucy":   { "name": "Lucy",   "role": "verifier", "path": "...", "branch": "claude-orchestrator/Lucy-workspace",   "instance_id": "..." },
     "Thomas": { "name": "Thomas", "role": "reviewer", "path": "...", "branch": "claude-orchestrator/Thomas-workspace", "instance_id": "..." },
-    "Jack":   { "name": "Jack",   "role": "accepter", "path": "...", "branch": "claude-orchestrator/Jack-workspace",   "instance_id": "..." }
+    "Jack":   { "name": "Jack",   "role": "accepter", "path": "...", "branch": "claude-orchestrator/Jack-workspace",   "instance_id": "..." },
+    "Lisa":   { "name": "Lisa",   "role": "explorer", "path": "...", "branch": "claude-orchestrator/Lisa-workspace",   "instance_id": "..." }
   }
 }
 ```
+
+`--magic` 模式下的 6 Worker 示例（每个 role 各 1 个，无 executor 冗余）。无 `--magic` 时 Lisa 默认为第 2 个 `executor`。
 
 第二次启动若同名 worktree 已存在则跳过创建（InitChecker 幂等）。
 
@@ -63,16 +86,17 @@ PRD 只描述上述 3 类用户在产品形态下的预期体验；系统内 6 �
 
 Worker 启动时的 `role` 字段是任务认领排序时的偏好分。`@co/contracts/roleWeights.ts` 中的 role × link 权重表：
 
-| role | plan | build | verify | review | accept |
-|------|------|-------|--------|--------|--------|
-| planner  | **100** | 10  | 10  | 20  | 10  |
-| builder  | 10  | **100** | 20  | 10  | 10  |
-| verifier | 10  | 20  | **100** | 20  | 10  |
-| reviewer | 20  | 10  | 20  | **100** | 20  |
-| accepter | 10  | 10  | 10  | 20  | **100** |
-| leader   | 0   | 0   | 0   | 0   | 0   |
+| role | plan | execute | verify | review | accept | **[v0.7 NEW]** explore |
+|------|------|---------|--------|--------|--------|------------------------|
+| planner  | **100** | 10  | 10  | 20  | 10  | 20 |
+| executor | 10  | **100** | 20  | 10  | 10  | 10 |
+| verifier | 10  | 20  | **100** | 20  | 10  | 10 |
+| reviewer | 20  | 10  | 20  | **100** | 20  | 10 |
+| accepter | 10  | 10  | 10  | 20  | **100** | 20 |
+| **[v0.7 NEW]** explorer | 20  | 10  | 10  | 20  | 10  | **100** |
+| leader   | 0   | 0   | 0   | 0   | 0   | 0  |
 
-权重 100 表示首选；非 0 表示可兜底（任意 Worker 在 idle 时都能被派发任意 link 的任务）。
+权重 100 表示首选；非 0 表示可兜底（任意 Worker 在 idle 时都能被派发任意 link 的任务）。`explore` 列仅在 `--magic` 模式下出现 explore 任务时生效。
 
 ### 4.1 认领优先级
 
@@ -87,11 +111,11 @@ Worker 启动时的 `role` 字段是任务认领排序时的偏好分。`@co/con
 
 - planner 优先认领 plan 任务
 - 无 plan 任务时按权重转向其它 link
-- 显式 `assigned_to` 始终优先（用于 merge_failed 派回原 Builder、commit failure 派回同 Worker）
+- 显式 `assigned_to` 始终优先（用于 merge_failed 派回原 Executor、commit failure 派回同 Worker）
 
 ### 4.2 跨角色协助
 
-当 build link 任务积压且所有 builder 都忙时，空闲的 verifier / reviewer 会按权重表（verifier→build=20，reviewer→build=10）兜底认领；TUI TEAM 面板对应 Worker 行的 Current Role 显示 `Builder ◀←`（箭头标记本次为跨角色）。
+当 execute link 任务积压且所有 executor 都忙时，空闲的 verifier / reviewer 会按权重表（verifier→execute=20，reviewer→execute=10）兜底认领；TUI TEAM 面板对应 Worker 行的 Current Role 显示 `Executor ◀←`（箭头标记本次为跨角色）。
 
 ## 5. Worker 物理隔离
 
@@ -167,6 +191,6 @@ claude --append-system-prompt '<3 段身份卡>' \
 
 ## 7. 引用
 
-- 完整 5 个 Worker 身份卡实例：`../../rc0-v0.6/workflow/00-identity-cards.md` §5
+- 完整 5 个 Worker 身份卡实例：`../../rc0-v0.6/workflow/00-identity-cards.md` §5（注：示例中 `builder` 需读作 v0.7 的 `executor`；尚未出现 `explorer` 身份卡，详见 v0.7 DD 后续补全）
 - role × link 权重表的代码定义：`packages/contracts/src/roleWeights.ts`
 - 名称池：`packages/orchestrator/src/worktree-initializer.ts`

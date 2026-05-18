@@ -2,9 +2,22 @@
 
 ## 1. 文档定位
 
-本目录是 Claude Orchestrator **v0.7 的产品需求基线**。内容是 v0.6 RC0 全部 24 项已实现功能（A-01 ~ A-24）+ 7 项 RC0 修复（R-01 ~ R-07）+ 14 项已知边界的体系化重写，让 PM、新成员、架构师、验收人能在一组文档内掌握完整产品形态。
+本目录是 Claude Orchestrator **v0.7 的产品需求基线**。内容由两部分构成：
 
-本目录**只包含 PRD**。详细设计（DD）、核心链路、贯穿样例、测试用例、验收清单沿用 `../../rc0-v0.6/` 不动；新需求（v0.7 候选）单独 roadmap，本 PRD 不写。
+1. **v0.6 RC0 继承基线**：全部 24 项已实现功能（A-01 ~ A-24）+ 7 项 RC0 修复（R-01 ~ R-07）+ 14 项已知边界的体系化重写，作为 v0.7 的稳定底盘
+2. **[v0.7 NEW] 自主循环调度增量**：
+   - role 重命名：`builder` → `executor`、link `build` → `execute`
+   - 新增 `explorer` role 与 `explore` 链节（第 6 链节，仅 `--magic` 模式存在）
+   - 新增 `--magic` 启动开关 + `--magic-max-chains M` 上限
+   - EvalDecision 新增 `spawn_chain` 第 5 态（仅 explore link 合法）
+   - ChainManifest 新增 `parent_chain_id` / `child_chain_ids` / `chain_depth` / `magic_mode` 字段
+   - PROTOCOL_VERSION 升至 `"0.7.0"`，与 v0.6 不兼容、不混跑
+
+让 PM、新成员、架构师、验收人能在一组文档内掌握完整产品形态。
+
+**v0.7 NEW** 标签：本目录所有新增内容均以 `**[v0.7 NEW]**` 标记；renamed 内容以 `**[v0.7 rename]**` 标记。`grep -rn "v0.7 NEW\|v0.7 rename" docs/v0.7/prd/` 可一次性列出全部增量。
+
+本目录**只包含 PRD**。详细设计（DD）、核心链路、贯穿样例、测试用例、验收清单沿用 `../../rc0-v0.6/` 不动；v0.7 NEW 的 DD 单独迭代，本 PRD 不写实现细节。
 
 ## 2. 与 docs/rc0-v0.6/prd/ 的关系
 
