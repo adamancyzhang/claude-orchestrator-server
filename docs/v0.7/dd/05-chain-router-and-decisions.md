@@ -276,6 +276,8 @@ handleSpawnChain(chainId, decision, manifest):
     return
 
   // 2. magic_max_chains 上限检查（FR-34）
+  // 注：leaderConfig.magic_max_chains 数据源 = /leader ZK payload.magic_max_chains（详见 02 §11.1）
+  //   该字段由 orchestrator 启动时读 --magic-max-chains CLI flag / env CO_MAGIC_MAX_CHAINS 写入；运行期不可变。
   if leaderConfig.magic_max_chains != null and manifest.chain_depth + 1 >= leaderConfig.magic_max_chains:
     ChainAudit.appendAudit('magic_depth_exhausted', { chain_id, detail: { chain_depth: manifest.chain_depth, max_chains: leaderConfig.magic_max_chains } })
     emit LeaderEventBus 'magic_depth_exhausted' { chain_id, max_chains: leaderConfig.magic_max_chains }

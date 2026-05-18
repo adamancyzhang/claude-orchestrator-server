@@ -51,6 +51,11 @@
 | **`completion_report`** | Worker 完成任务后回报 Leader 的消息类型，内容为 EvalDecision JSON（含 commit 信息） |
 | **`user_input`** | TUI 输入框写入的用户需求消息类型 |
 | **`memory_refresh`** | Worker commit 后通知 Leader 增量刷新 workspace memory 的消息类型 |
+| **[v0.7 NEW] `upstream_commits`** | Task / Message 字段；`Partial<{plan?, build?, verify?, review?: string}>` 形式的上游 link worktree SHA 映射；下游 link dispatch 前由 `ChainAudit.collectUpstreamCommits` 注入；Worker 用它做 pre-task rebase |
+| **[v0.7 NEW] `LinkCommitRecord`** | manifest.link_commits[link] 的记录类型；`{ worktree: string\|null, docs: string\|null, branch: string }`；Worker 完成 link 任务时通过 completion_report 回传，ChainRouter 调 `ChainAudit.recordLinkCommit` 落盘 |
+| **[v0.7 NEW] `link_commits`** | chain manifest 字段；`Partial<Record<TaskLink, LinkCommitRecord>>`；feedback 决策时调 `clearLinkCommitsFrom` 擦除 fromLink 及其下游 |
+| **[v0.7 NEW] Pre-task rebase** | Worker 在收到 task_dispatch 后、调起 claude-cli 前执行 `git rebase <upstream_sha>` 把自己分支线性接到上游 link 上；冲突时抛 `RebaseConflictError` 触发强制 feedback；plan link 或 `upstream_commits={}` 时跳过 |
+| **[v0.7 NEW] Dual-track commit** | 任务完成时的双写：**轨 A**（CommitChecker）项目仓 per-Worker 分支代码 commit；**轨 B**（DocsCommitter）CO root 仓 `docs/<worker_name>/` 文档 commit；轨 B best-effort，失败不阻塞 |
 
 ## 5. 进程与基础设施
 
@@ -69,6 +74,8 @@
 | **HookEngine** | 4 类 lifecycle hook 触发器：`worker_message_start` / `worker_message_end` / `task_claimed` / `task_completed`；hook 接收 `CO_*` 环境变量 |
 | **TemplateEngine** | 加载 `templates/agents/*.md`，渲染时替换 `{{name}}` / `{{role}}` 等占位符 |
 | **ClaudeRunner** | claude-cli 执行包装层；`execWithStreaming`、`execWithTee`、`execAndCapture`；负责拼接 `--append-system-prompt` 与 `-p` |
+| **[v0.7 NEW] DocsCommitter** | Worker 子系统：将 `<co_root>/docs/<worker_name>/` 下产出（result.md 等）commit 到 CO root 仓；使用 `git status --porcelain -- <scope>` + `git commit --only` 保证并发安全；失败 best-effort 返回 `null` |
+| **[v0.7 NEW] CO Root** | claude-orchestrator-server 项目根仓（与 Worker 操作的"项目仓"区分）；所有 Worker 共享，docs commit 在此发生 |
 
 ## 6. 失败与恢复（RC0 新增术语）
 
@@ -84,6 +91,12 @@
 | **`CommitFailedError`** | 错误类，`git commit` 真实失败时抛出（与"无变更短路"区分）；触发强制 feedback 回同 Worker |
 | **`ChainConflictError`** | 错误类，ChainAudit.openChain 检测到 chain_id 终态 manifest 已存在时抛出 |
 | **`OrphanRetryExhaustedError`** | 错误类，孤儿任务 retry_count ≥ 3 时抛出 |
+| **[v0.7 NEW] `MergeConflictError`** | 错误类，MergeValidator `git merge` 失败且 unmerged paths 非空时抛出；触发对 accept-link Worker 派 retry |
+| **[v0.7 NEW] `RebaseConflictError`** | 错误类，Worker pre-task rebase 失败且冲突非空时抛出；触发同 Worker 强制 feedback |
+| **[v0.7 NEW] `WorktreeLockedError`** | 错误类，git 操作命中 `cannot lock ref` / `index.lock` 时抛出；**不**触发 retry，仅 audit |
+| **[v0.7 NEW] `GitPermissionError`** | 错误类，git 操作命中 `permission denied` / `read-only file system` 时抛出；**不**触发 retry |
+| **[v0.7 NEW] `GitNetworkError`** | 错误类，git fetch 命中 `connection refused / timed out` / `network is unreachable` 时抛出；**不**触发 retry |
+| **[v0.7 NEW] git 错误五分类** | 把 git 失败映射到 `MergeConflictError`/`RebaseConflictError`/`WorktreeLockedError`/`GitPermissionError`/`GitNetworkError` + 兜底 `Error`；前两类触发 retry，后三类不触发；详见 FR-36 |
 | **[v0.7 NEW] `--magic`** | CLI 启动 flag；启用自主循环模式：ChainDef 追加 explore 链节、Explorer role 介入、`spawn_chain` 决策可派生新 chain |
 | **[v0.7 NEW] `--magic-max-chains M`** | CLI flag / env `CO_MAGIC_MAX_CHAINS`；`--magic` 模式下 chain 派生层数上限；默认 `unlimited`；达上限时 `spawn_chain` 被降级为 `close_chain` |
 | **[v0.7 NEW] Autonomous Loop / Magic Loop** | `--magic` 启动后形成的"chain N → Explorer 决策 → chain N+1"自动循环；终止条件：Explorer `close_chain` / Ctrl+C / 达 `--magic-max-chains` 上限 / 单链 aborted |

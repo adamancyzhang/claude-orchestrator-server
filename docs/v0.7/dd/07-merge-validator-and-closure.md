@@ -1,19 +1,22 @@
 # 07 — MergeValidator 与链关闭
 
-> **DD 定位**：close_chain / spawn_chain 时把链内所有 Worker 分支合并到 main 的完整流程；MergeDecision 三态；merge_failed 路径与 Executor retry；MergeValidator 调用 claude-cli 失败的保守 fallback。
+> **DD 定位**：close_chain / spawn_chain 时把链的 accept-link 分支合并到 main 的完整流程；MergeDecision 三态；merge_failed 路径与 Executor retry；MergeValidator 调用 claude-cli 失败的保守 fallback；git 错误五分类（**[v0.7 NEW]** rc1 模型）。
 >
-> **PRD 锚**：FR-15 / FR-16 / FR-17 / FR-33（merge 复用部分）。
+> **PRD 锚**：FR-15 / FR-16 / FR-17 / FR-33（merge 复用部分）/ FR-36（git 错误五分类）。
 >
-> **Schema**：`02-contracts-and-protocol.md` §10 (MergeDecision) + §6 (ChainManifest.merge_failures)。
+> **Schema**：`02-contracts-and-protocol.md` §10 (MergeDecision) + §6 (ChainManifest.merge_failures) + §6.0 (LinkCommitRecord)。
 
 ---
 
 ## 1. 设计原则
 
-1. **Leader 不直接执行 git**：所有 merge 决策与执行通过 `worker-merge-decision.md` 模板让 claude-cli 完成 ancestry 检查、决策、合并执行。Leader 只编排（FR-15）。
-2. **保守 fallback**：claude-cli 失败 / 输出无法解析 / 超时 → 视作 `review_first`（不动 main）。
-3. **失败显式化**：任一 link merge 失败 → 链 `merge_failed` 终态 + 对失败 link 派 retry 给原 Executor（FR-17，不再吞噬错误）。
-4. **复用 close 与 spawn**：`close_chain` 与 `spawn_chain` 共用 `runMergeValidation`；后者额外把 child_chain_id 写到父 manifest（详见 `10-magic-loop.md` §4）。
+1. **单次合并 accept-link 分支（**[v0.7 NEW]**，rc1 worktree 工作流）**：close_chain 时 MergeValidator **只**合并 accept-link 的 Worker 分支到 main，而不再"逐 link 遍历"。可行性来自 Worker pre-task rebase（`06-tasks-and-workers.md` §3.5）—— 链的 plan ← build ← verify ← review ← accept 分支被线性串联，accept 分支是整条链的 tip。
+2. **Leader 与代码协同执行 git**：`isCommitMerged` 用 `git merge-base --is-ancestor` 在 Leader 侧直接判断，避免重复合并；真正的 `git merge` 仍委托 MergeValidator 在 main 工作树执行。MergeDecision 由 claude-cli 通过 `worker-merge-decision.md` 给出（决策），但 ancestry 检测不依赖 claude（FR-15）。
+3. **保守 fallback**：claude-cli 失败 / 输出无法解析 / 超时 → `decision='review_first'`（不动 main）。
+4. **git 错误五分类（**[v0.7 NEW]**）**：merge 期 git 失败按错误类分流——**conflict** 与 **other** 触发 retry，**worktree_locked / permission / network** 不重试（详见 §6.6）。
+5. **失败显式化**：merge 失败 → 链 `merge_failed` 终态；conflict 类对 accept-link Worker 派 retry（FR-17）；锁/权限/网络类不派 retry，audit 后等待操作员介入。
+6. **复用 close 与 spawn**：`close_chain` 与 `spawn_chain` 共用 `runCloseChainMerge`；后者额外把 child_chain_id 写到父 manifest（详见 `10-magic-loop.md` §4）。
+7. **git 命令调用纪律（**[v0.7 NEW]**）**：所有 `git` 调用使用 `execFileSync('git', args[])` 数组形式，**严禁** shell 字符串拼接 —— 防止 worktree 路径 / SHA / 分支名中的特殊字符引发命令注入。代码归属：`packages/leader/src/merge-validator.ts:190`（`execGit`）。
 
 ---
 
@@ -38,57 +41,72 @@
 | ChainRouter（close_chain 决策） | accept link 输出 `close_chain` | `runMergeValidation(chainId, mode='close')` |
 | ChainRouter（spawn_chain 决策，v0.7 NEW） | explore link 输出 `spawn_chain` | `runMergeValidation(chainId, mode='spawn')` |
 
-### 3.2 总流程
+### 3.2 总流程（**[v0.7 NEW]** 单次合并 accept-link）
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant CR as ChainRouter
+  participant CA as ChainAudit
   participant MV as MergeValidator
   participant CL as claude-cli (worker-merge-decision.md)
-  participant GIT as git (main worktree)
-  participant CA as ChainAudit
+  participant GIT as git (project root, main worktree)
+  participant BUS as LeaderEventBus
 
-  CR->>MV: runMergeValidation(chainId, mode)
-  MV->>CA: appendAudit('merge_validation_started', { chain_id, link_count })
-  loop for each link in [plan, execute, verify, review, accept] (+ explore if magic_mode)
-    MV->>MV: 跳过 plan link if link_tasks.plan == null（FR-11）
-    MV->>MV: 读 manifest.link_workers[link] → Worker.branch / worktree
-    MV->>CL: renderPrompt(worker-merge-decision.md, {link, branch, main_head, task_result_path})
-    MV->>CL: claude -p prompt (with --append-system-prompt MergeValidator identity)
-    CL-->>MV: stdout（含 MergeDecision JSON 或 自然语言 + JSON code block）
-    MV->>MV: 解析 MergeDecision；失败/超时 → 强制 review_first
-    alt decision == 'merge'
-      MV->>GIT: git -C <main_worktree> checkout main && git merge --no-ff <branch>
-      alt git exit == 0
-        MV->>MV: 记 merged_commit SHA
-      else exit != 0
-        MV->>GIT: git -C <main_worktree> merge --abort && git checkout -
-        MV->>MV: 转 review_first，加入 failures
-      end
-    else decision == 'skip'
-      MV->>MV: 无操作
-    else decision == 'review_first'
-      MV->>MV: 加入 failures
+  CR->>CA: readManifest(chainId)
+  CA-->>CR: { link_commits.accept: { worktree, branch, docs } }
+  alt accept link_commits 缺失（legacy / 旧 Worker）
+    CR->>CR: fallback 走 §6.7 legacy 逐 link 迭代
+  else 正常路径
+    CR->>MV: validate({sha: accept.worktree, branch: accept.branch, link:'accept', ...})
+    MV->>GIT: mainBranch = (opts.merge_target_branch ?? git rev-parse --abbrev-ref HEAD)
+    opt config.git.remote != null
+      MV->>GIT: git fetch <remote> <mainBranch>
+      Note over MV,GIT: 失败 → classifyGitError → 抛 GitNetworkError/Permission/Locked
     end
-    MV->>CA: appendAudit per-link merge log
+    MV->>MV: isCommitMerged(accept.worktree, mainBranch)?
+    alt 已是 main 的 ancestor
+      MV-->>CR: { decision: 'skip', reason: 'Already merged' }
+    else 不是 ancestor
+      MV->>CL: claude -p renderPrompt(worker-merge-decision.md, {branch, sha, main_branch, ...})
+      CL-->>MV: stdout (MergeDecision JSON)
+      MV->>MV: 解析；失败 → throw ValidationError → ChainRouter 视为 review_first
+      alt decision == 'merge'
+        MV->>GIT: git checkout <mainBranch>
+        MV->>GIT: git merge --no-ff <accept.branch> -m "Merge ..."
+        alt git exit == 0
+          MV->>BUS: emit 'debug_info' (merged)
+          MV-->>CR: { decision: 'merge', ... }
+        else exit != 0
+          MV->>GIT: git merge --abort + git checkout <prev_branch>
+          MV->>MV: classifyGitError → MergeConflictError | WorktreeLockedError | GitPermissionError | GitNetworkError | Error
+          MV-->>CR: throw <分类的错误>
+        end
+      else decision in {skip, review_first}
+        MV-->>CR: decision
+      end
+    end
   end
-  MV->>CA: appendAudit('merge_validation_completed', { decision_per_link, failures })
-  MV-->>CR: { successCount, failures[] }
+  CR->>CA: appendAudit('merge_validation_completed', { decision, sha, branch, error_class? })
 ```
 
-### 3.3 调用顺序
+代码归属：`packages/leader/src/merge-validator.ts:52`（`validate`）+ `packages/leader/src/chain-router.ts:825`（`runCloseChainMerge`）。
 
-| link | 顺序 | 说明 |
+### 3.3 为什么只合并 accept-link
+
+| 设计点 | rc0 模型（已废弃） | rc1 模型（**[v0.7 NEW]**） |
 |---|---|---|
-| plan | 1 | 通常无代码，多为 skip；plan=null 时跳过 |
-| execute | 2 | 主要代码 commit 所在；冲突最高发 |
-| verify | 3 | 多为只读，但 verifier 可能改 doc |
-| review | 4 | 同上 |
-| accept | 5 | 通常 skip（仅 doc） |
-| **explore** | 6（仅 magic_mode） | 通常 skip（Explorer 输出 result.md，不动代码） |
+| 合并粒度 | 逐 link 遍历，每 link 一个 merge commit | 单次合并 accept 分支 |
+| 链内 commit 关系 | 各 link 分支独立 fork from main | plan ← build ← verify ← review ← accept 线性串联（pre-task rebase 实现） |
+| main 上的 commit 数 | 1~N 个 `--no-ff` merge | 1 个 `--no-ff` merge（含整条链的代码） |
+| 冲突暴露面 | 每 link 都可能冲突 | 仅 accept 分支与 main 之间一次冲突 |
+| close_chain 复杂度 | O(N) 决策 + O(N) git 操作 | O(1) 决策 + O(1) git 操作 |
+| retry 目标 | 失败 link 的 Worker | accept-link Worker（汇聚所有上游） |
 
-> 不变量：顺序固定且与 NEXT_LINKS 一致。某 link 失败不阻塞后续 link 评估（要把所有 failures 一次收齐，方便操作员一次看清）。
+> 不变量：
+> - accept-link 的 worktree 分支 == 链所有代码产出的线性 tip（因 §3.5 pre-task rebase）。
+> - 若 plan / build / verify / review 任一 link 不动代码（`worktree=null`），其分支仍存在但 commit 与上游同 SHA —— accept 仍能拿到完整链历史。
+> - merge 决策只问 claude-cli **一次**（不是 5 次），明显节约 token / 延迟。
 
 ---
 
@@ -98,12 +116,17 @@ sequenceDiagram
 
 ```text
 if failures.empty():
-  ChainAudit.closeChain(chainId, 'completed', { child_chain_id?: ... })
+  ChainAudit.closeChain(chainId, 'completed', { child_chain_id?: ChainId })
+  // ↑ 注：closeChain extra 参数是 **单数** child_chain_id（本次 spawn 的子链 ID）；
+  //   ChainAudit 内部 push 到 manifest.child_chain_ids[] 数组（02 §6 ChainManifest 字段是 child_chain_ids）。
+  //   关闭一次最多新增一个子链；close（非 spawn）时省略该字段。
   emit LeaderEventBus 'chain_closed' { chain_id, status: 'completed' }
   // mode='spawn' 时由 ChainRouter 继续触发 spawn 后续（详见 10 §4），不在 MergeValidator 内
 ```
 
-> 不变量：main 分支多 1~N 个 `--no-ff` merge commit（每个 `merge` decision 一个，`skip` 不产生 commit）。
+> 不变量：
+> - rc1 模型下 main 分支恰好多 **1 个** `--no-ff` merge commit（accept 单分支合并）；rc0 legacy fallback 路径仍为 1~N。
+> - `skip` decision 不产生 commit（accept 已是 main 的 ancestor）。
 
 ### 4.2 失败路径（FR-17）
 
@@ -112,35 +135,39 @@ if failures.not_empty():
   ChainAudit.closeChain(chainId, 'merge_failed', { failures })
   emit LeaderEventBus 'chain_merge_failed' { chain_id, failures }
 
-  // 派 retry task 给原 Executor
+  // 派 retry task —— 仅 conflict 类（**[v0.7 NEW]** rc1 五分类）
   for failure in failures:
-    workerId = manifest.link_workers[failure.link]
+    if failure.category != 'conflict':
+      // worktree_locked / permission / network / other → 不重试；audit 后等待操作员
+      ChainAudit.appendAudit('merge_failure', { category, error, sha, branch })
+      continue
+
+    workerId = manifest.link_workers['accept']   // **[v0.7 NEW]** 始终是 accept-link Worker
     if workerId == null:
       continue                                  // 不该发生；记 debug_info
     retryTask = {
       task_id:    newTaskId(),
       chain_id:   chainId,
-      link:       failure.link,                 // 仍是失败的 link（execute / verify / ...）
+      link:       'accept',                     // **[v0.7 NEW]** 始终是 accept-link
       title:      `[merge retry] resolve conflict on branch ${failure.branch}`,
       description: renderMergeRetryDescription(failure),
       priority:   'HIGH',
-      assigned_to: workerId,                    // 显式指派回原 Worker
+      assigned_to: workerId,
       status:     'pending',
       retry_count: 0,
     }
     TaskQueue.push(retryTask)
-    ChainAudit.appendAudit('task_dispatch', { task_id, link, assigned_to: workerId, reason: 'merge_retry' })
+    ChainAudit.appendAudit('task_dispatch', { task_id, link:'accept', assigned_to: workerId, reason: 'merge_retry' })
 
   // mode='spawn' 时不派生子 chain（PRD §6.5 spawn_chain 在 merge_failed 时退化）
   // 详见 10 §4.3
 ```
 
 > 关键不变量：
-> - chain 的 `manifest.status = 'merge_failed'`（**不**是 `completed`）
-> - retry task 的 `assigned_to` 强指派回原 Executor（TaskQueue.claim 排序键 1 命中）
-> - retry task 走标准流程：Worker 在 worktree 里 `git pull --rebase origin main` 或 `git merge main` 解冲突 → 重 commit → 自评估 → ChainRouter 重 dispatch 下一 link？
-
-**不**：retry task 只让原 Executor 在自己 worktree 上修通冲突；修通后 Worker 完成自评估输出 `activate_next`（虽 link 已完成，但视作"再确认一次"），ChainRouter 在 link 仍是失败 link 的情形下重新触发对该 chain 的 `runMergeValidation`。这避免链重走一遍 plan→execute→verify→review→accept。
+> - chain 的 `manifest.status = 'merge_failed'`（**不**是 `completed`）。
+> - retry task 的 `assigned_to` 强指派回 **accept-link Worker**（rc1 模型下他汇聚整条链的代码，是合并目标的唯一所有者）。**不**再像 rc0 那样按 failure.link 派给 plan/build/verify/review 的 Worker。
+> - retry task 走标准流程：accept Worker 在自己 worktree 里 fetch + rebase / merge main 解冲突 → 重 commit → 自评估 → ChainRouter 重新触发 `runCloseChainMerge`。
+> - 仅 conflict 类失败触发 retry；锁/权限/网络类**不**派 retry task —— 这些是基础设施问题，反复 retry 无意义，由 audit 提示操作员排查。
 
 ### 4.3 重新 merge 触发条件
 
@@ -217,13 +244,73 @@ After your retry, MergeValidator will re-run automatically.
 
 | 故障 | 行为 |
 |---|---|
-| claude-cli 超时（默认 5 分钟硬上限） | 返回 `review_first` |
-| stdout 无法解析为 MergeDecision | 返回 `review_first` |
-| `decision == merge` 但 git merge 命令失败 | `git merge --abort`，转 `review_first` |
+| claude-cli 超时（默认 5 分钟硬上限） | ValidationError → ChainRouter 视作 `review_first` |
+| stdout 无法解析为 MergeDecision | 同上 |
+| `decision == merge` 但 git merge 命令失败（conflict 类）| `git merge --abort` + `git checkout <prev>`，抛 `MergeConflictError(branch, conflict_files)` → retry |
+| `decision == merge` 但 git merge 命令失败（lock / permission / network）| `git merge --abort` + `git checkout <prev>`，抛对应 Git*Error → 不 retry，audit |
 
-### 6.4 ancestry 检查放在哪
+### 6.4 ancestry 检查放在哪 **[v0.7 NEW 修订]**
 
-PRD FR-15 明示 ancestry 检查交给 claude-cli 通过 `worker-merge-decision.md` 内的提示完成（如让 Claude 执行 `git merge-base --is-ancestor`）。MergeValidator 不在 TS 中重做硬编码的 ancestry 判断 —— 避免与 Claude 上下文感知重复且潜在不一致。这与 v0.6 一致，v0.7 不变。
+rc1 模型下，ancestry 检查由 MergeValidator 在 TS 层直接做：`git merge-base --is-ancestor <sha> <main_branch>`，退出码 0 = 是 ancestor → `decision='skip'`；退出码 1 = 不是 ancestor → 继续问 claude；其它退出码 → `classifyGitError` 抛对应 Git*Error。
+
+**为什么从 claude 改回 TS**：v0.6 让 claude 做 ancestry 是为了利用上下文感知，但在 shared `.git` 多 Worker 的场景下，`git branch --contains <sha>` 永远返回 true（因为 worker-A 的提交在 worker-B 的分支引用里也能"reach"），导致 v0.6 实现**静默跳过所有 merge**。rc1 直接用 `merge-base --is-ancestor` 修正这个 bug。代码归属：`packages/leader/src/merge-validator.ts:164`（`isCommitMerged`）。
+
+### 6.5 isCommitMerged 实现 **[v0.7 NEW]**
+
+```ts
+private isCommitMerged(sha: string, mainBranch: string): boolean {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', sha, mainBranch], {
+      cwd: this.opts.project_root,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return true;                                  // 退出码 0
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 1) return false;               // 明确"不是 ancestor"
+    throw classifyGitError(err, 'merge-base failed');  // sha / branch 缺失 / repo 损坏
+  }
+}
+```
+
+> 关键：退出码 1 与"其它非零"必须分开处理。把"其它非零"当成 `false` 会导致同一类问题（如分支名拼错、SHA 不存在）被误判为"未合并"而触发 merge，进一步污染 main。
+
+### 6.6 git 错误五分类 **[v0.7 NEW]**
+
+`classifyGitError(err, fallback)` 按 stderr 模式匹配映射到 5 个错误类：
+
+| 错误类 | stderr 关键词 | retry？ | 路由 |
+|---|---|---|---|
+| `MergeConflictError` | `<<<<<<< ` 标记 / `CONFLICT (content):` / unmerged paths 非空 | ✅ | 派 retry 给 accept-link Worker（§4.2） |
+| `WorktreeLockedError` | `cannot lock ref` / `index.lock` / `unable to create.*\.lock` | ❌ | audit `merge_failure` { category:'worktree_locked' }；提示操作员 |
+| `GitPermissionError` | `permission denied` / `read-only file system` | ❌ | audit + 操作员排查 |
+| `GitNetworkError` | `could not resolve host` / `connection refused / timed out` / `network is unreachable` / `cannot access` | ❌ | audit；建议设 `git.remote=null` 或排查网络 |
+| 其它 `Error` | 未匹配上面任何模式 | ✅（视作 conflict 类） | 派 retry —— 保守路径，避免把未知失败漏掉 |
+
+代码归属：`packages/leader/src/merge-validator.ts:204`（`classifyGitError`）+ `packages/leader/src/chain-router.ts:884`（`categorizeMergeError`）。
+
+PRD 锚：FR-36（**[v0.7 NEW]** git 错误五分类）。
+
+### 6.7 Legacy fallback（manifest 无 link_commits）
+
+当 `manifest.link_commits.accept` 缺失或 `worktree=null`（旧 Worker / accept 全为 docs-only），ChainRouter 退回 v0.6 的逐 link 迭代（`runMergeValidation`，代码 `chain-router.ts:899`）。该路径**仅作兼容**：
+
+```text
+runMergeValidation(chainId) -> failures[]:
+  failures = []
+  for link in ['plan', 'build', 'verify', 'review', 'accept']:
+    record = manifest.link_commits?[link]
+    if record == null || record.worktree == null:
+      continue                                  // 跳过无 commit 的 link
+    try:
+      MergeValidator.validate({sha: record.worktree, branch: record.branch, ...})
+    catch err:
+      failures.push({link, sha: record.worktree, branch, error, category})
+      continue                                   // 收齐所有 link 的失败再返回
+  return failures
+```
+
+> 不变量：legacy 路径仍走 §6.6 错误五分类，retry 派给"失败 link 的原 Worker"而非 accept Worker（因为各 link 分支独立，未线性串联）。新部署应总走 §3.2 单分支路径。
 
 ---
 

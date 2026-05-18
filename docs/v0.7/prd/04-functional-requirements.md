@@ -1,6 +1,6 @@
 # 04 — 功能需求
 
-> **文档定位**：v0.7 功能需求清单（FR-01 ~ FR-30），按 10 个功能域分组。每条 FR 给出一句话描述、用户价值、完成判定（2-3 条关键勾选项）、追溯到 `feature-matrix.md` 中的 A-/R- 编号。
+> **文档定位**：v0.7 功能需求清单（FR-01 ~ FR-37），按 12 个功能域分组。每条 FR 给出一句话描述、用户价值、完成判定（2-3 条关键勾选项）、追溯到 `feature-matrix.md` 中的 A-/R- 编号。
 >
 > 完成判定只列关键 done 条件；完整逐项勾选步骤见 `../../rc0-v0.6/acceptance-checklist.md`。
 
@@ -19,6 +19,7 @@
 | 9. 审计与缓存 | FR-26 ~ FR-27 |
 | 10. Workspace memory | FR-28 ~ FR-30 |
 | **11. v0.7 NEW：自主循环调度** | **FR-31 ~ FR-35** |
+| **12. v0.7 NEW：rc1 worktree 工作流** | **FR-36 ~ FR-37** |
 
 ---
 
@@ -144,13 +145,13 @@
 | 完成判定 | (a) `evaluator.test.ts` 通过；(b) 模拟 junk JSON 时 cache 下出现 3 个 `eval-N.log` |
 | 追溯 | A-15 |
 
-### FR-13 — 自动 commit + claude 生成 message
+### FR-13 — 自动 commit（双轨）+ pre-task rebase + claude 生成 message **[v0.7 rc1 修订]**
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | chain-link 任务执行完毕后 CommitChecker 自动 `git add -A && git commit`；commit message 由 claude 按 `worker-commit-message.md` 生成（≤72 字符），失败 fallback `chore: auto-commit from {Name}` |
-| 用户价值 | Worker 产出无需操作员手 commit |
-| 完成判定 | (a) Execute 完成后 Worker worktree `git log -1` 有新 commit；(b) commit message 首行 ≤72 字符 |
+| 一句话 | 任务开始：Worker 用 `msg.upstream_commits` 中的上游 SHA 执行 `git rebase` 到上游 link，把链内 plan ← build ← verify ← review ← accept 线性串联；任务结束：**双轨 commit** —— 轨 A `CommitChecker.maybeCommit` 提交代码到项目仓 per-Worker 分支，轨 B `DocsCommitter.commitIfChanged` 提交 `docs/<worker_name>/` 到 CO root 仓（best-effort）；commit message 由 claude 按 `worker-commit-message.md` 生成（≤72 字符），失败 fallback `chore: auto-commit from {Name}` |
+| 用户价值 | Worker 产出无需操作员手 commit；accept-link 分支聚合整条链代码 → close_chain 单次合并即可（FR-15 配套优化） |
+| 完成判定 | (a) Execute 完成后 Worker worktree `git log -1` 有新 commit；(b) commit message 首行 ≤72 字符；(c) accept-link 完成后该 worker 分支 `git log --oneline` 含整条链所有 commits 线性排列；(d) CO root 仓 `docs/<worker_name>/` 出现 `result.md`，对应 commit 存在（best-effort，失败不阻断） |
 | 追溯 | A-16 |
 
 ### FR-14 — Lifecycle hooks
@@ -166,31 +167,31 @@
 
 ## 5. 合并与关闭
 
-### FR-15 — MergeValidator（merge / skip / review_first）
+### FR-15 — MergeValidator（merge / skip / review_first）**[v0.7 rc1 修订]**
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | MergeValidator 通过 `worker-merge-decision.md` 模板让 claude-cli 完成 ancestry 检查、决策、merge 执行；输出 3 态 MergeDecision；Leader 不直接执行 git |
-| 用户价值 | 合并策略可由 LLM 上下文感知（隔离/冲突/已合并），不需要硬编码 |
-| 完成判定 | (a) 链 close 时 cache 下 `merges/merge-*.log` 出现且含 MergeDecision JSON；(b) claude-cli 失败时返回 `review_first`（保守） |
+| 一句话 | MergeValidator 用 `git merge-base --is-ancestor` 在 TS 层做 ancestry 检查（避免 v0.6 shared `.git` 误判），再通过 `worker-merge-decision.md` 模板让 claude-cli 给出 3 态 MergeDecision；真正的 `git checkout / merge / abort` 由 MergeValidator 用 `execFileSync('git', args[])` 数组形式执行；git 失败按错误五分类（FR-36） |
+| 用户价值 | 合并决策由 LLM 上下文感知，ancestry 判断与 git 执行由 TS 精确控制；shell 注入防护到位 |
+| 完成判定 | (a) 链 close 时 cache 下 `merges/merge-*.log` 出现且含 MergeDecision JSON；(b) claude-cli 解析失败 / 超时 → ValidationError 转 `review_first`（保守）；(c) merge 失败 → 按错误类型抛 `MergeConflictError / WorktreeLockedError / GitPermissionError / GitNetworkError`（FR-36） |
 | 追溯 | A-17 |
 
-### FR-16 — close_chain 触发 runMergeValidation + ChainAudit.closeChain
+### FR-16 — close_chain 触发 runCloseChainMerge（单次合并 accept-link）**[v0.7 rc1 修订]**
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | accept link 输出 `close_chain` → ChainRouter.runMergeValidation 遍历链内所有 commit；全部成功则 `closeChain(chainId, "completed")` |
-| 用户价值 | 一次完整链路推进结束时主分支含全部 link 的 merge commit |
-| 完成判定 | (a) 跑通一条链后 main 分支多 5 个 `--no-ff` merge commit（每 link 一个）；(b) `~/.../chains/<chain_id>/manifest.json` `status: "completed"` 且 `completed_at` 已写 |
+| 一句话 | accept link 输出 `close_chain` → ChainRouter `runCloseChainMerge` 读 `manifest.link_commits.accept`，只合并 accept-link 分支到 main（**单次**而非逐 link）；成功 → `closeChain(chainId, "completed")`；缺失 link_commits 时退回 v0.6 逐 link 迭代（legacy fallback） |
+| 用户价值 | close_chain 决策与 git 操作从 O(N) 降到 O(1)；main 上只多一个 `--no-ff` merge commit（含整条链） |
+| 完成判定 | (a) 跑通一条链后 main 分支多 **1 个** `--no-ff` merge commit；(b) `~/.../chains/<chain_id>/manifest.json` `status: "completed"` 且 `completed_at` 已写；(c) `manifest.link_commits.accept.{worktree, branch}` 都非空 |
 | 追溯 | A-18 |
 
-### FR-17 — `merge_failed` 终态 + Executor retry
+### FR-17 — `merge_failed` 终态 + accept-link Worker retry **[v0.7 rc1 修订]**
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | runMergeValidation 遇任一冲突 → 收集失败列表（不再吞噬）→ `closeChain(chainId, "merge_failed", { failures })` → 发射 `chain_merge_failed` 事件 → 对每个失败 link 从 `manifest.link_workers` 查 Worker，push 一条 priority=0、assigned_to=该 Worker、link=失败 link 的 retry task；TUI 红字渲染 `MERGE_FAILED chain <id>: N branch(es) ...` |
-| 用户价值 | 主分支永远只接受成功 merge；冲突显式回到原 Executor 解决，用户实时可见 |
-| 完成判定 | (a) 构造冲突场景后 EVENT LOG 出现红色 `MERGE_FAILED chain <id>`；(b) 对应 Executor 收件箱出现新 task_dispatch，描述含 "Merge conflict on branch ..."；(c) `manifest.json` status = `merge_failed` 而非 `completed`；(d) `ChainStatus` 枚举显式包含 `merge_failed` |
+| 一句话 | 合并失败 → `closeChain(chainId, "merge_failed", { failures })` → 发射 `chain_merge_failed` 事件 → 仅当失败类别是 `conflict` 时派 retry task 给 **accept-link Worker**（rc1：他汇聚整条链代码，是合并目标的唯一所有者）；锁/权限/网络类（FR-36 中 worktree_locked / permission / network）不派 retry、仅 audit；TUI 红字渲染 `MERGE_FAILED chain <id>: <category> ...` |
+| 用户价值 | 主分支永远只接受成功 merge；conflict 显式回到 accept-link Worker 解决；基础设施类失败不浪费 retry，提示操作员介入 |
+| 完成判定 | (a) 构造冲突场景后 EVENT LOG 出现红色 `MERGE_FAILED chain <id>`；(b) accept-link Worker 收件箱出现新 task_dispatch，描述含 "Merge conflict on branch ..."；(c) `manifest.json` status = `merge_failed`；(d) 锁/权限/网络场景下**无** retry task，仅 audit `merge_failure { category }` |
 | 追溯 | R-02（含 R-07） |
 
 ---
@@ -383,6 +384,28 @@
 
 ---
 
+## 12. rc1 worktree 工作流 **[v0.7 NEW]**
+
+### FR-36 — git 错误五分类与差异化重试 **[v0.7 NEW]**
+
+| 字段 | 内容 |
+|------|------|
+| 一句话 | Worker pre-task rebase / commit 与 Leader merge 期 git 失败按 5 类分流：`MergeConflictError` / `RebaseConflictError` / `WorktreeLockedError` / `GitPermissionError` / `GitNetworkError` + 兜底 `Error`；conflict 类与 commit failed 触发 retry（同 Worker / accept-link Worker），lock/permission/network 类**不**触发 retry —— 仅 audit 后等待操作员 |
+| 用户价值 | 基础设施级失败（磁盘锁、目录权限、网络断开）不再无限刷 retry 浪费 token；冲突类失败精确路由到合适的 Worker 一次修通 |
+| 完成判定 | (a) 制造 `cannot lock ref` 场景后 audit.jsonl 出现 `merge_failure { category: 'worktree_locked' }` 且**无** retry task；(b) 制造冲突场景后 audit.jsonl 出现 `merge_failure { category: 'conflict' }` 且 accept-link Worker 收到 retry；(c) 错误类源头 `packages/leader/src/merge-validator.ts:204` `classifyGitError` 已实现 |
+| 追溯 | v0.7 NEW |
+
+### FR-37 — LinkCommitRecord 与 upstream_commits 双写 **[v0.7 NEW]**
+
+| 字段 | 内容 |
+|------|------|
+| 一句话 | 每个 link 完成时 Worker 通过 completion_report 回传 `{ worktree, docs, branch }` LinkCommitRecord；ChainRouter 调 `ChainAudit.recordLinkCommit` 写到 `manifest.link_commits[link]`；下游 link dispatch 前调 `collectUpstreamCommits` 取出 worktree SHA，**双写**到 `Task.upstream_commits` 与 `Message.upstream_commits`；feedback 时调 `clearLinkCommitsFrom` 擦除 fromLink 及下游记录 |
+| 用户价值 | pre-task rebase（FR-13）可正确定位上游基线；feedback 重试不被陈旧 SHA 误导 |
+| 完成判定 | (a) 跑完一条链后 manifest.link_commits 5 个 link 的 record 都存在；(b) Worker B 收到的 task_dispatch.upstream_commits 含 Worker A 的 worktree SHA；(c) 制造 feedback 后 manifest.link_commits 中 fromLink 及下游被清空 |
+| 追溯 | v0.7 NEW |
+
+---
+
 ## 追溯表（FR ↔ A/R）
 
 | FR | A/R | FR | A/R |
@@ -404,6 +427,7 @@
 | FR-15 | A-17 | FR-30 | A-14 |
 | **FR-31** | **v0.7 NEW**（explorer 角色） | **FR-34** | **v0.7 NEW**（--magic-max-chains） |
 | **FR-32** | **v0.7 NEW**（--magic flag） | **FR-35** | **v0.7 NEW**（chain manifest 扩展） |
-| **FR-33** | **v0.7 NEW**（spawn_chain）|  |  |
+| **FR-33** | **v0.7 NEW**（spawn_chain）| **FR-36** | **v0.7 NEW**（git 错误五分类） |
+|  |  | **FR-37** | **v0.7 NEW**（LinkCommitRecord 双写） |
 
-合计：35 条 FR = 24 项 A 功能继承（含 FR-10/FR-11 在 v0.7 内扩展）+ 6 项 R 修复（R-07 并入 FR-17 ChainStatus 表述）+ 5 项 v0.7 NEW（FR-31 ~ FR-35）。
+合计：37 条 FR = 24 项 A 功能继承（含 FR-10/FR-11/FR-13/FR-15/FR-16/FR-17 在 v0.7 内 rc1 修订）+ 6 项 R 修复（R-07 并入 FR-17 ChainStatus 表述）+ 7 项 v0.7 NEW（FR-31 ~ FR-37）。

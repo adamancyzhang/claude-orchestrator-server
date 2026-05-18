@@ -114,6 +114,27 @@
 - **回避方法**：扩展 `MemoryBootstrap.enumerateSources` 自行加入规则
 - **v0.7 是否修复**：候选
 
+### 4.4 Worktree 复用 + `reset_on_reuse=true` 有损清理 **[v0.7 NEW]**
+
+- **当前行为**：orchestrator 启动时若发现 `<projects_root>/<worker_name>/` 已存在的 worktree，默认走"复用"路径：`git reset --hard <leader_head>` + `git clean -fd`，**丢弃 worktree 中所有未 commit 的变更**
+- **用户影响**：人工在 worktree 中遗留的实验性代码 / 未 push 的本地 commit 会被清掉（提交到 worker 分支的 commit 仍保留在远端）
+- **回避方法**：(a) 启动前 `git stash` 保护变更；(b) 显式禁用 `reset_on_reuse`（仅作为内部参数，需修改 worktree-initializer 调用，目前未对外暴露配置）
+- **v0.7 是否修复**：不计划，复用 + 硬重置是 rc1 pre-task rebase 模型的前提（每个 link 必须从已知基线起步）
+
+### 4.5 跨 chain 不传 `link_commits` / `upstream_commits` **[v0.7 NEW]**
+
+- **当前行为**：spawn_chain 派生的子链开新 manifest，`link_commits={}`；子链的 plan link 不感知父链 worktree commit；pre-task rebase 在子链 plan 处无 upstream，跳过
+- **用户影响**：子链是"从 main 重新出发"的独立链；若 Explorer `next_requirement` 隐含依赖父链未合并的代码，可能导致子链 verify / review 失败
+- **回避方法**：父链必须先 close_chain merge 成功，再让 Explorer 启动子链；子链通过 main 上的合并 commit 间接看到父链产出（与 §1.1 close_chain 单向不可逆配套）
+- **v0.7 是否修复**：不计划；跨 chain 上下文传递不是 v0.7 目标（PRD §6.1 已声明 Explorer 不读跨 chain 历史）
+
+### 4.6 Docs commit best-effort，可缺失 **[v0.7 NEW]**
+
+- **当前行为**：双轨 commit 中**轨 B**（CO root `docs/<worker_name>/`）使用 `git commit --only`、限定路径作用域，但若并发 Worker 同时写、`.git/index.lock` 抢锁失败，DocsCommitter 返回 `null` 而非抛错；`LinkCommitRecord.docs=null`；audit 仅 `log.error`，不进事件流
+- **用户影响**：CO root 仓上可能漏掉某个 link 的 `result.md` commit（项目仓代码 commit 不受影响）；TUI 不感知；close_chain merge 不阻塞
+- **回避方法**：(a) 排查 CO root 仓 `.git/index.lock` 是否长期残留；(b) 降低并发（`--worker 6` 已是最小值，无法再降）；(c) 查看 cache 下 `tasks/<task_id>/result.md` 与 CO root 的实际 docs 是否同步
+- **v0.7 是否修复**：不计划；轨 B 是归档与追溯，不影响代码合并正确性，best-effort 是有意权衡
+
 ## 5. 测试与可观测性边界
 
 ### 5.1 stream_chunk 事件存在但未渲染
