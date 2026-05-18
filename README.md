@@ -381,10 +381,11 @@ node packages/runtime/tests/core/manual/claude-cli-smoke.mjs   # manual smoke (r
 │   └── claude-code-developer/           #   Claude Code developer reference
 │
 ├── docs/
-│   ├── v0.5/                            #   15 design documents (package-layout, contracts, protocol,
-│   │                                    #     error-and-recovery, leader-design, worker-design, …)
-│   └── v0.4/                            #   Archived v0.4 docs
+│   └── v0.7/                            #   v0.7 documentation baseline
+│       ├── prd/                         #     8 product requirements files (01-overview ~ 07-glossary + README)
+│       └── dd/                          #     11 detailed design files (00-README + 01-architecture ~ 10-magic-loop)
 │
+
 ├── tests/
 │   └── CLAUDE.md                        #   Authoritative testing standards (copied into each package)
 │

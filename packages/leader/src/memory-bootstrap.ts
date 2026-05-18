@@ -476,7 +476,7 @@ export class MemoryBootstrap {
       `# Workspace Memory\n\n` +
       `Per-file summaries live alongside their source under \`packages/...\`.\n` +
       `Each directory carries a \`CLAUDE.md\` index. See\n` +
-      `\`docs/v0.6/dd/workspace-memory.md\` for the design.\n`;
+      `\`docs/v0.7/dd/08-memory-and-bootstrap.md\` for the design.\n`;
     await fs.promises.writeFile(rootIndex, body, "utf-8");
   }
 

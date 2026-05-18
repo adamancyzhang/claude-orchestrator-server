@@ -376,10 +376,11 @@ node packages/runtime/tests/core/manual/claude-cli-smoke.mjs   # 手动烟雾测
 │   └── claude-code-developer/           #   Claude Code 开发者参考
 │
 ├── docs/
-│   ├── v0.5/                            #   15 篇设计文档（package-layout、contracts、protocol、
-│   │                                    #     error-and-recovery、leader-design、worker-design…）
-│   └── v0.4/                            #   存档：v0.4 文档
+│   └── v0.7/                            #   v0.7 文档基线
+│       ├── prd/                         #     8 篇产品需求（01-overview ~ 07-glossary + README）
+│       └── dd/                          #     11 篇详细设计（00-README + 01-architecture ~ 10-magic-loop）
 │
+
 ├── tests/
 │   └── CLAUDE.md                        #   测试权威规范（被各包原文复制）
 │

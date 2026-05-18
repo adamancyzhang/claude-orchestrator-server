@@ -211,4 +211,4 @@
 - chain_id 重用冲突拒绝（FR-20 / R-06）
 - evaluator 三连失败一律 `reject`（FR-22 / R-03）
 
-详见 `../../rc0-v0.6/acceptance-checklist.md`（其中 A-* / R-* 条目仍然适用；v0.7 NEW 验收项需在 v0.7 DD 阶段补充新的 acceptance checklist）。
+A-* / R-* 编号体系沿用自 v0.6 RC0,旧 acceptance-checklist 文档已随 v0.6 目录移除；v0.7 验收以 `04-functional-requirements.md` 每条 FR 末尾的"done 判定"为准,v0.7 NEW 验收项已嵌入对应 FR 的判定列。

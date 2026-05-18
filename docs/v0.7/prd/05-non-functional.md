@@ -1,6 +1,6 @@
 # 05 — 非功能性需求
 
-> **文档定位**：可靠性、反馈韧性、性能、安全、可观测、可配置、协议版本 7 个维度的非功能性需求。每条给出关键指标与对应的实现机制（不复制 DD 细节，需要时链接到 `../../rc0-v0.6/dd/*`）。
+> **文档定位**：可靠性、反馈韧性、性能、安全、可观测、可配置、协议版本 7 个维度的非功能性需求。每条给出关键指标与对应的实现机制（不复制 DD 细节，需要时链接到 `../dd/*`）。
 
 ## 1. 可靠性
 
@@ -31,7 +31,7 @@
 | **[v0.7 NEW]** `--magic` 循环深度上限 | `--magic-max-chains M`（默认 `unlimited`），`CO_MAGIC_MAX_CHAINS` 环境变量覆写；达上限时 `spawn_chain` 决策被 Leader 降级为 `close_chain`、不再创建下一条 chain；audit 记 `magic_depth_exhausted` |
 | **[v0.7 NEW]** Explorer 自我熔断 | Explorer 自评估失败 3 次仍触发 reject-only fallback（FR-22）；这种情况下不会跨链传播，magic 循环自动终止 |
 
-详见 `../../rc0-v0.6/dd/error-and-recovery.md` §10 ~ §12 与 `04-functional-requirements.md` 第 6 / 7 域。
+详见 `../dd/06-tasks-and-workers.md`（Recovery、子进程重启、自杀机制）、`../dd/07-merge-validator-and-closure.md`（merge_failed 终态、accept-link retry）与 `04-functional-requirements.md` 第 6 / 7 域。
 
 ## 3. 性能
 
@@ -121,7 +121,7 @@ Worktree 配置（<worktree>/.claude-orchestrator/config.json）
 | **[v0.7 NEW]** `--magic` | false | 启用自主循环（追加 explore 链节 + spawn_chain 决策） |
 | **[v0.7 NEW]** `--magic-max-chains M` | unlimited | `--magic` 模式下 chain 派生层数上限 |
 
-详见 `../../rc0-v0.6/dd/config-and-cli.md`。
+详见 `../dd/01-architecture.md`（启动 5 阶段、Cache 目录、CLI 配置层）。
 
 ## 7. 协议版本
 
