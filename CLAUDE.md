@@ -12,26 +12,33 @@ A CLI-native multi-agent orchestration system backed by ZooKeeper. Leader runs a
 # Start ZooKeeper
 docker-compose up -d
 
-# Install dependencies
-npm install
+# Install dependencies (pnpm workspaces)
+pnpm install
 
-# Build (compiles TypeScript + copies templates and skills to dist/)
-npm run build
+# Build all packages (`tsc -b` in each workspace)
+pnpm build
+
+# Typecheck without emitting
+pnpm typecheck
+
+# Workspace cross-package dependency check
+pnpm depcheck
+pnpm pkgcheck
 
 # Start full orchestration (Leader TUI + 6 Workers; --worker default is 6, minimum is 6)
-node dist/index.js run --worker 6
+./bin/claude-orchestrator run --worker 6
 
 # Start with debug trace
-node dist/index.js run --worker 6 --debug
+./bin/claude-orchestrator run --worker 6 --debug
 
-# Run all tests
-npm test              # vitest run
+# Run all tests (sequential across workspaces)
+pnpm test
 
-# Run tests in watch mode
-npm run test:watch    # vitest
+# Run tests in watch mode (single package)
+pnpm --filter @co/orchestrator test:watch
 
-# Run a single test
-npx vitest run tests/unit/leader.test.ts
+# Run a single test file (inside a package directory)
+npx vitest run tests/core/integration/workflow-acceptance.test.ts
 ```
 
 ## Architecture
@@ -211,9 +218,19 @@ Context store (`/context`) is not implemented — no paths exist in `paths.ts`.
 
 ## Testing
 
-Tests use **Vitest**. No ZK mock library — tests spin up a real ZooKeeper (docker-compose). Integration tests (`tests/integration/leader-worker.test.ts`) test the full Leader+Worker flow. Unit tests (`tests/unit/`) focus on individual modules.
+Tests use **Vitest** and live under `packages/*/tests/`. Each workspace package has its own vitest config and `tests/CLAUDE.md` that mirrors the canonical [Testing Standards](tests/CLAUDE.md).
+
+**Unit tests have been removed in v0.7.** The only retained automated test is the cross-cutting integration test at `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts`, which exercises the full Plan → Build → Verify → Review → Accept chain over a real ZooKeeper with `claude-cli` stubbed. New behavioral locks MUST be expressed as integration, e2e, or manual tests — see [`tests/CLAUDE.md`](tests/CLAUDE.md) for the full convention.
+
+ZooKeeper must be running (`docker-compose up -d`) before invoking integration/e2e tests.
 
 ```bash
-npm test                    # vitest run (all tests)
-npx vitest run tests/unit/leader.test.ts   # single file
+# Full suite (all packages, sequential)
+pnpm test
+
+# Single package
+pnpm --filter @co/orchestrator test
+
+# Single file inside a package directory
+npx vitest run tests/core/integration/workflow-acceptance.test.ts
 ```

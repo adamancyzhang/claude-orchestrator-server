@@ -115,7 +115,8 @@ Claude Orchestrator v0.5 是一个 CLI 原生、ZooKeeper 直连的多 Agent 编
 - 全局模板:[templates/user-global-claude.md](../../templates/user-global-claude.md)
 - Skill:[skills/](../../skills/) 8 个
 
-测试：
+测试（v0.7 起单元测试已全部删除）：
 
-- 单元测试:[tests/unit/](../../tests/unit/)（vitest run）
-- 集成测试:[tests/integration/leader-worker.test.ts](../../tests/integration/leader-worker.test.ts)
+- 集成测试（唯一保留的自动化测试）:[packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts](../../packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts) — 跑 `pnpm test` 或 `pnpm --filter @co/orchestrator test`
+- 测试规范权威文档:[tests/CLAUDE.md](../../tests/CLAUDE.md) — 新加行为锁定 MUST 用 integration / e2e / manual,不再写 unit
+- 各 package 的测试目录入口:`packages/*/tests/CLAUDE.md`（与根级 `tests/CLAUDE.md` 内容一致）

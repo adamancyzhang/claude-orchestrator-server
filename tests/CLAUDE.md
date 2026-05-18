@@ -4,11 +4,13 @@ Authoritative testing convention for **humans and AI agents** (Claude Code) work
 MUST be read before adding or modifying any test file.
 Language is directive: **MUST**, **MUST NOT**, **PREFER**.
 
+> **Note (v0.7):** Unit tests have been removed from this repository. The only retained automated test is the cross-cutting integration test under `packages/orchestrator/tests/core/integration/`. New behavioral locks MUST be expressed as integration, e2e, or manual tests — not unit tests.
+
 ---
 
 ## 1. Purpose & Audience
 
-This document governs all tests under `tests/`. It exists to:
+This document governs all tests under `packages/*/tests/`. It exists to:
 
 - Prevent the test suite from becoming a graveyard of one-off scratch tests.
 - Ensure expensive dependencies (real ZooKeeper, real `claude-cli`) are governed by explicit trust rules rather than ad-hoc mocks.
@@ -20,11 +22,12 @@ If you are an AI agent: consult §6 (Scope Decision Flow) before writing any tes
 
 ## 2. Directory Layout
 
+Each package owns its own `tests/` tree under `packages/<pkg>/tests/`:
+
 ```
-tests/
-├── CLAUDE.md                           # this file
+packages/<pkg>/tests/
+├── CLAUDE.md                           # this file (per package)
 ├── core/                               # long-lived, reviewed, must-justify-retention
-│   ├── unit/                           # pure logic tests, no ZK, limited mocking
 │   ├── integration/                    # real ZK (docker-compose), multi-module flows
 │   ├── e2e/                            # full leader+worker over real ZK
 │   └── manual/                         # executable scripts + README for human-driven runs
@@ -38,11 +41,12 @@ tests/
 
 | Directory | Purpose | Retention |
 |---|---|---|
-| `core/unit/` | Pure module logic; no ZK; vi.mock only for exec calls | Permanent |
 | `core/integration/` | Real ZK; multi-module orchestration | Permanent |
-| `core/e2e/` | Full leader+worker runs via `src/orchestrator/run.ts` | Permanent |
+| `core/e2e/` | Full leader+worker runs via `packages/orchestrator/src/run.ts` | Permanent |
 | `core/manual/` | Node.js scripts hitting real claude-cli + ZK | Permanent |
 | `scratch/YYYY-MM-DD/<feature>/` | In-progress iteration tests | 3 days maximum |
+
+Unit tests are no longer maintained. If a behavior can only be exercised in isolation, the preferred place for it is `core/manual/` (with a documented script) — not a unit test reintroduced under `core/unit/`.
 
 ---
 
@@ -68,10 +72,10 @@ expect(orchestrator.assignTask).toHaveBeenCalledTimes(2);
 
 ### 3.2 5-minute rule
 
-When `npm test` wall-clock time exceeds **5 minutes**, slow endpoints MUST be split into separately-invocable test groups.
+When `pnpm test` wall-clock time exceeds **5 minutes**, slow endpoints MUST be split into separately-invocable test groups.
 
 - Slow files use suffix `.slow.test.ts`.
-- Fast subset MUST remain runnable with `npx vitest run tests/core/unit` or `npx vitest run tests/core/integration`.
+- Fast subset MUST remain runnable with `pnpm --filter @co/<pkg> test` or `npx vitest run tests/core/integration`.
 - Slow subset is invoked explicitly: `npx vitest run tests/core/integration/*.slow.test.ts`.
 
 ### 3.3 No casual mocking or try/catch
@@ -101,7 +105,7 @@ const TEST_ROOT = vi.hoisted(() => {
 ### 3.5 Errors must propagate
 
 Do not add defensive try/catch in tests. Let unexpected failures surface as test failures.
-Mirror the philosophy in `src/` — errors are signal, not noise to be silenced.
+Mirror the philosophy in `packages/*/src/` — errors are signal, not noise to be silenced.
 
 ---
 
@@ -119,30 +123,24 @@ Every file under `tests/core/` **MUST** carry a `CORE-RETENTION` header comment 
 
 Files without this header are subject to deletion during any triage pass.
 
-### 4.2 `core/unit/`
-
-- Target: pure module logic — no ZooKeeper, no child processes.
-- Source modules typically covered: `src/zk/paths.ts`, `src/executor/template.ts`, `src/leader/chain-router.ts`, `src/leader/state.ts`, `src/leader/event-bus.ts`, `src/worker/evaluator.ts`.
-- `vi.mock()` is acceptable **only** for `execWithStreaming` / `execAndCapture` in `src/executor/runner.ts` and `src/utils/exec.ts`. All other mocks require `TRUST-JUSTIFICATION`.
-- Real filesystem via `fs.mkdtempSync()` is preferred over mocking `fs`.
-
-### 4.3 `core/integration/`
+### 4.2 `core/integration/`
 
 - Target: multi-module orchestration over a **real ZooKeeper** instance.
 - Requires: `docker-compose up -d` (see `docker-compose.yml`); ZK on `127.0.0.1:2181`.
-- Primary source modules: `src/zk/client.ts`, `src/modules/task-queue.ts`, `src/modules/registry.ts`, `src/modules/message-router.ts`, `src/leader/watcher.ts`, `src/leader/recovery.ts`, `src/worker/watcher.ts`.
-- `claude-cli` MUST be mocked in integration tests (record `TRUST-JUSTIFICATION`).
+- Primary source modules: `packages/infra/src/zk/client.ts`, `packages/coordination/src/task-queue.ts`, `packages/coordination/src/instance-registry.ts`, `packages/coordination/src/message-router.ts`, `packages/leader/src/watcher.ts`, `packages/leader/src/recovery.ts`, `packages/worker/src/watcher.ts`.
+- `claude-cli` MUST be stubbed in integration tests (record `TRUST-JUSTIFICATION`).
 - Each test file creates and tears down its own ZK subtree via `vi.hoisted()` + `beforeAll`/`afterAll`.
+- The cross-cutting flagship integration test is `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts`, which exercises the full Plan → Build → Verify → Review → Accept chain.
 
-### 4.4 `core/e2e/`
+### 4.3 `core/e2e/`
 
-- Target: full leader+worker runs initiated via `src/orchestrator/run.ts`.
+- Target: full leader+worker runs initiated via `packages/orchestrator/src/run.ts`.
 - Requires: real ZooKeeper (same as integration).
 - `claude-cli` subprocess output MAY be stubbed; record `TRUST-JUSTIFICATION`.
 - These tests exercise the entire message delivery path: ZK watch → template render → CLI exec → completion report → Leader state update.
 - Long wall-clock time is expected; apply the 5-minute rule (§3.2) and suffix `.slow.test.ts` if needed.
 
-### 4.5 `core/manual/`
+### 4.4 `core/manual/`
 
 Manual tests hit **real `claude-cli`** and **real ZooKeeper** together. They are not automated by Vitest.
 
@@ -170,19 +168,19 @@ Scratch tests support day-to-day feature development and are **explicitly tempor
 ### Path
 
 ```
-tests/scratch/YYYY-MM-DD/<feature-or-task>/*.test.ts
+packages/<pkg>/tests/scratch/YYYY-MM-DD/<feature-or-task>/*.test.ts
 ```
 
-Example: `tests/scratch/2026-05-14/worker-retry-backoff/basic.test.ts`
+Example: `packages/worker/tests/scratch/2026-05-14/worker-retry-backoff/basic.test.ts`
 
 ### Scope
 
-Default scope = only the tests covering the modified function points. Full regression (`npm test`) is NOT required unless §6 mandates it.
+Default scope = only the tests covering the modified function points. Full regression (`pnpm test`) is NOT required unless §6 mandates it.
 
 ### Retention
 
 Scratch directories older than **3 days** MUST be deleted by the contributor before committing.
-There is no automation — this is a manual contributor responsibility. Check `ls tests/scratch/` before each commit.
+There is no automation — this is a manual contributor responsibility. Check `ls packages/<pkg>/tests/scratch/` before each commit.
 
 ### No retention header required
 
@@ -196,33 +194,33 @@ A scratch test that proves its worth may be promoted to `tests/core/`. See §8.
 
 ## 6. Scope Decision Flow
 
-When developing a feature or fixing a bug, use this table to determine the minimum required test scope. "Full regression" means `npm test` across all of `tests/core/`.
+When developing a feature or fixing a bug, use this table to determine the minimum required test scope. "Full regression" means `pnpm test` across all of `packages/*/tests/core/`.
 
 | Change touches | Minimum required test scope |
 |---|---|
-| `src/zk/paths.ts` or `src/zk/client.ts` | Full `npm test` — ZK paths are cross-cutting; every subsystem depends on them |
-| `src/leader/**` | `tests/core/unit/leader-*` + `tests/core/integration/leader-*` + one e2e smoke |
-| `src/worker/**` | `tests/core/unit/worker-*` + `tests/core/integration/worker-*` + one e2e smoke |
-| `src/executor/template.ts` | `tests/core/unit/` only |
-| `src/executor/runner.ts` | `tests/core/unit/runner*` + one e2e smoke in `tests/core/e2e/` |
-| `src/orchestrator/**` | `tests/core/e2e/` |
-| `src/modules/**` | `tests/core/integration/` for the affected module |
-| `src/hooks/**` | `tests/core/unit/hooks*` |
-| Type-only or cross-cutting changes (`src/models/schemas.ts`) | Full `npm test` |
+| `packages/contracts/src/paths/**` or `packages/infra/src/zk/client.ts` | Full `pnpm test` — ZK paths are cross-cutting; every subsystem depends on them |
+| `packages/leader/src/**` | `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts` + one e2e smoke if available |
+| `packages/worker/src/**` | `packages/orchestrator/tests/core/integration/workflow-acceptance.test.ts` + one e2e smoke if available |
+| `packages/runtime/src/template.ts` | Manual verification via `tests/core/manual/` (no unit tests are kept) |
+| `packages/runtime/src/runner.ts` | One e2e smoke in `tests/core/e2e/`, or a manual run via `tests/core/manual/` |
+| `packages/orchestrator/src/**` | `tests/core/integration/` + `tests/core/e2e/` |
+| `packages/coordination/src/**` | `tests/core/integration/` for the affected module |
+| `packages/runtime/src/hook-engine.ts` | Manual verification via `tests/core/manual/` |
+| Type-only or cross-cutting changes (`packages/contracts/src/schemas/**`) | Full `pnpm test` |
 | `templates/` or `skills/` | No automated tests; manual verification via `tests/core/manual/` |
 | `docs/` or `*.md` only | None |
 
 ### Rule of thumb
 
-- Change crosses the leader/worker boundary → run integration tests.
-- Change modifies a ZK path constant → run full `npm test`.
-- Change is isolated to one module with no cross-module side effects → unit tests for that module only.
+- Change crosses the leader/worker boundary → run the integration test in `packages/orchestrator/`.
+- Change modifies a ZK path constant → run full `pnpm test`.
+- Change is isolated to one module with no cross-module side effects → write a `tests/scratch/` test for it, or extend the orchestrator integration test if behavior must be locked in.
 
 ### Triggering full regression
 
 Full regression is required when:
 
-1. The scope analysis above maps to "Full `npm test`", OR
+1. The scope analysis above maps to "Full `pnpm test`", OR
 2. The change modifies shared infrastructure (ZK client, config loader, path constants), OR
 3. You detect that multiple independent subsystems could be affected.
 
@@ -244,14 +242,14 @@ Use this template whenever mocking a dependency or swallowing an exception. Plac
 //            integration test, a contract assertion, or a known external guarantee>.
 //
 // Example:
-// TRUST-JUSTIFICATION: Mocking execWithStreaming (src/utils/exec.ts).
+// TRUST-JUSTIFICATION: Mocking execWithStreaming (packages/runtime/src/runner.ts).
 // Downstream: claude-cli subprocess spawned by ClaudeRunner.
 // Reason: claude-cli calls take ~30 s and cost ~$0.10 per invocation; running
-//   them in unit tests is impractical and non-deterministic.
+//   them in every integration test is impractical and non-deterministic.
 // Evidence: The full call chain is exercised in tests/core/manual/claude-cli-smoke.mjs.
 //   Here we assert only that ClaudeRunner passes the correct prompt string and
 //   parses the output JSON into the expected EvalDecision shape — the protocol
-//   contract between src/executor/runner.ts and claude-cli.
+//   contract between packages/runtime/src/runner.ts and claude-cli.
 ```
 
 ### 7.2 Core Test Header Comment
@@ -263,10 +261,10 @@ Place this at the very top of every file under `tests/core/`, before any imports
 // Locks in: <one sentence describing the observable behavior this file asserts>.
 // Core path because: <why this behavior is critical — what breaks if it regresses,
 //   which production scenario it covers>.
-// Owner subsystem: <leader | worker | zk | executor | orchestrator | modules>.
+// Owner subsystem: <leader | worker | zk | runtime | orchestrator | coordination | contracts | infra>.
 // Primary source files exercised:
-//   - <src/path/to/file.ts>
-//   - <src/path/to/other.ts>
+//   - <packages/<pkg>/src/path/to/file.ts>
+//   - <packages/<pkg>/src/path/to/other.ts>
 //
 // Example:
 // CORE-RETENTION
@@ -276,9 +274,9 @@ Place this at the very top of every file under `tests/core/`, before any imports
 //   without it, claimed tasks are permanently lost.
 // Owner subsystem: leader.
 // Primary source files exercised:
-//   - src/leader/recovery.ts
-//   - src/leader/watcher.ts
-//   - src/zk/client.ts
+//   - packages/leader/src/recovery.ts
+//   - packages/leader/src/watcher.ts
+//   - packages/infra/src/zk/client.ts
 ```
 
 ---
@@ -287,11 +285,11 @@ Place this at the very top of every file under `tests/core/`, before any imports
 
 When a scratch test proves it covers a meaningful behavioral invariant:
 
-1. **Move** the file to `tests/core/<category>/` (pick the right category per §4).
+1. **Move** the file to `packages/<pkg>/tests/core/<category>/` (pick the right category per §4 — `integration`, `e2e`, or `manual`; no `unit`).
 2. **Add** the `CORE-RETENTION` header (template §7.2) at the top of the file.
 3. **Rename** to drop the date — e.g., `basic.test.ts` → `worker-retry-backoff.test.ts`.
 4. **Verify** the file passes in isolation: `npx vitest run tests/core/<category>/worker-retry-backoff.test.ts`
-5. **Verify** it passes as part of the full suite: `npm test`
+5. **Verify** it passes as part of the full suite: `pnpm test`
 6. **Delete** the original scratch directory if it is now empty.
 
 ---
@@ -299,18 +297,21 @@ When a scratch test proves it covers a meaningful behavioral invariant:
 ## 9. Running Tests
 
 ```bash
-# Full suite (all core tests)
-npm test                                          # vitest run
+# Full suite (all core tests across the workspace)
+pnpm test                                         # pnpm -r --workspace-concurrency=1 test
 
-# Watch mode
-npm run test:watch                                # vitest
+# Single package
+pnpm --filter @co/orchestrator test
 
-# Single file
-npx vitest run tests/core/unit/leader.test.ts
+# Watch mode (single package)
+pnpm --filter @co/orchestrator test:watch
+
+# Single file (inside a package directory)
+npx vitest run tests/core/integration/workflow-acceptance.test.ts
 
 # Narrowed directory
-npx vitest run tests/core/unit
 npx vitest run tests/core/integration
+npx vitest run tests/core/e2e
 
 # Slow tests only
 npx vitest run tests/core/integration/*.slow.test.ts
@@ -335,7 +336,7 @@ docker-compose up -d
 
 - [ ] Identify the subsystem being changed.
 - [ ] Consult §6 to determine minimum required test scope.
-- [ ] Choose `tests/scratch/YYYY-MM-DD/<feature>/` for iteration work, or `tests/core/<category>/` for a behavioral lock.
+- [ ] Choose `tests/scratch/YYYY-MM-DD/<feature>/` for iteration work, or `tests/core/<category>/` for a behavioral lock (`integration`, `e2e`, or `manual` — not `unit`).
 - [ ] If placing in `core/`, write the `CORE-RETENTION` header (§7.2) before writing any test logic.
 
 ### Before using a mock or try/catch
@@ -350,3 +351,4 @@ docker-compose up -d
 - [ ] Confirm every file in `tests/core/` has a `CORE-RETENTION` header.
 - [ ] Confirm every mock/catch in `tests/core/` has a `TRUST-JUSTIFICATION` comment.
 - [ ] If total test time exceeded 5 minutes, apply the `.slow.test.ts` split (§3.2).
+- [ ] Do **not** reintroduce a `tests/core/unit/` directory. Unit tests were retired in v0.7 — use integration, e2e, or manual instead.
