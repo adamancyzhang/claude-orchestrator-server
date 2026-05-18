@@ -82,9 +82,11 @@ sequenceDiagram
   participant ZK as ZK /messages/{self}
   participant ML as MessageListener
   participant TE as TaskExecutor
+  participant RB as preTaskRebase
   participant TPL as TemplateEngine
   participant CLR as ClaudeRunner
   participant CC as CommitChecker
+  participant DC as DocsCommitter
   participant SE as SelfEvaluator
   participant HE as HookEngine (worker-side fire)
   participant L as Leader 收件箱
@@ -93,22 +95,28 @@ sequenceDiagram
   ML->>ML: read message JSON；按 type 派发
   alt type == 'task_dispatch'
     ML->>TE: execute(task)
-    TE->>TPL: renderPrompt(task, identity)
-    TE->>HE: fire 'worker_message_start' env={CO_TASK_ID, CO_LINK, ...}
-    TE->>CLR: execWithTee(claude -p prompt, log=tasks/<task_id>/exec-<ts>.log)
-    CLR-->>TE: stdout result string
-    TE->>TE: 写 tasks/<task_id>/result.md（chain-shared）
-    TE->>TE: 备份到 docs/<name>/<date>/<link>-<chain_id>.md
-    TE->>CC: maybeCommit(worktree)
-    alt commit 失败
-      CC-->>TE: throw CommitFailedError
-      TE->>SE: skip SelfEvaluator
-      TE->>L: send completion_report {decision:'feedback', feedback_target:<self>, reason:'commit failed: ...'}
-    else commit 成功 or 无变更
-      CC-->>TE: { committed: true/false, sha?: '...' }
-      TE->>SE: evaluate(task, result)
-      SE-->>TE: EvalDecision
-      TE->>L: send completion_report (content = EvalDecision JSON)
+    TE->>RB: preTaskRebase(msg.upstream_commits)   %% [v0.7 NEW] 见 §3.5
+    alt rebase 冲突
+      RB-->>TE: throw RebaseConflictError
+      TE->>L: send completion_report {decision:'feedback', feedback_target:<self>, reason:'rebase conflict: ...'}
+    else rebase 成功 / 跳过（ancestor / 无 upstream）
+      TE->>TPL: renderPrompt(task, identity)
+      TE->>HE: fire 'worker_message_start' env={CO_TASK_ID, CO_LINK, ...}
+      TE->>CLR: execWithTee(claude -p prompt, log=tasks/<task_id>/exec-<ts>.log)
+      CLR-->>TE: stdout result string
+      TE->>TE: 写 tasks/<task_id>/result.md（chain-shared，落 CO root 的 docs/<name>/）
+      TE->>CC: maybeCommit(worktree)        %% 双轨 commit 轨 A：项目仓代码
+      alt commit 失败（非冲突类）
+        CC-->>TE: throw CommitFailedError
+        TE->>L: send completion_report {decision:'feedback', feedback_target:<self>, reason:'commit failed: ...'}
+      else commit 成功 or 无变更
+        CC-->>TE: { committed, worktree_sha?, branch }
+        TE->>DC: commitIfChanged(ctx)         %% 双轨 commit 轨 B：CO root docs
+        DC-->>TE: { docs_sha?: '...' } | null  %% best-effort，失败不阻断
+        TE->>SE: evaluate(task, result)
+        SE-->>TE: EvalDecision
+        TE->>L: send completion_report {decision, commits:{worktree, docs, branch}}  %% 含 LinkCommitRecord
+      end
     end
     TE->>HE: fire 'worker_message_end' env={CO_TASK_ID, CO_DECISION, ...}
     ML->>ZK: delete /messages/{self}/msg-NNNNN
@@ -120,18 +128,107 @@ sequenceDiagram
 
 > Hook env 完整清单见 `09-audit-and-cache.md` §6.3。
 
----
+### 3.5 pre-task rebase 算法 **[v0.7 NEW]**
 
-## 4. CommitChecker（FR-13 + FR-21）
-
-### 4.1 maybeCommit 算法
+任务真正执行 claude-cli 之前，Worker 把自己分支 rebase 到上游 link 的 worktree commit 上，确保 in-progress 任务在 git 上能"看到"上游产物。算法：
 
 ```text
-maybeCommit(worktree, task):
+preTaskRebase(upstream: UpstreamCommits | undefined):
+  targetSha = pickImmediatePredecessor(upstream, currentLink)
+              // 顺序 plan → build → verify → review；取最近的非 null 那个；accept link 取 review；
+              // 若 currentLink == plan 或 upstream 全 null → 直接返回（无 rebase）
+  if targetSha == null:
+    return
+
+  // 短路：若 HEAD 已包含 targetSha（is-ancestor 命中）则跳过 rebase
+  if git merge-base --is-ancestor targetSha HEAD (cwd=worktree):
+    log.debug('pre-task rebase skipped (ancestor)')
+    return
+
+  // 可选 fetch（remote=null 时跳过）
+  if config.git.remote != null:
+    try: git fetch <remote> <targetSha>          // 失败 non-fatal — 共享 .git 一般已有
+    catch: log.debug('pre-task fetch failed (non-fatal)')
+
+  try:
+    git rebase <targetSha>                       // 真正 rebase
+    log.info('pre-task rebase succeeded')
+  catch err:
+    conflicts = git diff --name-only --diff-filter=U
+    git rebase --abort                           // 总是 abort 让 worktree 回到干净态
+    if conflicts.not_empty():
+      throw RebaseConflictError(targetSha, conflicts, err)  // → §3.6 强制 feedback
+    else:
+      throw err                                  // 其它类型（permission / network）→ §3.6 分类
+```
+
+代码归属：`packages/worker/src/watcher.ts:732`（`preTaskRebase`）。
+
+**为什么不在 plan link rebase**：plan 是链的起点，没有上游 link；plan 直接基于 `<leader_head>` 工作。
+**为什么 accept 取 review**：accept link 把所有前序代码线性化为单一分支（close_chain 合并目标）；review 的 worktree SHA 是当前最新代码状态。
+
+### 3.6 git 错误五分类（任务执行期）**[v0.7 NEW]**
+
+Worker 任务执行流中 git 失败按错误类分流：
+
+| 错误类 | 触发位置 | 处理 |
+|---|---|---|
+| `RebaseConflictError` | pre-task rebase 冲突 | 强制 feedback → 同 Worker retry（计入 `total_retry_count`） |
+| `CommitFailedError` | maybeCommit `git commit` 失败 | 强制 feedback → 同 Worker retry（FR-21） |
+| `WorktreeLockedError` | `index.lock` / `cannot lock ref` | 不重试；audit + 终止本次执行；操作员排查 |
+| `GitPermissionError` | `permission denied` / `read-only file system` | 不重试；audit + 终止；常见原因：worktree 目录权限错 |
+| `GitNetworkError` | `could not resolve host` / `connection refused / timed out` | 不重试；audit + 终止；提示 `git.remote=null` 关闭网络依赖 |
+| 其它 Error | rebase / commit 期其它失败 | 视作 retry（与 commit 失败同路径） |
+
+> 不变量：
+> - **只有 conflict（rebase / commit 内冲突）触发 retry**；锁 / 权限 / 网络三类**不**触发 retry，因为它们是基础设施级问题，让 Worker 反复 retry 只会刷日志。
+> - 错误分类的真相源：`packages/leader/src/merge-validator.ts:204` `classifyGitError`。
+> - PRD 锚：FR-36（git 错误五分类，**[v0.7 NEW]**）；详见 `04-functional-requirements.md`。
+
+### 3.7 ChainRouter 注入 upstream_commits **[v0.7 NEW]**
+
+ChainRouter `dispatchNextLink(chain_id, next_link)` 必须在派发前注入 upstream：
+
+```text
+dispatchNextLink(chain_id, next_link):
+  upstream = await chainAudit.collectUpstreamCommits(chain_id)
+             // 返回 { plan?, build?, verify?, review? } —— accept 不参与
+  task = newTask({chain_id, link: next_link, upstream_commits: upstream, ...})
+  taskQueue.push(task)
+  message = newMessage({
+    type: 'task_dispatch',
+    chain_id,
+    task_id: task.id,
+    upstream_commits: upstream,                  // 与 Task 双写（详见 02 §8 / §9）
+    ...
+  })
+  messageRouter.send(message)
+```
+
+代码归属：`packages/leader/src/chain-router.ts`（dispatch 路径）+ `packages/leader/src/chain-audit.ts:249`（collectUpstreamCommits）。
+
+---
+
+## 4. CommitChecker（FR-13 + FR-21）— rc1 双轨 commit **[v0.7 NEW]**
+
+Worker 完成一个 link 任务时产生**两类 commit**，落到**两个不同的 git 仓**：
+
+| 轨 | 仓 | 内容 | 模块 |
+|---|---|---|---|
+| **A：worktree commit** | 项目仓 `<project_root>/...`，per-Worker 分支 | 代码 / 测试 / 构建产物 | `CommitChecker.maybeCommit` |
+| **B：docs commit** | CO root 仓 `<co_root>/docs/<worker_name>/`，所有 Worker 共享 | `result.md`、`task-doc.md`、自评估日志归档 | `DocsCommitter.commitIfChanged`（§4.5） |
+
+轨 A 是任务"代码产出"的真相源（close_chain 合并目标）；轨 B 是归档与追溯（merge 时不参与）。两轨产出的 `worktree / docs / branch` 三元组组成 `LinkCommitRecord`，由 Worker 在 completion_report 内回传 Leader，再由 ChainRouter 调 `ChainAudit.recordLinkCommit` 落到 manifest（详见 `02-contracts-and-protocol.md` §6.0 + `09-audit-and-cache.md` §1.2）。
+
+### 4.1 maybeCommit 算法（轨 A：worktree）
+
+```text
+maybeCommit(worktree, task) -> { committed: boolean, worktree_sha: string|null, branch: string }:
   cd worktree
   status = $(git status --porcelain)
   if status.empty():
-    return { committed: false, sha: null }    // 无变更短路（典型：plan / verify / review / accept 不动代码）
+    return { committed: false, worktree_sha: null, branch: currentBranch() }
+           // 无变更短路（典型：plan / verify / review / accept 不动代码）
 
   // 生成 commit message
   msg = renderTemplate('worker-commit-message.md', {task, identity})
@@ -139,22 +236,30 @@ maybeCommit(worktree, task):
   if reply 解析失败 OR reply 长度 > 72:
     reply = 'chore: auto-commit from ' + identity.name
 
-  // 真正 commit
-  run: git add -A
-  run: git commit -m '<reply>'
+  // 真正 commit（execFileSync，参数数组形式，防 shell 注入）
+  run: execFileSync('git', ['add', '-A'])
+  run: execFileSync('git', ['commit', '-m', reply])
   if exit != 0:
-    throw CommitFailedError(worktree, stderr)
+    err = classifyGitError(stderr)
+    if err instanceof WorktreeLockedError|GitPermissionError|GitNetworkError:
+      throw err                                // §3.6 不重试
+    throw CommitFailedError(worktree, stderr)  // §3.6 retry 路径
 
-  return { committed: true, sha: $(git rev-parse HEAD) }
+  return {
+    committed: true,
+    worktree_sha: $(execFileSync('git', ['rev-parse', 'HEAD'])).trim(),
+    branch: currentBranch(),
+  }
 ```
 
-### 4.2 两种产出，两种处理
+### 4.2 两种产出，三种处理
 
 | 产出 | 含义 | 下一步 |
 |---|---|---|
-| `{ committed: false }` | 任务不修改代码（plan/verify/review/accept 常见） | 走正常 SelfEvaluator 评估 |
-| `{ committed: true, sha }` | 任务产出代码并已 commit | 走正常 SelfEvaluator 评估 |
-| `throw CommitFailedError` | `git commit` 真实失败（pre-commit hook 拒绝 / 无 git 配置 / 磁盘满 / ...） | **强制 feedback**，跳过 SelfEvaluator |
+| `{ committed: false }` | 任务不修改代码（plan/verify/review/accept 常见） | 仍走 §4.5 DocsCommitter（轨 B 可能有 result.md）→ SelfEvaluator |
+| `{ committed: true, worktree_sha, branch }` | 任务产出代码并已 commit | 走 §4.5 DocsCommitter → SelfEvaluator |
+| `throw CommitFailedError` | `git commit` 真实失败（pre-commit hook 拒绝 / 无 git 配置 / 磁盘满 / ...） | **强制 feedback**，跳过 SelfEvaluator + DocsCommitter |
+| `throw WorktreeLockedError\|GitPermissionError\|GitNetworkError` | 基础设施失败（§3.6） | 不重试；audit + 终止本次执行 |
 
 ### 4.3 强制 feedback 构造（FR-21）
 
@@ -177,11 +282,69 @@ Worker 捕获 CommitFailedError 后，**不**调用 SelfEvaluator，直接构造
 
 ### 4.4 与 SelfEvaluator 的关系
 
-| 路径 | SelfEvaluator 是否运行 |
-|---|---|
-| 任务产出正常（无变更或 commit 成功） | 是 |
-| CommitFailedError | 否（直接强制 feedback） |
-| SelfEvaluator 自身三连失败 | 是（输出 reject，详见 §5） |
+| 路径 | SelfEvaluator 是否运行 | DocsCommitter 是否运行 |
+|---|---|---|
+| 任务产出正常（无变更或 commit 成功） | 是 | 是（§4.5） |
+| CommitFailedError | 否（直接强制 feedback） | 否 |
+| RebaseConflictError（§3.5）| 否（直接强制 feedback） | 否 |
+| WorktreeLocked / GitPermission / GitNetwork | 否（终止；不重试） | 否 |
+| SelfEvaluator 自身三连失败 | 是（输出 reject，详见 §5） | 是（已先于 SelfEvaluator 运行） |
+
+### 4.5 DocsCommitter（轨 B：CO root 仓）**[v0.7 NEW]**
+
+DocsCommitter 把 Worker 在 `<co_root>/docs/<worker_name>/` 下的产出（`result.md` / `task-doc.md` / 评估日志归档）commit 到 CO root 仓。**所有 Worker 共享同一个 CO root 工作树**（不同于项目仓的 per-Worker 分支隔离），所以并发安全是关键。
+
+**并发隔离的两道保护**：
+
+1. **路径作用域**：`git status --porcelain -- docs/<worker_name>/` 与后续 `git add -- docs/<worker_name>/...` 都限定在本 Worker 的子目录，永不 stage 别的 Worker 的文件。
+2. **`git commit --only`**：构造的 commit 树从 HEAD + 指定路径生成，忽略并发 Worker 在 index 中 stage 的其它内容。配合 git 自身的 `.git/index.lock` 文件锁保证跨进程互斥。
+
+```text
+DocsCommitter.commitIfChanged(ctx) -> docs_sha | null:
+  scope = "docs/<worker_name>"
+  if not fs.exists(<co_root>/<scope>):
+    return null                              // 本 Worker 本轮无 docs 产出
+
+  status = execFileSync('git', ['status', '--porcelain', '--', scope], {cwd: co_root})
+  if status.trim() == '':
+    return null                              // 无变更
+
+  paths = parseStatusPaths(status)
+  message = renderClaudeMessage(ctx, paths) ?? `docs(<worker_name>): auto-commit <date>`
+
+  try:
+    execFileSync('git', ['add', '--', ...paths], {cwd: co_root})
+    execFileSync('git', ['commit', '--only', '-F', msgFile, '--', ...paths], {cwd: co_root})
+  catch err:
+    log.error('docs commit failed', { stderr, scope })
+    return null                              // **best-effort**：失败不阻塞 worktree commit 与 completion_report
+
+  return execFileSync('git', ['rev-parse', 'HEAD'], {cwd: co_root}).trim()
+```
+
+代码归属：`packages/worker/src/docs-committer.ts:46`（`WorkerDocsCommitter`）。
+
+**best-effort 语义**（PRD `06-boundaries.md` §4.6）：
+
+- DocsCommitter 失败（锁竞争 / 权限 / 网络）**绝不**抛错给上层；返回 `null`，调用方把 `docs: null` 写入 `LinkCommitRecord`。
+- 失败仅记 `log.error`；不进 audit `event` 流，不强制 feedback。
+- close_chain 的 merge 仅依赖**轨 A**（worktree branch）；docs 缺失不阻塞链关闭。
+
+**与 §4 完成报告的联动**：
+
+```text
+TaskExecutor.execute(task):
+  ...
+  { committed, worktree_sha, branch } = await CommitChecker.maybeCommit(worktree, task)
+  docs_sha = await DocsCommitter.commitIfChanged(ctx)   // 可能 null
+  link_commit_record = {
+    worktree: committed ? worktree_sha : null,
+    docs:     docs_sha,                                 // null 不阻塞
+    branch:   branch,
+  }
+  decision = await SelfEvaluator.evaluate(task, result)
+  sendCompletionReport({decision, commits: link_commit_record})  // 注入到 message
+```
 
 ---
 

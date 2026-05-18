@@ -18,15 +18,15 @@
 | 文件 | 回答的问题 |
 |---|---|
 | `00-README.md`（本文） | 目录索引、FR×File 矩阵、阅读路径、命名规范 |
-| `01-architecture.md` | 进程拓扑、ZK 节点全景、模块切分、启动 5 阶段、Cache 目录布局 |
-| `02-contracts-and-protocol.md` | 所有 Zod schema、branded ID、错误类、`PROTOCOL_VERSION` 0.7.0、`roleWeights` 6×6、Decision×Link 合法性矩阵 |
+| `01-architecture.md` | 进程拓扑、ZK 节点全景、模块切分、启动 5 阶段、Cache 目录布局、**包结构与依赖（v0.7 NEW §11）** |
+| `02-contracts-and-protocol.md` | 所有 Zod schema、branded ID、14 个错误类（含 rc1 git 五分类）、`PROTOCOL_VERSION` 0.7.0、`roleWeights` 6×6、Decision×Link 合法性矩阵、**LinkCommitRecord / UpstreamCommits（v0.7 NEW rc1）** |
 | `03-identity-and-roles.md` | name pool、role 优先级填充（默认 + `--magic`）、WorktreeInitializer、身份卡三段拼接、Explorer 角色 |
 | `04-tui-and-input.md` | TUI 六面板、键位、INPUT 路由、`/init` slash、`[MAGIC]` 徽标、事件颜色映射 |
 | `05-chain-router-and-decisions.md` | ChainRouter 状态机、五态决策机械路由、`resolveFeedbackTarget` / `dispatchFeedbackAsRetry`、**spawn_chain 路由（v0.7 NEW）** |
-| `06-tasks-and-workers.md` | TaskQueue.claim 排序、Worker 执行流、SelfEvaluator 三连重试、CommitChecker、跨角色协助、Recovery、子进程重启、自杀机制、**Explorer task prompt（v0.7 NEW）** |
-| `07-merge-validator-and-closure.md` | runMergeValidation、MergeDecision 三态、merge_failed 终态 + Executor retry、**close vs spawn 复用（v0.7 NEW）** |
+| `06-tasks-and-workers.md` | TaskQueue.claim 排序、Worker 执行流、SelfEvaluator 三连重试、CommitChecker、跨角色协助、Recovery、子进程重启、自杀机制、**Explorer task prompt（v0.7 NEW）**、**pre-task rebase / 双轨 commit / DocsCommitter / git 错误五分类（v0.7 NEW rc1）** |
+| `07-merge-validator-and-closure.md` | MergeDecision 三态、`isCommitMerged` + `merge-base --is-ancestor`、merge_failed 终态 + accept-link Worker retry、git 错误五分类、**单次合并 accept-link 分支（v0.7 NEW rc1）**、**close vs spawn 复用（v0.7 NEW）** |
 | `08-memory-and-bootstrap.md` | MemoryBootstrap、`/init`、`memory_refresh` 增量、`refreshStale` |
-| `09-audit-and-cache.md` | ChainAudit API、manifest 字段全表、audit.jsonl 事件类型、Cache 目录、Lifecycle hooks + `CO_*` env、TUI 渲染挂钩 |
+| `09-audit-and-cache.md` | ChainAudit API（含 `recordLinkCommit` / `collectUpstreamCommits` / `clearLinkCommitsFrom` rc1 三方法）、manifest 字段全表、audit.jsonl 事件类型、Cache 目录、Lifecycle hooks + `CO_*` env、TUI 渲染挂钩 |
 | `10-magic-loop.md` | **v0.7 NEW 收束**：`--magic` 配置传播、spawn_chain 端到端时序、Chain Forest 模型、终止条件矩阵、v0.7/v0.6 不兼容性 |
 
 ---

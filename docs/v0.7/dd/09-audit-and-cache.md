@@ -59,10 +59,38 @@ export interface ChainAudit {
   incrementRetry(chainId: ChainId): Promise<number>;             // 返回新的 total_retry_count
   appendChildChain(chainId: ChainId, child: ChainId): Promise<void>; // [v0.7 NEW]
 
+  // —— rc1 worktree 工作流（**[v0.7 NEW]**，与 02 §6.0 LinkCommitRecord 协同）
+  recordLinkCommit(
+    chainId: ChainId,
+    link: TaskLink,
+    commits: LinkCommitRecord,                         // { worktree, docs, branch }
+  ): Promise<void>;
+  // ↑ 由 Worker 完成任务后通过 completion_report 把 LinkCommitRecord 携带回 Leader，
+  //   ChainRouter.handleCompletionReport 调用此方法落到 manifest.link_commits[link]。
+  //   幂等：同 (chainId, link) 二次调用直接覆盖。
+
+  collectUpstreamCommits(
+    chainId: ChainId,
+  ): Promise<UpstreamCommits>;
+  // ↑ ChainRouter dispatchNextLink 前调用，构造仅含 worktree SHA 的 UpstreamCommits
+  //   注入到 task_dispatch.upstream_commits + Task.upstream_commits。
+  //   遍历顺序固定 plan → build → verify → review（accept 不参与 — accept 是合并目标，无下游）。
+  //   `worktree == null` 的 link 自动跳过（典型：plan/verify/review 不动代码）。
+
+  clearLinkCommitsFrom(
+    chainId: ChainId,
+    fromLink: TaskLink,
+  ): Promise<void>;
+  // ↑ feedback 决策时由 ChainRouter 调用：擦除 fromLink 及其下游 link 的 link_commits 记录，
+  //   保证重试从干净的上游基线开始。顺序 plan → build → verify → review → accept。
+  //   例：fromLink='verify' → 擦除 verify / review / accept 三条记录。
+
   // —— 审计事件
   appendAudit(event: AuditEvent): Promise<void>;
 }
 ```
+
+> **rc1 三方法的代码归属**：`packages/leader/src/chain-audit.ts:218`（recordLinkCommit）/`:249`（collectUpstreamCommits）/`:268`（clearLinkCommitsFrom）。`LinkCommitRecord` 定义见 `02-contracts-and-protocol.md` §6.0；`UpstreamCommits` 定义见 §9。
 
 ### 1.3 manifest.json 字段全表
 
@@ -77,6 +105,7 @@ export interface ChainAudit {
 | `merge_failures[]` | { link, branch, error } | closeChain（仅 `merge_failed`） | MergeValidator（详见 `07-merge-validator-and-closure.md` §4） |
 | `link_tasks[link]` | TaskId | ChainRouter push 任务后 | ChainRouter |
 | `link_workers[link]` | InstanceId | task_claimed 事件后 | ChainRouter（订阅 `task_claimed`） |
+| **`link_commits[link]`** **[v0.7 NEW]** | LinkCommitRecord | Worker 任务完成 → completion_report 到达 | ChainRouter.handleCompletionReport（调 `recordLinkCommit`） |
 | `total_retry_count` | int | incrementRetry | ChainRouter（feedback 派发前） |
 | `max_total_retries` | int | openChain | ChainAudit（读 env） |
 | `requirement_path` | string | openChain | ChainAudit |

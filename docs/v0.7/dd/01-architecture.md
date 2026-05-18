@@ -317,13 +317,24 @@ CLI 参数 / 环境变量
 | `zookeeper.root_path` | `/claude-orchestrator` | 全局 |
 | `cache_dir` | `~/.claude-orchestrator` | 全局 |
 | `commands.claude-cli` | `claude --dangerously-skip-permissions --permission-mode dontAsk` | 全局 |
+| `commands.git` | `git` | 全局 |
 | `hooks.worker_message_start` 等 | `null` | 全局 |
-| `--worker N` | `6`（最小 6） | CLI |
+| `--worker N` | `6`(最小 6) | CLI |
 | `max_total_retries` (`CO_CHAIN_MAX_RETRIES`) | `9` | env |
+| **`git.merge_target_branch`** **[v0.7 NEW]** | `null`（回退到 Leader HEAD） | 全局 / 项目 |
+| **`git.remote`** **[v0.7 NEW]** | `"origin"`（`null` 关闭 fetch / pre-task remote 同步） | 全局 / 项目 |
+| **`git.auto_commit_init_files`** **[v0.7 NEW]** | `true` | 全局 / 项目 |
+| **`git.auto_commit_init_files_branch`** **[v0.7 NEW]** | `null`（不另起分支） | 全局 / 项目 |
+| **`worktree.reset_on_reuse`** **[v0.7 NEW]** | `true`（worktree 复用时 `git reset --hard <leader_head>`） | orchestrator 内部参数（非用户配置层；详见 `06-tasks-and-workers.md` §1） |
 | **`--magic`** **[v0.7 NEW]** | 关 | CLI |
 | **`--magic-max-chains M`** **[v0.7 NEW]** | unlimited | CLI / env `CO_MAGIC_MAX_CHAINS` |
 
-> 详见 `10-magic-loop.md` §1（magic 配置传播）。
+> **rc1 worktree 工作流相关键**：
+> - `git.merge_target_branch=null` 时 MergeValidator 在 `validate()` 现场 `git rev-parse --abbrev-ref HEAD` 取 Leader 进程当前分支；显式设 `"main"` 适用于"在 feature 分支启动 orchestrator 但要合并回 main"的工作流。
+> - `git.remote=null` 既禁 MergeValidator 的 `git fetch <remote> <main>` 也禁 Worker pre-task rebase 的 `git fetch <remote> <sha>`；适合无远程仓 / 离线开发。
+> - `worktree.reset_on_reuse` 在 orchestrator 复用既存 worktree 时执行 `git reset --hard <leader_head>`：**有损清理**，丢弃 worktree 中未 commit 的工作。代码归属：`packages/orchestrator/src/worktree-initializer.ts:166`。
+>
+> 详见 `10-magic-loop.md` §1（magic 配置传播）；`06-tasks-and-workers.md` §3.5（pre-task rebase）；`07-merge-validator-and-closure.md` §3.2 / §6.5（merge target / remote 应用、`isCommitMerged`）；代码 `packages/orchestrator/src/worktree-initializer.ts:166`（worktree 复用 + `reset_on_reuse`）。
 
 ---
 
@@ -388,3 +399,54 @@ graph LR
 | Memory bootstrap | `08-memory-and-bootstrap.md` |
 | ChainAudit / Cache / Hook | `09-audit-and-cache.md` |
 | `--magic` 端到端 | `10-magic-loop.md` |
+
+---
+
+## 11. 包结构与依赖（monorepo 物理布局）
+
+代码组织为 8 个 npm 包，按依赖单向流动：
+
+```
+packages/
+├── infra/           # 基础设施层：zk client, fs paths, logger, config-loader
+├── contracts/       # 协议契约层：所有 Zod schemas、错误类、enum、接口（IClaudeRunner / IEventBus / ...）
+├── runtime/         # 运行时层：ClaudeRunner、TemplateEngine、HookEngine（执行 + 渲染 + hook）
+├── coordination/    # 协调层：TaskQueue、MessageRouter、Registry（基于 zk client 包装的高级原语）
+├── leader/          # Leader 侧业务：ChainAudit、ChainRouter、MergeValidator、WorkerMonitor、Recovery、TUI 状态机
+├── worker/          # Worker 侧业务：Watcher、CommitChecker、DocsCommitter、SelfEvaluator、ParentLiveness
+├── orchestrator/    # 进程编排：5-phase 启动、worktree-initializer、fork 子进程
+└── cli/             # 用户入口：commander 命令注册、参数解析
+```
+
+### 11.1 依赖单向流（7 层）
+
+```mermaid
+graph TD
+  CLI[cli]
+  ORCH[orchestrator]
+  LEAD[leader]
+  WORK[worker]
+  COORD[coordination]
+  RUNT[runtime]
+  CON[contracts]
+  INF[infra]
+
+  CLI --> ORCH
+  ORCH --> LEAD & WORK
+  LEAD --> COORD & RUNT & CON & INF
+  WORK --> COORD & RUNT & CON & INF
+  COORD --> CON & INF
+  RUNT --> CON & INF
+  CON --> INF
+```
+
+> **不变量**：
+> - **零循环依赖**：上层依赖下层，反之不允许。`contracts` 仅依赖 `infra`（类型 / logger 接口），不依赖任何业务包。
+> - **跨 Leader/Worker 共享**：所有跨进程协议（schemas / errors / enums / 接口）只放 `contracts`；`leader` 与 `worker` 互不依赖。
+> - **`runtime` 不感知 ZK**：ClaudeRunner / TemplateEngine / HookEngine 是纯执行层，不直接调用 zk client；coordination 层负责 ZK 桥接。
+
+### 11.2 与 v0.6 的差异
+
+- v0.6 仅 7 个包（`worker` 拆出 `coordination` 是 v0.7 NEW，把"Worker 与 ZK 的消息读写"从 worker 业务剥离）。
+- `contracts` 在 v0.7 NEW 增 `LinkCommitRecord` / `UpstreamCommitsSchema` / 4 个 git 错误类 / `MagicDepthExhaustedError`（详见 `02-contracts-and-protocol.md` §6.0 / §9 / §12）。
+- `worker` 在 v0.7 NEW 增 `DocsCommitter` 子模块（双轨 commit，详见 `06-tasks-and-workers.md` §4.5）。

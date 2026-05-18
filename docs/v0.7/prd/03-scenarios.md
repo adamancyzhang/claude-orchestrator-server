@@ -72,20 +72,20 @@ claude-orchestrator run --worker 6
 ```
 user_input received
 chain_activated chain-001
-task_dispatch  plan    task-0000000001 → Tom
-worker_message_received Tom  (plan started)
-task_completed task-0000000001 (Tom, plan)
-task_dispatch  execute task-0000000002 → Jerry
-... (execute 完成)
-task_dispatch  verify  task-0000000003 → Lucy
+task_dispatch  plan    task-0000000001 → Tom        (upstream_commits={})
+worker_message_received Tom  (plan started; no rebase — plan 是链起点)
+task_completed task-0000000001 (Tom, plan; link_commit_record recorded)
+task_dispatch  build   task-0000000002 → Jerry      (upstream_commits={plan: <SHA>})
+worker_message_received Jerry  (pre-task rebase onto Tom's plan SHA, ok)
+... (build 完成；双轨 commit：项目仓代码 + CO root docs)
+task_dispatch  verify  task-0000000003 → Lucy       (upstream_commits={plan, build})
 ... (verify 完成)
-task_dispatch  review  task-0000000004 → Thomas
+task_dispatch  review  task-0000000004 → Thomas     (upstream_commits={plan, build, verify})
 ... (review 完成)
-task_dispatch  accept  task-0000000005 → Jack
+task_dispatch  accept  task-0000000005 → Jack       (upstream_commits={plan, build, verify, review})
+worker_message_received Jack  (pre-task rebase onto Thomas's review SHA → accept 分支线性聚合整条链)
 ... (accept 完成)
-debug_info     Merge: merge — Merged claude-orchestrator/Tom-workspace ...
-debug_info     Merge: merge — Merged claude-orchestrator/Jerry-workspace ...
-... (5 次)
+debug_info     Merge: merge — Merged Jack's accept branch into main (single --no-ff commit)
 chain_closed   chain-001  (completed)
 ```
 
@@ -93,21 +93,23 @@ chain_closed   chain-001  (completed)
 
 1. TUI 把输入写入 `/messages/{leader_id}/msg-NNNNN`（type=`user_input`）
 2. LeaderWatcher 捕获 → ChainRouter.handleRequirement
-3. ChainRouter 调用 decompose 模板（若已加载则 Leader 自处理；否则转发 Planner Worker）→ ChainDef JSON `{ plan, execute, verify, review, accept }`（`--magic` 启用时追加 `explore`）
-4. ChainAudit `openChain(chain-001)` → 写入 `manifest.json`（status=`active`）+ `requirement.md`
-5. push 5 个 task 到 `/tasks/pending/`
-6. Tom 的 ZK Watch 触发 → 认领 plan task → 渲染 `worker-plan.md` → `claude -p` 执行 → 自动 commit → 自评估 → completion_report(activate_next)
-7. Leader 收到完成报告 → activate_next → 派发 execute task 给 Jerry
-8. 重复至 Jack(accepter) 输出 `close_chain`
-9. ChainRouter 触发 MergeValidator.runMergeValidation：遍历链内 5 个 commit，逐个调用 `worker-merge-decision.md`（claude-cli 执行 `git merge-base / git merge --no-ff`）
-10. 全部成功 → ChainAudit `closeChain(chain-001, "completed")` → 发射 `chain_closed`
+3. ChainRouter 调用 decompose 模板（若已加载则 Leader 自处理；否则转发 Planner Worker）→ ChainDef JSON `{ plan, build, verify, review, accept }`（`--magic` 启用时追加 `explore`）
+4. ChainAudit `openChain(chain-001)` → 写入 `manifest.json`（status=`running`）+ `requirement.md`；`link_commits={}`、`upstream_commits={}`
+5. push 5 个 task 到 `/tasks/pending/`；plan task 的 `upstream_commits={}`，下游 link 由 dispatch 时 `collectUpstreamCommits` 注入
+6. Tom 的 ZK Watch 触发 → 认领 plan task → **pre-task rebase 跳过**（无上游）→ 渲染 `worker-plan.md` → `claude -p` 执行 → CommitChecker 双轨 commit（worktree + docs）→ 自评估 → completion_report(decision=activate_next, commits={worktree, docs, branch})
+7. Leader 收到完成报告 → ChainRouter 调 `ChainAudit.recordLinkCommit(chain-001, plan, {…})` → activate_next → 调 `collectUpstreamCommits(chain-001)` 得 `{plan: <Tom 的 worktree SHA>}` → 派发 build task 给 Jerry，注入 task.upstream_commits + message.upstream_commits
+8. Jerry 收到 build task → **pre-task rebase**：`git merge-base --is-ancestor <plan SHA> HEAD` → 不在 → `git rebase <plan SHA>` 把自己分支线性接到 plan 上 → 渲染 `worker-build.md` → 执行 → 双轨 commit → completion_report
+9. 重复至 Jack(accepter) 输出 `close_chain`；Jack 的 accept 分支已通过 pre-task rebase 串联 plan ← build ← verify ← review ← accept
+10. ChainRouter 触发 `runCloseChainMerge`：读 `manifest.link_commits.accept.{worktree, branch}` → **单次** `MergeValidator.validate(accept-link)` → `isCommitMerged` 判断 → claude-cli 给出 `decision='merge'` → `git checkout main && git merge --no-ff <accept.branch>` → 成功
+11. ChainAudit `closeChain(chain-001, "completed")` → 发射 `chain_closed`
 
 **最终状态**
 
-- `~/.../chains/chain-001/manifest.json` `status: "completed"`
-- main 分支多出 5 个 `--no-ff` merge commit
-- 5 个 `tasks/<task_id>/result.md` 文件
-- audit.jsonl 含 `chain_opened` / `requirement_received` / `task_dispatch ×5` / `completion_report ×5` / `chain_closed`
+- `~/.../chains/chain-001/manifest.json` `status: "completed"`、`link_commits` 5 个 link 的 record 都存在、`completed_at` 已写
+- main 分支多出 **1 个** `--no-ff` merge commit（含整条链所有代码）
+- 项目仓 5 个 per-Worker 分支保留；accept 分支为线性 tip
+- CO root 仓 `docs/<worker_name>/` 下出现 5 个 `result.md` 并已 commit（轨 B，best-effort）
+- audit.jsonl 含 `chain_opened` / `requirement_received` / `task_dispatch ×5`（带 upstream_commits）/ `completion_report ×5`（带 LinkCommitRecord）/ `merge_validation_completed` / `chain_closed`
 
 ---
 
@@ -203,40 +205,50 @@ CommitChecker 静默 `return null` → watcher 走 self-evaluator → 通常输�
 
 ---
 
-## S-06 — close_chain 合并冲突 → `merge_failed` + Executor retry（R-02）
+## S-06 — close_chain 合并冲突 → `merge_failed` + accept-link Worker retry（R-02）**[v0.7 rc1 修订]**
 
 **触发**
 
-Executor worktree 与 main 同时修改了同一文件不可自动合并的区域；链推进到 accept → close_chain（或 `--magic` 模式下 explore → close_chain / spawn_chain）。
+链的 accept 分支（汇聚整条链代码）与 main 同时修改了同一文件不可自动合并的区域；链推进到 accept → close_chain（或 `--magic` 模式下 explore → close_chain / spawn_chain）。
 
 **用户体验**
 
 EVENT LOG 红色提示：
 
 ```
-MERGE_FAILED chain chain-001: 1 branch(es) [claude-orchestrator/Jerry-workspace] — retry tasks pushed
+MERGE_FAILED chain chain-001: conflict on branch claude-orchestrator/Jack-workspace — retry pushed to Jack (accept-link)
 chain_closed  chain-001  (merge_failed)
 ```
 
-Jerry 收件箱出现新 task_dispatch，description 含 `Merge conflict on branch <branch> at <sha>: <message>. Pull main, resolve conflicts in your worktree, re-commit, and re-run this link.`
+Jack（accept-link Worker）收件箱出现新 task_dispatch，description 含 `Merge conflict on branch <branch> at <sha>: <conflict_files>. Pull main, resolve conflicts in your worktree, re-commit, and self-evaluate.`
 
 **系统行为**
 
-1. ChainRouter.runMergeValidation 遍历 chainCommits 时收集失败 `{link, sha, branch, message, error}` 入 failures 列表（不再吞噬）
-2. 链路 close_chain 分支检测 failures 非空 →
-   a. 每个失败 audit `merge_failure` 事件
+1. ChainRouter.runCloseChainMerge 读 `manifest.link_commits.accept.{worktree, branch}` → `MergeValidator.validate({sha, branch, link:'accept', ...})`
+2. MergeValidator 执行 `git merge --no-ff <accept.branch>` → 失败 → `merge --abort` + `checkout <prev>` → `classifyGitError` → 抛 `MergeConflictError(branch, conflict_files)`
+3. ChainRouter 在 catch 中：
+   a. audit `merge_failure { category: 'conflict', branch, error, conflict_files }`
    b. ChainAudit `closeChain(chainId, "merge_failed", { failures })`
    c. 发射 `chain_merge_failed` 事件（TUI 红字渲染）
-   d. 对每个失败 link 从 manifest.link_workers 查到对应 Worker，push 一条 priority=0、assigned_to=该 Worker、link=失败 link 的 retry task
-3. emit `chain_closed`，链状态为 `merge_failed`
+   d. push 一条 priority=HIGH、assigned_to=**accept-link Worker**、link=`accept` 的 retry task（rc1：不再按失败 link 派给中间 link 的 Worker）
+4. emit `chain_closed`，链状态为 `merge_failed`
 
-**后续**
+**与 worktree_locked / permission / network 的差异**
 
-Executor 在自己 worktree 中 `git pull main && git merge`，解决冲突、重新 commit → 接到的 retry task 走标准链路推进。最终 main 含完整链 commit，manifest.status 变为 `completed`（注：每次 retry 起的是子流程，不复用旧的 close_chain）。
+若失败是 `WorktreeLockedError` / `GitPermissionError` / `GitNetworkError`：
+
+- audit 中 `category` 字段标识类别
+- **不**派 retry task —— 这些是基础设施级失败，反复 retry 无意义
+- 操作员排查后手动触发 close 重试
+
+**后续（conflict 路径）**
+
+Jack 在自己 worktree 中 `git fetch origin main && git rebase origin/main`，解决冲突、重新 commit → SelfEvaluator → 输出 `activate_next` → ChainRouter 在 `[merge retry]` 特例分支识别 → 重新触发 `runCloseChainMerge`。最终 main 含 1 个 `--no-ff` merge commit（rc1 单次合并），manifest.status 变为 `completed`。
 
 **修复前的旧行为**（已修复）
 
-`runMergeValidation` 用 `logger.warn` 吞掉失败、循环继续；`close_chain` 不论 failures 都写 `status="completed"` → 主线半合并、链标完成、用户无感。
+- v0.6 `runMergeValidation` 用 `logger.warn` 吞掉失败、循环继续；`close_chain` 不论 failures 都写 `status="completed"` → 主线半合并、链标完成、用户无感（FR-17 修复）。
+- v0.6 ancestry 检查依赖 `git branch --contains` —— shared `.git` 下永远返回 true，所有 merge 被静默跳过（rc1 改用 `git merge-base --is-ancestor` 修复，详见 `../dd/07-merge-validator-and-closure.md` §6.4）。
 
 ---
 

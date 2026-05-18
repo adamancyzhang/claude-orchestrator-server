@@ -213,6 +213,24 @@ function resolveFeedbackTarget(
 
 ## 6. ChainManifest schema **[v0.7 NEW 字段]**
 
+### 6.0 LinkCommitRecord **[v0.7 NEW]**
+
+```ts
+// 每条 link 的双轨 commit 记录（rc1 worktree 工作流）
+export const LinkCommitRecordSchema = z.object({
+  worktree: z.string().nullable(),   // 项目仓 worker 分支上的 commit SHA（null = 该 link 无代码变更）
+  docs:     z.string().nullable(),   // CO root 仓上对 docs/<worker_name>/ 的 commit SHA（null = 无 docs 变更或 commit 失败）
+  branch:   z.string(),              // worker 分支名，close_chain 时 MergeValidator 用它定位待合并分支
+});
+export type LinkCommitRecord = z.infer<typeof LinkCommitRecordSchema>;
+```
+
+> 代码归属：`packages/leader/src/chain-audit.ts:29`（接口当前以 TS interface 形式定义，schema 层 v0.7 NEW 收敛为 Zod，方便 ZK/manifest 反序列化校验）。
+
+> 字段语义：
+> - `worktree` 与 `docs` 解耦：worktree commit 是任务"代码产出"的真相源；docs commit 是 best-effort 的归档（CO root 仓共享，并发写入可失败，详见 `06-tasks-and-workers.md` §4.5）。
+> - `branch` 总是非空：即便 `worktree=null`（无代码变更），下游 link 的 pre-task rebase 仍可能用到该 branch 作为 fallback 起点。
+
 ### 6.1 ChainStatus
 
 ```ts
@@ -249,6 +267,12 @@ export const ChainManifestSchema = z.object({
   link_tasks:         z.record(TaskLinkSchema, TaskIdSchema).partial(),
   link_workers:       z.record(TaskLinkSchema, InstanceIdSchema).partial(),
 
+  // —— rc1 worktree 工作流 **[v0.7 NEW]** ——
+  link_commits:       z.record(TaskLinkSchema, LinkCommitRecordSchema).partial().default({}),
+  // 每个 link 完成时由 ChainAudit.recordLinkCommit(chainId, link, {worktree, docs, branch}) 写入；
+  // 下游 link dispatch 前由 ChainAudit.collectUpstreamCommits(chainId) 读取并注入 task_dispatch.upstream_commits；
+  // feedback 决策时由 ChainAudit.clearLinkCommitsFrom(chainId, fromLink) 擦除 fromLink 及其下游记录，保证 retry 从干净的上游开始。
+
   // —— 反馈韧性（FR-18）
   total_retry_count:  z.number().int().nonnegative().default(0),
   max_total_retries:  z.number().int().positive().default(9),  // CO_CHAIN_MAX_RETRIES 覆写
@@ -273,8 +297,11 @@ export type ChainManifest = z.infer<typeof ChainManifestSchema>;
 | `child_chain_ids` | 跑完后含所有 child（顺序 append） | 同上递归 |
 | `chain_depth` | `0` | `parent.chain_depth + 1` |
 | `magic_mode` | `false`（默认）/ `true`（`--magic` 启动） | 继承父链 `true` |
+| `link_commits` | 每个 link 完成时 append；feedback 时擦除 fromLink 及下游 | 子链独立维护，**不**继承父链 link_commits |
 
 > `magic_mode=false` 时 ChainDef 不含 explore 任务；`magic_mode=true` 时 ChainDef 必含 explore 任务且 NEXT_LINKS.accept 启用为 → explore。详见 `10-magic-loop.md` §3。
+>
+> `link_commits` 仅在 chain 内传递；子链 spawn 时 ChainAudit 为子链开新 manifest，`link_commits` 重置为空 `{}`，子链的 plan link 不感知父链 worktree commit（PRD §6.1 跨 chain 上下文受限）。
 
 ---
 
@@ -328,11 +355,16 @@ export const TaskSchema = z.object({
   created_at:    z.string().datetime(),
   claimed_at:    z.string().datetime().nullable(),
   completed_at:  z.string().datetime().nullable(),
+
+  // —— v0.7 NEW —— rc1 worktree 工作流
+  upstream_commits: UpstreamCommitsSchema.optional(),  // 见 §9
 });
 export type Task = z.infer<typeof TaskSchema>;
 ```
 
 > ZK 落位：`/tasks/pending/task-NNNNN`（PERSISTENT_SEQUENTIAL）／`/tasks/claimed/<instance_id>-task-NNNNN`（EPHEMERAL，atomic claim lock）／`/tasks/completed/task-NNNNN`（PERSISTENT）。详见 `01-architecture.md` §3。
+>
+> `Task.upstream_commits` 与 `Message.upstream_commits`（§9）双写：ChainRouter 同时把 `UpstreamCommits` 写入新建 Task 和派发它的 task_dispatch message，Worker 优先用 message 字段（更新），fallback 到 task 字段。两处冗余保护"消息丢失但任务从 ZK pending 残留"的恢复路径。
 
 ---
 
@@ -365,11 +397,29 @@ export const MessageSchema = z.object({
   // —— v0.7 NEW —— spawn_chain 注入的 user_input 携带这两个字段
   spawned_from: ChainIdSchema.optional(),  // [v0.7 NEW]
   next_requirement: z.string().optional(),  // [v0.7 NEW] 与 spawned_from 配对
+
+  // —— v0.7 NEW —— rc1 worktree 工作流：下游 link 的 pre-task rebase 用
+  upstream_commits: UpstreamCommitsSchema.optional(),
 });
 export type Message = z.infer<typeof MessageSchema>;
+
+// 上游 link 的 worktree SHA 映射（只携带 worktree，不携带 docs / branch — pre-task rebase 只需 sha）
+export const UpstreamCommitsSchema = z.object({
+  plan:   z.string().nullable().optional(),
+  build:  z.string().nullable().optional(),
+  verify: z.string().nullable().optional(),
+  review: z.string().nullable().optional(),
+});
+export type UpstreamCommits = z.infer<typeof UpstreamCommitsSchema>;
 ```
 
 > ZK 落位：`/messages/{instance_id}/msg-NNNNN`（PERSISTENT_SEQUENTIAL）。每个 Worker 一个独立目录。
+>
+> **upstream_commits 注入与消费**：
+> - **注入**：ChainRouter 在 dispatchNextLink 前调用 `ChainAudit.collectUpstreamCommits(chain_id)`，将含 worktree SHA 的 `UpstreamCommits` 写入 `task_dispatch.upstream_commits`（详见 `09-audit-and-cache.md` §1.2 与 `06-tasks-and-workers.md` §3.7）。
+> - **消费**：Worker 在执行任务前从 `msg.upstream_commits` 取出上一个 link 的 worktree SHA，执行 `git rebase <sha>`（详见 `06-tasks-and-workers.md` §3.5 pre-task rebase）。
+> - **不含 `accept`**：accept link 是 close_chain 的合并目标，没有下游 link 需要 rebase 到它，schema 故意只列 plan/build/verify/review 四个。
+> - 同名字段 `Task.upstream_commits` 同步存在于 `TaskSchema`（§8），由 TaskQueue.push 写入 ZK 并由 Worker 读出后转交 ClaudeRunner 模板渲染。代码归属：`packages/contracts/src/schemas/task.ts:26`。
 
 ---
 
@@ -395,6 +445,8 @@ export type MergeDecision = z.infer<typeof MergeDecisionSchema>;
 ```
 
 > 详见 `07-merge-validator-and-closure.md` §2。
+>
+> **rc1 调用模型（**[v0.7 NEW]**）**：close_chain 仅调 `MergeValidator.validate()` **一次**（针对 accept-link 分支），产生**一条** MergeDecision。schema 本身不变；语义层从"每 link 一个 decision"收敛为"每 close_chain 一个 decision"。legacy fallback（详见 `07-merge-validator-and-closure.md` §6.7）仍能产生多条 decision，schema 上向后兼容。
 
 ---
 
@@ -458,44 +510,100 @@ payload = Message JSON（见 §9）。
 
 ## 12. 错误类目录
 
+所有错误类继承自统一基类 `CoError`，携带 `code` 字符串与可选 `cause`。代码归属：`packages/contracts/src/errors.ts`。下表 14 个类按域分组：
+
 ```ts
-export class ChainConflictError extends Error {           // FR-20
-  constructor(public chainId: ChainId, public existingStatus: ChainStatus) {
-    super(`chain ${chainId} already in terminal state: ${existingStatus}`);
-  }
+export class CoError extends Error {
+  public readonly code: string;
+  public readonly cause?: unknown;
+  constructor(code: string, message: string, cause?: unknown) { ... }
 }
 
-export class CommitFailedError extends Error {            // FR-21
-  constructor(public worktreePath: string, public gitStderr: string) {
-    super(`commit failed in ${worktreePath}: ${gitStderr}`);
-  }
+// —— ZK 域 ——
+export class ZkError extends CoError {}
+export class ZkSessionExpiredError extends ZkError {        // ZK_SESSION_EXPIRED
+  constructor(message = "ZK session expired", cause?: unknown);
+}
+export class ZkNodeExistsError extends ZkError {            // ZK_NODE_EXISTS
+  constructor(message = "ZK node exists", cause?: unknown);
+}
+export class ZkNodeNotFoundError extends ZkError {          // ZK_NODE_NOT_FOUND
+  constructor(message = "ZK node not found", cause?: unknown);
 }
 
-export class OrphanRetryExhaustedError extends Error {    // FR-23
-  constructor(public taskId: TaskId, public retryCount: number) {
-    super(`task ${taskId} exceeded MAX_RETRY=3 (retry_count=${retryCount})`);
-  }
+// —— Protocol / Validation ——
+export class ValidationError extends CoError {              // VALIDATION_FAILED — FR-10 / FR-33 spawn_chain 误用 / MergeDecision JSON 解析失败
+  constructor(message: string, cause?: unknown);
+}
+export class ProtocolVersionMismatchError extends CoError { // PROTOCOL_VERSION_MISMATCH — §1.2 跨版本拒连
+  constructor(expected: string, actual: string);
 }
 
-export class MagicDepthExhaustedError extends Error {     // FR-34
-  constructor(public chainDepth: number, public maxChains: number) {
-    super(`magic chain depth ${chainDepth} >= --magic-max-chains ${maxChains}`);
-  }
+// —— Runtime ——
+export class ClaudeRunnerError extends CoError {            // CLAUDE_RUNNER_FAILED
+  constructor(message: string, cause?: unknown);
+}
+export class TemplateNotFoundError extends CoError {        // TEMPLATE_NOT_FOUND
+  constructor(name: string);
+}
+export class HookError extends CoError {                    // HOOK_FAILED
+  constructor(message: string, cause?: unknown);
 }
 
-export class ValidationError extends Error {              // FR-10/FR-33 spawn_chain 误用
-  constructor(public schemaName: string, public detail: unknown) {
-    super(`validation failed: ${schemaName}`);
-  }
+// —— Business ——
+export class ChainConflictError extends CoError {           // CHAIN_ID_CONFLICT — FR-20
+  constructor(
+    chainId: string,
+    public readonly existing_status: string,
+    public readonly existing_completed_at: string | null,
+  );
+}
+export class CommitFailedError extends CoError {            // WORKER_COMMIT_FAILED — FR-21
+  constructor(message: string, public readonly stderr: string, cause?: unknown);
+}
+export class OrphanRetryExhaustedError extends CoError {    // ORPHAN_RETRY_EXHAUSTED — FR-23
+  constructor(taskId: string, retryCount: number);
+}
+export class MergeConflictError extends CoError {           // MERGE_CONFLICT — FR-17
+  constructor(message: string, public readonly conflict_files: string[] = []);
+}
+export class WorktreeError extends CoError {                // WORKTREE_FAILED — FR-07 worktree 创建/初始化失败
+  constructor(message: string, cause?: unknown);
+}
+export class MagicDepthExhaustedError extends CoError {     // MAGIC_DEPTH_EXHAUSTED — FR-34 **[v0.7 NEW]**
+  constructor(public chainDepth: number, public maxChains: number);
+}
+
+// —— Git 五分类（rc1 worktree 工作流，**[v0.7 NEW]**） ——
+export class WorktreeLockedError extends CoError {          // WORKTREE_LOCKED **[v0.7 NEW]**
+  constructor(message: string, public readonly stderr: string = "", cause?: unknown);
+}
+export class GitPermissionError extends CoError {           // GIT_PERMISSION_DENIED **[v0.7 NEW]**
+  constructor(message: string, public readonly stderr: string = "", cause?: unknown);
+}
+export class GitNetworkError extends CoError {              // GIT_NETWORK_FAILED **[v0.7 NEW]**
+  constructor(message: string, public readonly stderr: string = "", cause?: unknown);
+}
+export class RebaseConflictError extends CoError {          // REBASE_CONFLICT — pre-task rebase 冲突 **[v0.7 NEW]**
+  constructor(message: string, public readonly conflict_files: string[] = [], cause?: unknown);
 }
 ```
 
 > 处理位置见各 DD 文件：
+> - ZkError / ZkSessionExpiredError / ZkNodeExistsError / ZkNodeNotFoundError → `01-architecture.md` §7（ZK 断连重试）
+> - ProtocolVersionMismatchError → §1.2 校验流程
+> - ClaudeRunnerError → `06-tasks-and-workers.md` §3（任务执行）
+> - TemplateNotFoundError → `03-identity-and-roles.md` §4（模板加载）
+> - HookError → `09-audit-and-cache.md` §6（HookEngine）
+> - ValidationError → `05-chain-router-and-decisions.md` §5.2 + `07-merge-validator-and-closure.md` §6
 > - ChainConflictError → `09-audit-and-cache.md` §3.2 + `05-chain-router-and-decisions.md` §3
 > - CommitFailedError → `06-tasks-and-workers.md` §4
-> - OrphanRetryExhaustedError → `06-tasks-and-workers.md` §6
+> - OrphanRetryExhaustedError → `06-tasks-and-workers.md` §8
+> - MergeConflictError → `07-merge-validator-and-closure.md` §4.2（merge_failed 触发 retry）
+> - WorktreeError → `03-identity-and-roles.md` §3（worktree 隔离创建）
 > - MagicDepthExhaustedError → `10-magic-loop.md` §5
-> - ValidationError（spawn_chain 误用） → `05-chain-router-and-decisions.md` §5.2
+> - WorktreeLockedError / GitPermissionError / GitNetworkError → `07-merge-validator-and-closure.md` §6.6 + `06-tasks-and-workers.md` §3.6（五分类）
+> - RebaseConflictError → `06-tasks-and-workers.md` §3.5（pre-task rebase 失败 → 强制 feedback）
 
 ---
 
