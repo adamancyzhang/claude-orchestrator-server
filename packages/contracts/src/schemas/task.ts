@@ -25,9 +25,10 @@ import {
  */
 export const UpstreamCommitsSchema = z.object({
   plan: z.string().nullable().optional(),
-  build: z.string().nullable().optional(),
+  execute: z.string().nullable().optional(),
   verify: z.string().nullable().optional(),
   review: z.string().nullable().optional(),
+  accept: z.string().nullable().optional(),
 });
 export type UpstreamCommits = z.infer<typeof UpstreamCommitsSchema>;
 

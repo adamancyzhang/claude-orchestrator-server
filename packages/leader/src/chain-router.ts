@@ -38,7 +38,10 @@ import type { ChainAudit, LinkCommitRecord } from "./chain-audit.js";
 import type { MemoryBootstrap } from "./memory-bootstrap.js";
 
 export interface IMergeValidator {
-  validate(commit: CommitInfo): Promise<MergeDecision>;
+  validate(
+    commit: CommitInfo,
+    mode?: "close" | "spawn",
+  ): Promise<MergeDecision>;
 }
 
 export type MergeFailureCategory =
@@ -57,30 +60,63 @@ export interface MergeFailure {
   category: MergeFailureCategory;
 }
 
+// v0.7 NEW — accept→explore is enabled only when magic_mode=true on the
+// chain manifest. ChainRouter.handleCompletionReport explicitly checks
+// magic_mode for the accept-link `activate_next` branch.
 const NEXT_LINKS: Record<TaskLink, TaskLink | null> = {
-  plan: "build",
-  build: "verify",
+  plan: "execute",
+  execute: "verify",
   verify: "review",
   review: "accept",
-  accept: null,
+  accept: "explore",
+  explore: null,
 };
 
 const PREV_LINKS: Record<TaskLink, TaskLink | null> = {
   plan: null,
-  build: "plan",
-  verify: "build",
+  execute: "plan",
+  verify: "execute",
   review: "verify",
   accept: "review",
+  explore: "accept",
 };
 
 const LINK_TO_ROLE: Record<TaskLink | "decompose", string> = {
   plan: "planner",
-  build: "builder",
+  execute: "executor",
   verify: "verifier",
   review: "reviewer",
   accept: "accepter",
+  explore: "explorer",
   decompose: "planner",
 };
+
+/**
+ * v0.7 NEW — link × decision legality matrix (DD 02 §5.2).
+ * `spawn_chain` is legal only at explore with magic_mode=true.
+ * `activate_next` on accept is legal only with magic_mode=true (else
+ * close_chain is expected at accept).
+ * `feedback` on plan is illegal (no PREV) and silently dropped by
+ * `resolveFeedbackTarget` returning null.
+ */
+function isDecisionLegalForLink(
+  decisionKind: EvalDecision["decision"],
+  link: TaskLink,
+  magicMode: boolean,
+): boolean {
+  if (decisionKind === "spawn_chain") {
+    return link === "explore" && magicMode;
+  }
+  if (decisionKind === "activate_next") {
+    if (link === "explore") return false; // explore has no NEXT_LINKS
+    if (link === "accept") return magicMode;
+    return true;
+  }
+  // feedback / reject / close_chain are accepted at every link (the
+  // existing handlers further constrain them — e.g. feedback on plan
+  // becomes feedback_unresolved).
+  return true;
+}
 
 export interface ChainRouterOptions {
   task_queue: ITaskQueue;
@@ -123,6 +159,23 @@ export interface ChainRouterOptions {
    * tests that don't exercise the memory refresh path.
    */
   memory_bootstrap?: MemoryBootstrap;
+  /**
+   * v0.7 NEW — when true, ChainRouter enables the magic loop:
+   *   - decompose template is rendered with magic_mode=true
+   *   - new ChainDefs MUST include an `explore` task
+   *   - accept-link `activate_next` is legal (→ explore)
+   *   - spawn_chain decisions at explore are honored
+   * Sourced from `--magic` CLI flag (orchestrator/run.ts).
+   */
+  magic_mode?: boolean;
+  /**
+   * v0.7 NEW — hard cap on chain_forest depth. When set, spawn_chain
+   * decisions whose `chain_depth + 1 >= magic_max_chains` are demoted
+   * to close_chain (with audit `magic_depth_exhausted`). null /
+   * undefined disables the cap. Sourced from `--magic-max-chains M`
+   * CLI flag (orchestrator/run.ts) or env `CO_MAGIC_MAX_CHAINS`.
+   */
+  magic_max_chains?: number | null;
 }
 
 export class ChainRouter {
@@ -382,6 +435,13 @@ export class ChainRouter {
         work_dir: process.cwd(),
         time: new Date().toISOString(),
         content: msg.content,
+        // v0.7 NEW — magic-mode awareness for the decompose template:
+        // when "true" the template must also emit an `explore` task.
+        magic_mode: this.opts.magic_mode ? "true" : "false",
+        magic_max_chains:
+          this.opts.magic_max_chains == null
+            ? "unlimited"
+            : String(this.opts.magic_max_chains),
       });
       await this.opts.runner.run({ prompt, log_path: logPath });
       const resultContent = await fs.promises.readFile(resultPath, "utf-8");
@@ -419,7 +479,55 @@ export class ChainRouter {
       throw new ValidationError("invalid ChainDef in message", parsed.error);
     }
     const chainDef: ChainDef = parsed.data;
-    const linkOrder: Array<TaskLink> = ["plan", "build", "verify", "review", "accept"];
+    const linkOrder: Array<TaskLink> = [
+      "plan",
+      "execute",
+      "verify",
+      "review",
+      "accept",
+      "explore",
+    ];
+
+    // v0.7 NEW — magic_mode ⊕ explore presence: ChainRouter rejects
+    // requirements whose ChainDef does not match the leader's mode.
+    // The decompose template is responsible for emitting an `explore`
+    // task iff magic_mode=true.
+    const magicMode = this.opts.magic_mode === true;
+    const hasExplore = chainDef.tasks.explore != null;
+    if (magicMode && !hasExplore) {
+      this.opts.logger.error(
+        "ChainDef missing `explore` task under --magic; requirement dropped",
+        { chain_id: chainDef.chain_id },
+      );
+      this.opts.bus.emit({
+        type: "debug_info",
+        message: `chain ${chainDef.chain_id}: ChainDef missing explore task under --magic — dropped`,
+      });
+      if (this.opts.chain_audit) {
+        await this.opts.chain_audit.record(chainDef.chain_id, {
+          event: "validation_failure",
+          payload: { reason: "magic_mode_requires_explore_task" },
+        });
+      }
+      return;
+    }
+    if (!magicMode && hasExplore) {
+      this.opts.logger.error(
+        "ChainDef carries `explore` task without --magic; requirement dropped",
+        { chain_id: chainDef.chain_id },
+      );
+      this.opts.bus.emit({
+        type: "debug_info",
+        message: `chain ${chainDef.chain_id}: ChainDef has explore task without --magic — dropped`,
+      });
+      if (this.opts.chain_audit) {
+        await this.opts.chain_audit.record(chainDef.chain_id, {
+          event: "validation_failure",
+          payload: { reason: "explore_task_without_magic_mode" },
+        });
+      }
+      return;
+    }
 
     // Persist requirement.md and open audit before any dispatch fires —
     // downstream workers read manifest.json to resolve upstream task ids,
@@ -434,6 +542,22 @@ export class ChainRouter {
       originalRequirement ?? msg.content,
       "utf-8",
     );
+    // v0.7 NEW — derive forest position from msg.spawned_from. Root
+    // chains (typed at the TUI) carry no spawned_from. Spawn-derived
+    // chains read the parent manifest to compute chain_depth+1 and
+    // inherit magic_mode (always true for spawned chains).
+    const parentChainId = msg.spawned_from ?? null;
+    let chainDepth = 0;
+    let parentManifest:
+      | Awaited<ReturnType<NonNullable<typeof this.opts.chain_audit>["readManifest"]>>
+      | null = null;
+    if (parentChainId && this.opts.chain_audit) {
+      parentManifest = await this.opts.chain_audit.readManifest(parentChainId);
+      if (parentManifest) {
+        chainDepth = parentManifest.chain_depth + 1;
+      }
+    }
+
     if (this.opts.chain_audit) {
       try {
         await this.opts.chain_audit.openChain(chainDef.chain_id, {
@@ -442,6 +566,9 @@ export class ChainRouter {
           leader_name: this.opts.leader_name,
           requirement_path: requirementPath,
           max_total_retries: this.opts.max_chain_retries,
+          parent_chain_id: parentChainId,
+          chain_depth: chainDepth,
+          magic_mode: magicMode,
         });
       } catch (err) {
         if (err instanceof ChainConflictError) {
@@ -470,6 +597,35 @@ export class ChainRouter {
         event: "requirement_received",
         payload: { requirement_path: requirementPath },
       });
+
+      // v0.7 NEW — wire up the chain forest: link the new chain to its
+      // parent in both directions and emit the spawn audit pair.
+      if (parentChainId) {
+        await this.opts.chain_audit.appendChildChain(
+          parentChainId,
+          chainDef.chain_id,
+        );
+        await this.opts.chain_audit.record(parentChainId, {
+          event: "chain_spawned",
+          payload: {
+            child_chain_id: chainDef.chain_id,
+            chain_depth: chainDepth,
+          },
+        });
+        await this.opts.chain_audit.record(chainDef.chain_id, {
+          event: "chain_spawned_from",
+          payload: {
+            parent_chain_id: parentChainId,
+            chain_depth: chainDepth,
+          },
+        });
+        this.opts.bus.emit({
+          type: "chain_spawned",
+          parent_chain_id: parentChainId,
+          child_chain_id: chainDef.chain_id,
+          chain_depth: chainDepth,
+        });
+      }
     }
 
     // Pre-resolve the first link's worker so we can stamp the pending
@@ -625,6 +781,44 @@ export class ChainRouter {
 
     const requirementPath = await this.resolveRequirementPath(msg.chain_id ?? null);
 
+    // v0.7 NEW — defensive legality check. The Worker's SelfEvaluator
+    // is the primary gate; ChainRouter records `invalid_decision` and
+    // aborts the chain if anything slips through (e.g. spawn_chain on
+    // the accept link, or activate_next on explore).
+    if (msg.chain_id && msg.link) {
+      const chainManifest = this.opts.chain_audit
+        ? await this.opts.chain_audit.readManifest(msg.chain_id)
+        : null;
+      const manifestMagic = chainManifest?.magic_mode ?? this.opts.magic_mode === true;
+      if (!isDecisionLegalForLink(decision.decision, msg.link, manifestMagic)) {
+        this.opts.logger.error("invalid decision for link — aborting chain", {
+          chain_id: msg.chain_id,
+          link: msg.link,
+          decision: decision.decision,
+          magic_mode: manifestMagic,
+        });
+        if (this.opts.chain_audit) {
+          await this.opts.chain_audit.record(msg.chain_id, {
+            event: "invalid_decision",
+            link: msg.link,
+            worker_id: msg.from_instance,
+            worker_name: msg.from_name,
+            task_id: (msg.task_id as TaskId | null) ?? null,
+            payload: {
+              decision: decision.decision,
+              magic_mode: manifestMagic,
+            },
+          });
+          await this.opts.chain_audit.closeChain(msg.chain_id, "aborted", {
+            reason: "invalid_decision",
+          });
+        }
+        this.emitChainClosed(msg.chain_id);
+        this.forgetChain(msg.chain_id);
+        return;
+      }
+    }
+
     switch (decision.decision) {
       case "activate_next": {
         if (!msg.chain_id) break;
@@ -730,63 +924,19 @@ export class ChainRouter {
       }
       case "close_chain": {
         if (msg.chain_id) {
-          // New model (v0.6+): each Worker pre-task rebases onto its
-          // immediate predecessor's commit, so the accept-link branch
-          // naturally contains a linear chain history M0 ← plan ←
-          // build ← verify ← review ← accept. close_chain merges that
-          // single branch into mainBranch instead of looping through
-          // every link's commit.
-          //
-          // Legacy fallback: when no link_commits exist (older
-          // Workers that don't emit `commits` envelope), fall back to
-          // the per-link iteration in runMergeValidation so existing
-          // chains in flight keep working.
-          const failures = await this.runCloseChainMerge(msg.chain_id);
-          if (failures.length > 0) {
-            // At least one commit could not be merged to main. Do NOT
-            // mark the chain "completed" — that would silently leave
-            // the deliverable half-merged. Record the failures, abort
-            // chain status as "merge_failed", and push a retry task to
-            // each link's worker so they can fix the conflict.
-            this.opts.logger.error("close_chain blocked: merge failures", {
-              chain_id: msg.chain_id,
-              count: failures.length,
-            });
-            if (this.opts.chain_audit) {
-              for (const f of failures) {
-                await this.opts.chain_audit.record(msg.chain_id, {
-                  event: "merge_failure",
-                  link: f.link,
-                  task_id: null,
-                  payload: {
-                    sha: f.sha,
-                    branch: f.branch,
-                    message: f.message,
-                    error: f.error,
-                  },
-                });
-              }
-              await this.opts.chain_audit.closeChain(
-                msg.chain_id,
-                "merge_failed",
-                { failures: failures as unknown as Record<string, unknown> },
-              );
-            }
-            this.opts.bus.emit({
-              type: "chain_merge_failed",
-              chain_id: msg.chain_id,
-              failures,
-            });
-            await this.pushMergeConflictRetries(msg, failures, requirementPath);
-            this.emitChainClosed(msg.chain_id);
-            this.forgetChain(msg.chain_id);
-            break;
-          }
-          if (this.opts.chain_audit) {
-            await this.opts.chain_audit.closeChain(msg.chain_id, "completed");
-          }
-          this.emitChainClosed(msg.chain_id);
-          this.forgetChain(msg.chain_id);
+          await this.runMergeAndCloseChain(
+            msg,
+            requirementPath,
+            "close",
+          );
+        }
+        break;
+      }
+      // v0.7 NEW — spawn_chain: Explorer requests parent close + child
+      // chain bootstrap with `next_requirement` as the new requirement.
+      case "spawn_chain": {
+        if (msg.chain_id) {
+          await this.handleSpawnChain(msg, decision, requirementPath);
         }
         break;
       }
@@ -803,6 +953,162 @@ export class ChainRouter {
         break;
       }
     }
+  }
+
+  /**
+   * Shared close-and-merge path used by both `close_chain` and
+   * `spawn_chain` decisions. Runs MergeValidator over the chain's
+   * accumulated commits, then either:
+   *   - closes the chain as `completed` (returns {merged: true}), or
+   *   - records the failures, closes as `merge_failed`, and pushes
+   *     merge-retry tasks (returns {merged: false}).
+   *
+   * v0.7 NEW — the `mode` argument is forwarded to
+   * `IMergeValidator.validate` so the audit trail distinguishes a
+   * close-driven merge from a spawn-driven one.
+   */
+  private async runMergeAndCloseChain(
+    msg: Message,
+    requirementPath: string | null,
+    mode: "close" | "spawn",
+  ): Promise<{ merged: boolean }> {
+    if (!msg.chain_id) return { merged: false };
+    const failures = await this.runCloseChainMerge(msg.chain_id, mode);
+    if (failures.length > 0) {
+      this.opts.logger.error(`${mode}_chain blocked: merge failures`, {
+        chain_id: msg.chain_id,
+        count: failures.length,
+      });
+      if (this.opts.chain_audit) {
+        for (const f of failures) {
+          await this.opts.chain_audit.record(msg.chain_id, {
+            event: "merge_failure",
+            link: f.link,
+            task_id: null,
+            payload: {
+              sha: f.sha,
+              branch: f.branch,
+              message: f.message,
+              error: f.error,
+              mode,
+            },
+          });
+        }
+        await this.opts.chain_audit.closeChain(
+          msg.chain_id,
+          "merge_failed",
+          {
+            failures: failures as unknown as Record<string, unknown>,
+            mode,
+          },
+        );
+      }
+      this.opts.bus.emit({
+        type: "chain_merge_failed",
+        chain_id: msg.chain_id,
+        failures,
+      });
+      await this.pushMergeConflictRetries(msg, failures, requirementPath);
+      this.emitChainClosed(msg.chain_id);
+      this.forgetChain(msg.chain_id);
+      return { merged: false };
+    }
+    if (this.opts.chain_audit) {
+      await this.opts.chain_audit.closeChain(msg.chain_id, "completed");
+    }
+    this.emitChainClosed(msg.chain_id);
+    this.forgetChain(msg.chain_id);
+    return { merged: true };
+  }
+
+  /**
+   * v0.7 NEW — handle the spawn_chain Explorer decision. Steps:
+   *   1. Read parent manifest; reject if magic_mode mismatches the
+   *      decision (defense-in-depth, after isDecisionLegalForLink).
+   *   2. Enforce --magic-max-chains. When the new depth would meet or
+   *      exceed the cap, audit `magic_depth_exhausted` and demote to
+   *      a regular close_chain (the next_requirement is dropped).
+   *   3. Merge + close the parent chain (mode='spawn'). On merge
+   *      failure, the chain enters merge_failed and no child is
+   *      spawned (PRD §6.5).
+   *   4. On merge success, inject a synthetic user_input message
+   *      bearing `spawned_from = parent_chain_id` and
+   *      `next_requirement`. The LeaderWatcher → ChainRouter route()
+   *      path picks it up, opens the child chain via openChain (which
+   *      reads spawned_from to compute chain_depth+1 and link to the
+   *      parent).
+   */
+  private async handleSpawnChain(
+    msg: Message,
+    decision: Extract<EvalDecision, { decision: "spawn_chain" }>,
+    requirementPath: string | null,
+  ): Promise<void> {
+    const parentChainId = msg.chain_id;
+    if (!parentChainId) return;
+
+    const manifest = this.opts.chain_audit
+      ? await this.opts.chain_audit.readManifest(parentChainId)
+      : null;
+    const parentDepth = manifest?.chain_depth ?? 0;
+    const maxChains = this.opts.magic_max_chains ?? null;
+
+    // FR-34 — depth ceiling. >= because the new chain would be at
+    // depth `parentDepth + 1`, so when `parentDepth + 1 >= maxChains`
+    // the cap is hit. Demote to close_chain.
+    if (maxChains != null && parentDepth + 1 >= maxChains) {
+      this.opts.logger.warn(
+        "magic chain depth cap reached — demoting spawn_chain to close_chain",
+        {
+          chain_id: parentChainId,
+          chain_depth: parentDepth,
+          max_chains: maxChains,
+        },
+      );
+      if (this.opts.chain_audit) {
+        await this.opts.chain_audit.record(parentChainId, {
+          event: "magic_depth_exhausted",
+          payload: { chain_depth: parentDepth, max_chains: maxChains },
+        });
+      }
+      this.opts.bus.emit({
+        type: "magic_depth_exhausted",
+        chain_id: parentChainId,
+        chain_depth: parentDepth,
+        max_chains: maxChains,
+      });
+      await this.runMergeAndCloseChain(msg, requirementPath, "close");
+      return;
+    }
+
+    const { merged } = await this.runMergeAndCloseChain(
+      msg,
+      requirementPath,
+      "spawn",
+    );
+    if (!merged) {
+      // PRD §6.5 — merge_failed blocks child spawn. The parent is
+      // already in merge_failed state with retry tasks pushed.
+      this.opts.bus.emit({
+        type: "debug_info",
+        message: `spawn_chain blocked by merge_failed on chain ${parentChainId}`,
+      });
+      return;
+    }
+
+    // Inject the synthetic user_input message. The LeaderWatcher
+    // re-routes it through ChainRouter.route → handleRequirement,
+    // which reads spawned_from to open the child chain with the
+    // proper forest linkage.
+    await this.opts.message_router.send({
+      type: "user_input",
+      from_instance: this.opts.leader_id,
+      from_name: this.opts.leader_name,
+      from_role: "leader",
+      to_instance: this.opts.leader_id,
+      content: decision.next_requirement,
+      spawned_from: parentChainId,
+      next_requirement: decision.next_requirement,
+    });
   }
 
   private async resolveRequirementPath(
@@ -824,6 +1130,7 @@ export class ChainRouter {
    */
   private async runCloseChainMerge(
     chainId: ChainId,
+    mode: "close" | "spawn" = "close",
   ): Promise<MergeFailure[]> {
     const failures: MergeFailure[] = [];
     if (!this.opts.merge_validator) return failures;
@@ -838,7 +1145,7 @@ export class ChainRouter {
             message: `chain ${chainId} accept`,
             task_title: `[${chainId}] accept`,
             task_link: "accept",
-          });
+          }, mode);
           return failures;
         } catch (err) {
           failures.push({
@@ -856,7 +1163,7 @@ export class ChainRouter {
       // recorded (e.g. a Worker that doesn't emit `commits` finished
       // the accept link, or accept produced docs-only changes).
     }
-    return this.runMergeValidation(chainId);
+    return this.runMergeValidation(chainId, mode);
   }
 
   /**
@@ -898,6 +1205,7 @@ export class ChainRouter {
    */
   private async runMergeValidation(
     chainId: ChainId,
+    mode: "close" | "spawn" = "close",
   ): Promise<MergeFailure[]> {
     const failures: Array<{
       link: TaskLink;
@@ -912,7 +1220,7 @@ export class ChainRouter {
     if (!commits || commits.length === 0) return failures;
     for (const commit of commits) {
       try {
-        await this.opts.merge_validator.validate(commit);
+        await this.opts.merge_validator.validate(commit, mode);
       } catch (err) {
         this.opts.logger.warn("merge validation failed", {
           chain_id: chainId,

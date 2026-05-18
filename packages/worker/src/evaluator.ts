@@ -15,10 +15,11 @@ import { extractJson } from "@co/runtime";
 
 export const CHAIN_LINKS: readonly TaskLink[] = [
   "plan",
-  "build",
+  "execute",
   "verify",
   "review",
   "accept",
+  "explore",
 ] as const;
 
 const MAX_RETRIES = 3;

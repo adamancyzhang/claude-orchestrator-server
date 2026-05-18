@@ -116,3 +116,14 @@ export class RebaseConflictError extends CoError {
     super("REBASE_CONFLICT", message, cause);
   }
 }
+export class MagicDepthExhaustedError extends CoError {
+  constructor(
+    public readonly chain_depth: number,
+    public readonly max_chains: number,
+  ) {
+    super(
+      "MAGIC_DEPTH_EXHAUSTED",
+      `Magic chain depth ${chain_depth} reached --magic-max-chains=${max_chains}`,
+    );
+  }
+}

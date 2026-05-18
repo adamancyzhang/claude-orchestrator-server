@@ -142,7 +142,7 @@ function commitInfo(sha: string, branch: string, message = "feat: x"): CommitInf
     branch,
     message,
     task_title: "test",
-    task_link: "build",
+    task_link: "execute",
   };
 }
 
@@ -154,7 +154,7 @@ describe("MergeValidator.isCommitMerged (Bug-1)", () => {
     // merged". Verify the fixed implementation actually invokes the
     // merge path now.
     const { dir } = initRepo();
-    const sha = makeFeatureBranch(dir, "co/build-1", "build.txt", "build");
+    const sha = makeFeatureBranch(dir, "co/build-1", "build.txt", "execute");
     const validator = makeValidator(dir);
     const decision = await validator.validate(commitInfo(sha, "co/build-1"));
     expect(decision.decision).toBe("merge");
@@ -170,7 +170,7 @@ describe("MergeValidator.isCommitMerged (Bug-1)", () => {
     // After one successful merge, calling validate() again with the
     // same sha must skip (not double-merge).
     const { dir } = initRepo();
-    const sha = makeFeatureBranch(dir, "co/build-1", "build.txt", "build");
+    const sha = makeFeatureBranch(dir, "co/build-1", "build.txt", "execute");
     const validator = makeValidator(dir);
     await validator.validate(commitInfo(sha, "co/build-1"));
     const second = await validator.validate(commitInfo(sha, "co/build-1"));
@@ -227,7 +227,7 @@ describe("MergeValidator merge_target_branch (Issue-4)", () => {
     execFileSync("git", ["add", "leader.txt"], { cwd: dir });
     execFileSync("git", ["commit", "-q", "-m", "leader work"], { cwd: dir });
 
-    const sha = makeFeatureBranch(dir, "co/build-1", "build.txt", "build");
+    const sha = makeFeatureBranch(dir, "co/build-1", "build.txt", "execute");
     // makeFeatureBranch checked us out back to main; we want leader to
     // resume on leader-side before validate() runs.
     execFileSync("git", ["checkout", "-q", "leader-side"], { cwd: dir });

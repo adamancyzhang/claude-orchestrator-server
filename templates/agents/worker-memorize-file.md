@@ -40,7 +40,7 @@ updated_at: {{date}}
 (List only **non-trivial** internal dependencies — packages within this monorepo. Skip stdlib and well-known third-party libraries.)
 
 ## Touched by chain links
-- <plan | build | verify | review | accept> — <when>
+- <plan | execute | verify | review | accept> — <when>
 ```
 
 ### Constraints

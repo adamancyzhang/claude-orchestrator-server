@@ -121,7 +121,7 @@ describe("CommitChecker shell-safety", () => {
 
     const checker = makeChecker(repo, malicious);
     const result = await checker.check({
-      link: "build",
+      link: "execute",
       task_id: asTaskId("task-x"),
       task_title: "t",
       task_description: "d",
@@ -144,7 +144,7 @@ describe("CommitChecker shell-safety", () => {
 
     const checker = makeChecker(repo, tricky);
     const result = await checker.check({
-      link: "build",
+      link: "execute",
       task_id: asTaskId("task-y"),
       task_title: "t",
       task_description: "d",
@@ -193,7 +193,7 @@ describe("CommitChecker failure surfacing", () => {
     // be in the tree.
     const checker = makeChecker(repo, "feat: legit change");
     const result = await checker.check({
-      link: "build",
+      link: "execute",
       task_id: asTaskId("task-scope"),
       task_title: "t",
       task_description: "d",
@@ -233,7 +233,7 @@ describe("CommitChecker failure surfacing", () => {
     let caught: unknown = null;
     try {
       await checker.check({
-        link: "build",
+        link: "execute",
         task_id: asTaskId("task-fail"),
         task_title: "t",
         task_description: "d",

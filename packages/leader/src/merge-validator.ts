@@ -49,7 +49,10 @@ export interface MergeValidatorOptions {
 export class MergeValidator {
   constructor(private readonly opts: MergeValidatorOptions) {}
 
-  async validate(commit: CommitInfo): Promise<MergeDecision> {
+  async validate(
+    commit: CommitInfo,
+    mode: "close" | "spawn" = "close",
+  ): Promise<MergeDecision> {
     const mainBranch =
       this.opts.merge_target_branch ??
       this.execGit(["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -89,7 +92,7 @@ export class MergeValidator {
         this.execGit(["merge", commit.branch, "--no-ff", "-m", mergeMsg]);
         this.opts.bus.emit({
           type: "debug_info",
-          message: `merged: ${commit.branch} -> ${mainBranch}`,
+          message: `merged: ${commit.branch} -> ${mainBranch} (mode=${mode})`,
         });
       } catch (err) {
         // Abort and classify. Conflict path produces MergeConflictError

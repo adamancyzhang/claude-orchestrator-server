@@ -4,10 +4,11 @@ import { TemplateNotFoundError, type ITemplateEngine } from "@co/contracts";
 
 export const LINK_TEMPLATES = [
   "plan",
-  "build",
+  "execute",
   "verify",
   "review",
   "accept",
+  "explore",
   "decompose",
 ] as const;
 

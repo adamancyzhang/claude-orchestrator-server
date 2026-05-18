@@ -16,7 +16,7 @@ import {
 export const InstanceSchema = z.object({
   id: z.string().transform(asInstanceId),
   name: z.string(),
-  role: InstanceRoleSchema.default("builder"),
+  role: InstanceRoleSchema.default("executor"),
   status: InstanceStatusSchema.default("idle"),
   current_task_id: z.string().transform(asTaskId).nullable().default(null),
   connected_since: z.string(),

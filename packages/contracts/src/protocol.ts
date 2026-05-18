@@ -1,6 +1,6 @@
 import type { InstanceId } from "./ids.js";
 
-export const PROTOCOL_VERSION = "0.6.0" as const;
+export const PROTOCOL_VERSION = "0.7.0" as const;
 export type ProtocolVersion = typeof PROTOCOL_VERSION;
 
 export interface LeaderNodeData {
@@ -9,4 +9,6 @@ export interface LeaderNodeData {
   pid: number;
   host: string;
   started_at: string;
+  magic_mode: boolean;
+  magic_max_chains: number | null;
 }

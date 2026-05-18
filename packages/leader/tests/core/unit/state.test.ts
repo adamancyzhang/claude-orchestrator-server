@@ -22,7 +22,7 @@ function instance(overrides: Partial<Instance> = {}): Instance {
   return {
     id: asInstanceId("w1"),
     name: "Tom",
-    role: "builder",
+    role: "executor",
     status: "idle",
     current_task_id: null,
     connected_since: "2026-05-14T00:00:00Z",
@@ -44,7 +44,7 @@ function task(overrides: Partial<Task> = {}): Task {
     criteria: "",
     priority: 1,
     status: "pending",
-    link: "build",
+    link: "execute",
     chain_id: null,
     result_path: null,
     retry_count: 0,
@@ -98,7 +98,7 @@ describe("LeaderState.apply", () => {
     expect(state.pending_tasks).toHaveLength(0);
     expect(state.in_progress_tasks).toHaveLength(1);
     expect(state.workers[0].status).toBe("busy");
-    expect(state.workers[0].current_role).toBe("builder");
+    expect(state.workers[0].current_role).toBe("executor");
   });
 
   it("task_completed clears in_progress and idles worker", () => {

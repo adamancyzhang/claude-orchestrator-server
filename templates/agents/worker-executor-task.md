@@ -18,7 +18,7 @@ Extract every implementable requirement as a checklist before writing code.
 Your worktree has already been rebased onto the immediate predecessor commit. The full hash chain for this chain run:
 - Plan: `{{upstream_plan_commit}}`
 
-Use `git show <hash>` (or `git log --oneline <hash>`) when you need to inspect the upstream commit directly. Your final build commit will land on top of plan.
+Use `git show <hash>` (or `git log --oneline <hash>`) when you need to inspect the upstream commit directly. Your final execute commit will land on top of plan.
 
 ## Workspace Memory (fast reference)
 Before modifying a source file, check `{{workspace_memory_path}}/<relative-source-path>.md` (per-file summary) and the `CLAUDE.md` in its parent directory (directory overview). They mirror the project's source tree and capture purpose, public exports, key invariants, and cross-file dependencies. Treat them as **hints, not ground truth** — if a memory file is missing or its `source_hash` is stale, fall back to the source file.

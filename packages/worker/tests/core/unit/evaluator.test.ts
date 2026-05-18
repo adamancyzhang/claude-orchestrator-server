@@ -106,7 +106,7 @@ describe("SelfEvaluator", () => {
       JSON.stringify({
         decision: "activate_next",
         reason: "ok",
-        next_link: "build",
+        next_link: "execute",
       }),
     );
     const evalr = evaluatorWith(runner);
@@ -118,7 +118,7 @@ describe("SelfEvaluator", () => {
     });
     const parsed = JSON.parse(out);
     expect(parsed.decision).toBe("activate_next");
-    expect(parsed.next_link).toBe("build");
+    expect(parsed.next_link).toBe("execute");
     expect(runner.calls).toHaveLength(1);
     expect(runner.calls[0].fork_session).toBe(true);
     // First attempt prompt does NOT contain the format-hint
@@ -188,7 +188,7 @@ describe("SelfEvaluator", () => {
       JSON.stringify({
         decision: "activate_next",
         reason: "ok",
-        next_link: "build",
+        next_link: "execute",
       }),
     );
     const tpl = makeTemplateEngine("hello {{name}} ({{role}}) at {{link}}");

@@ -67,6 +67,29 @@ export type LeaderEvent =
         error: string;
       }>;
     }
+  // v0.7 NEW — Explorer's spawn_chain decision closed the parent and
+  // opened the child chain.
+  | {
+      type: "chain_spawned";
+      parent_chain_id: ChainId;
+      child_chain_id: ChainId;
+      chain_depth: number;
+    }
+  // v0.7 NEW — A spawn_chain decision was blocked by --magic-max-chains
+  // and demoted to close_chain.
+  | {
+      type: "magic_depth_exhausted";
+      chain_id: ChainId;
+      chain_depth: number;
+      max_chains: number;
+    }
+  // v0.7 NEW — Leader broadcasts the configured magic-mode flags so the
+  // TUI can render the [MAGIC] badge.
+  | {
+      type: "magic_mode_configured";
+      magic_mode: boolean;
+      magic_max_chains: number | null;
+    }
   | { type: "debug_info"; message: string }
   | {
       type: "stream_chunk";

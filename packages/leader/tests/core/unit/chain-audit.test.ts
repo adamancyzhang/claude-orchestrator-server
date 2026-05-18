@@ -63,17 +63,19 @@ describe("ChainAudit", () => {
     expect(m).not.toBeNull();
     expect(m!.link_tasks).toEqual({
       plan: null,
-      build: null,
+      execute: null,
       verify: null,
       review: null,
       accept: null,
+      explore: null,
     });
     expect(m!.link_workers).toEqual({
       plan: null,
-      build: null,
+      execute: null,
       verify: null,
       review: null,
       accept: null,
+      explore: null,
     });
     expect(m!.status).toBe("running");
   });
@@ -88,11 +90,11 @@ describe("ChainAudit", () => {
       requirement_path: "/tmp/req.md",
     });
     await audit.setLinkWorker(chainId, "plan", asInstanceId("tom-01"));
-    await audit.setLinkWorker(chainId, "build", asInstanceId("jerry-01"));
+    await audit.setLinkWorker(chainId, "execute", asInstanceId("jerry-01"));
 
     const m = await audit.readManifest(chainId);
     expect(m!.link_workers.plan).toBe(asInstanceId("tom-01"));
-    expect(m!.link_workers.build).toBe(asInstanceId("jerry-01"));
+    expect(m!.link_workers.execute).toBe(asInstanceId("jerry-01"));
     expect(m!.link_workers.verify).toBeNull();
   });
 
@@ -105,14 +107,14 @@ describe("ChainAudit", () => {
       leader_name: "Leader",
       requirement_path: "/tmp/req.md",
     });
-    await audit.setLinkTask(chainId, "build", asTaskId("task-build-1"));
-    await audit.setLinkWorker(chainId, "build", asInstanceId("jerry-01"));
+    await audit.setLinkTask(chainId, "execute", asTaskId("task-build-1"));
+    await audit.setLinkWorker(chainId, "execute", asInstanceId("jerry-01"));
     // Simulate a build retry — new task id, same worker.
-    await audit.setLinkTask(chainId, "build", asTaskId("task-build-2"));
+    await audit.setLinkTask(chainId, "execute", asTaskId("task-build-2"));
 
     const m = await audit.readManifest(chainId);
-    expect(m!.link_tasks.build).toBe("task-build-2");
-    expect(m!.link_workers.build).toBe(asInstanceId("jerry-01"));
+    expect(m!.link_tasks.execute).toBe("task-build-2");
+    expect(m!.link_workers.execute).toBe(asInstanceId("jerry-01"));
   });
 
   it("closeChain stamps status and completed_at, appends chain_closed to audit.jsonl", async () => {
@@ -303,15 +305,16 @@ describe("ChainAudit", () => {
         docs: "plan-docs-1",
         branch: "co/plan-1",
       });
-      await audit.recordLinkCommit(chainId, "build", {
+      await audit.recordLinkCommit(chainId, "execute", {
         worktree: "build-sha-1",
         docs: null,
         branch: "co/build-1",
       });
       const upstream = await audit.collectUpstreamCommits(chainId);
-      expect(upstream).toEqual({ plan: "plan-sha-1", build: "build-sha-1" });
-      // Accept is not surfaced as "upstream" (it's the sink, not a
-      // predecessor).
+      expect(upstream).toEqual({ plan: "plan-sha-1", execute: "build-sha-1" });
+      // v0.7 NEW — accept IS surfaced as upstream (the explore link
+      // rebases onto it). The recordLinkCommit call below adds it to
+      // the manifest, and collectUpstreamCommits now returns it too.
       await audit.recordLinkCommit(chainId, "accept", {
         worktree: "accept-sha",
         docs: null,
@@ -320,7 +323,8 @@ describe("ChainAudit", () => {
       const upstream2 = await audit.collectUpstreamCommits(chainId);
       expect(upstream2).toEqual({
         plan: "plan-sha-1",
-        build: "build-sha-1",
+        execute: "build-sha-1",
+        accept: "accept-sha",
       });
     });
 
@@ -341,14 +345,14 @@ describe("ChainAudit", () => {
       // Build link recorded but with NO worktree commit (docs-only
       // task). Downstream consumers must not see a `build: null` key
       // in the map — they should fall back to plan as the predecessor.
-      await audit.recordLinkCommit(chainId, "build", {
+      await audit.recordLinkCommit(chainId, "execute", {
         worktree: null,
         docs: "build-docs",
         branch: "co/build",
       });
       const upstream = await audit.collectUpstreamCommits(chainId);
       expect(upstream).toEqual({ plan: "plan-sha" });
-      expect("build" in upstream).toBe(false);
+      expect("execute" in upstream).toBe(false);
     });
 
     it("clearLinkCommitsFrom wipes the rejected link AND everything downstream", async () => {
@@ -365,7 +369,7 @@ describe("ChainAudit", () => {
         docs: null,
         branch: "co/p",
       });
-      await audit.recordLinkCommit(chainId, "build", {
+      await audit.recordLinkCommit(chainId, "execute", {
         worktree: "b",
         docs: null,
         branch: "co/b",
@@ -375,14 +379,121 @@ describe("ChainAudit", () => {
         docs: null,
         branch: "co/v",
       });
-      // Feedback targets "build" → build, verify, review, accept all clear.
-      await audit.clearLinkCommitsFrom(chainId, "build");
+      // Feedback targets "execute" → execute, verify, review, accept all clear.
+      await audit.clearLinkCommitsFrom(chainId, "execute");
       const m = await audit.readManifest(chainId);
       expect(m!.link_commits?.plan?.worktree).toBe("p");
-      expect(m!.link_commits?.build).toBeUndefined();
+      expect(m!.link_commits?.execute).toBeUndefined();
       expect(m!.link_commits?.verify).toBeUndefined();
       const upstream = await audit.collectUpstreamCommits(chainId);
       expect(upstream).toEqual({ plan: "p" });
+    });
+  });
+
+  // v0.7 NEW — Chain Forest (FR-35) + appendChildChain wire-up.
+  describe("Chain Forest (v0.7 NEW)", () => {
+    it("openChain defaults forest fields for root chains", async () => {
+      const { audit } = makeAudit();
+      const chainId = asChainId("chain-root");
+      await audit.openChain(chainId, {
+        created_at: "2026-05-18T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req.md",
+      });
+      const m = await audit.readManifest(chainId);
+      expect(m!.parent_chain_id).toBeNull();
+      expect(m!.child_chain_ids).toEqual([]);
+      expect(m!.chain_depth).toBe(0);
+      expect(m!.magic_mode).toBe(false);
+    });
+
+    it("openChain captures magic_mode + parent_chain_id + chain_depth", async () => {
+      const { audit } = makeAudit();
+      const chainId = asChainId("chain-child");
+      const parentId = asChainId("chain-parent");
+      await audit.openChain(chainId, {
+        created_at: "2026-05-18T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req.md",
+        parent_chain_id: parentId,
+        chain_depth: 2,
+        magic_mode: true,
+      });
+      const m = await audit.readManifest(chainId);
+      expect(m!.parent_chain_id).toBe(parentId);
+      expect(m!.chain_depth).toBe(2);
+      expect(m!.magic_mode).toBe(true);
+      expect(m!.child_chain_ids).toEqual([]);
+    });
+
+    it("appendChildChain mutates the parent's child_chain_ids (idempotent)", async () => {
+      const { audit } = makeAudit();
+      const parentId = asChainId("chain-parent");
+      const childA = asChainId("chain-child-a");
+      const childB = asChainId("chain-child-b");
+      await audit.openChain(parentId, {
+        created_at: "2026-05-18T00:00:00Z",
+        leader_id: asInstanceId("leader-1"),
+        leader_name: "Leader",
+        requirement_path: "/tmp/req.md",
+        magic_mode: true,
+      });
+      await audit.appendChildChain(parentId, childA);
+      await audit.appendChildChain(parentId, childB);
+      // Idempotent: a duplicate append is a no-op.
+      await audit.appendChildChain(parentId, childA);
+      const m = await audit.readManifest(parentId);
+      expect(m!.child_chain_ids).toEqual([childA, childB]);
+    });
+
+    it("readManifest coerces a v0.6 manifest into v0.7 defaults", async () => {
+      const { audit, root } = makeAudit();
+      const chainId = asChainId("chain-v06");
+      // Hand-write a v0.6 manifest with no forest fields. Mirrors
+      // disk state from a pre-upgrade chain.
+      const manifestPath = cachePaths.chainManifestPath(
+        { projects_root: root, leader_instance_id: asInstanceId("leader-1") },
+        chainId,
+      );
+      await fs.promises.mkdir(require("node:path").dirname(manifestPath), {
+        recursive: true,
+      });
+      await fs.promises.writeFile(
+        manifestPath,
+        JSON.stringify({
+          chain_id: chainId,
+          created_at: "2026-04-01T00:00:00Z",
+          completed_at: null,
+          status: "running",
+          leader_id: "leader-1",
+          leader_name: "Leader",
+          requirement_path: "/tmp/req.md",
+          link_tasks: {
+            plan: null,
+            execute: null,
+            verify: null,
+            review: null,
+            accept: null,
+          },
+          link_workers: {
+            plan: null,
+            execute: null,
+            verify: null,
+            review: null,
+            accept: null,
+          },
+          total_retry_count: 0,
+          max_total_retries: 9,
+        }),
+        "utf-8",
+      );
+      const m = await audit.readManifest(chainId);
+      expect(m!.parent_chain_id).toBeNull();
+      expect(m!.child_chain_ids).toEqual([]);
+      expect(m!.chain_depth).toBe(0);
+      expect(m!.magic_mode).toBe(false);
     });
   });
 });

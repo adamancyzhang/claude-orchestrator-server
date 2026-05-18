@@ -73,6 +73,7 @@ class FakeChainAudit implements Pick<ChainAudit,
   | "closeChain"
   | "readManifest"
   | "incrementRetry"
+  | "appendChildChain"
 > {
   private manifests = new Map<ChainId, ChainManifest>();
   events: ChainAuditEventInput[] = [];
@@ -87,10 +88,30 @@ class FakeChainAudit implements Pick<ChainAudit,
       leader_id: meta.leader_id,
       leader_name: meta.leader_name,
       requirement_path: meta.requirement_path,
-      link_tasks: { plan: null, build: null, verify: null, review: null, accept: null },
-      link_workers: { plan: null, build: null, verify: null, review: null, accept: null },
+      link_tasks: {
+        plan: null,
+        execute: null,
+        verify: null,
+        review: null,
+        accept: null,
+        explore: null,
+      },
+      link_workers: {
+        plan: null,
+        execute: null,
+        verify: null,
+        review: null,
+        accept: null,
+        explore: null,
+      },
       total_retry_count: 0,
       max_total_retries: meta.max_total_retries ?? 9,
+      // v0.7 NEW — forest fields honor the openChain meta or default
+      // to root-chain values.
+      parent_chain_id: meta.parent_chain_id ?? null,
+      child_chain_ids: [],
+      chain_depth: meta.chain_depth ?? 0,
+      magic_mode: meta.magic_mode ?? false,
     });
   }
   async setLinkTask(chainId: ChainId, link: TaskLink, taskId: never): Promise<void> {
@@ -118,6 +139,12 @@ class FakeChainAudit implements Pick<ChainAudit,
   }
   async readManifest(chainId: ChainId): Promise<ChainManifest | null> {
     return this.manifests.get(chainId) ?? null;
+  }
+  async appendChildChain(parentChainId: ChainId, child: ChainId): Promise<void> {
+    const m = this.manifests.get(parentChainId);
+    if (m && !m.child_chain_ids.includes(child)) {
+      m.child_chain_ids.push(child);
+    }
   }
   async incrementRetry(chainId: ChainId): Promise<
     { total_retry_count: number; max_total_retries: number } | null
@@ -315,7 +342,12 @@ const CHAIN_ID: ChainId = asChainId("chain-test-001");
 
 function setup(
   instances: Instance[] = [],
-  opts?: { max_chain_retries?: number },
+  opts?: {
+    max_chain_retries?: number;
+    magic_mode?: boolean;
+    magic_max_chains?: number | null;
+    merge_validator?: { validate: (...a: unknown[]) => Promise<unknown> };
+  },
 ): {
   router: ChainRouter;
   queue: TaskQueue;
@@ -345,6 +377,9 @@ function setup(
     },
     chain_audit: audit as never,
     max_chain_retries: opts?.max_chain_retries,
+    magic_mode: opts?.magic_mode,
+    magic_max_chains: opts?.magic_max_chains,
+    merge_validator: opts?.merge_validator as never,
   });
   return { router, queue, bus, msg, audit };
 }
@@ -360,7 +395,7 @@ function chainDefJson(): string {
         criteria: "plan criteria",
         priority: 1,
       },
-      build: {
+      execute: {
         title: "build title",
         description: "build desc",
         criteria: "build criteria",
@@ -429,7 +464,7 @@ function completionMessage(
     type: "completion_report",
     from_instance: from,
     from_name: "Worker",
-    from_role: "builder",
+    from_role: "executor",
     to_instance: LEADER_ID,
     to_name: null,
     content: decisionJson,
@@ -485,7 +520,7 @@ describe("ChainRouter.handleTaskDefinitions", () => {
     expect(plan.assigned_to).toBe(planner.id);
     expect(plan.assigned_to_name).toBe(planner.name);
 
-    for (const link of ["build", "verify", "review", "accept"] as const) {
+    for (const link of ["execute", "verify", "review", "accept"] as const) {
       const t = pending.find((x) => x.link === link)!;
       expect(t.assigned_to).toBeNull();
       expect(t.assigned_to_name).toBeNull();
@@ -496,13 +531,13 @@ describe("ChainRouter.handleTaskDefinitions", () => {
 describe("ChainRouter.activate_next assigns before dispatch", () => {
   it("calls task_queue.assign(nextTask, worker) before sending task_dispatch", async () => {
     const tom = makeInstance("tom-01", "Tom", "planner");
-    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const jerry = makeInstance("jerry-01", "Jerry", "executor");
     const { router, queue, msg } = setup([tom, jerry]);
 
     // Seed the chain via handleTaskDefinitions — plan pinned to Tom.
     await router.route(chainDefMessage(chainDefJson()));
     const before = await queue.listPending();
-    const buildBefore = before.find((t) => t.link === "build")!;
+    const buildBefore = before.find((t) => t.link === "execute")!;
     expect(buildBefore.assigned_to).toBeNull();
 
     // Tom reports activate_next → build.
@@ -512,19 +547,19 @@ describe("ChainRouter.activate_next assigns before dispatch", () => {
         JSON.stringify({
           decision: "activate_next",
           reason: "ok",
-          next_link: "build",
+          next_link: "execute",
         }),
         tom.id,
       ),
     );
 
     const after = await queue.listPending();
-    const buildAfter = after.find((t) => t.link === "build")!;
+    const buildAfter = after.find((t) => t.link === "execute")!;
     expect(buildAfter.assigned_to).toBe(jerry.id);
     expect(buildAfter.assigned_to_name).toBe(jerry.name);
 
     const buildDispatch = msg.sent.find(
-      (m) => m.link === "build" && m.type === "task_dispatch",
+      (m) => m.link === "execute" && m.type === "task_dispatch",
     );
     expect(buildDispatch).toBeTruthy();
     expect(buildDispatch!.to_instance).toBe(jerry.id);
@@ -533,13 +568,13 @@ describe("ChainRouter.activate_next assigns before dispatch", () => {
 
 describe("ChainRouter.handleCompletionReport — activate_next", () => {
   it("dispatches next link to a matching idle worker with task context threaded through", async () => {
-    const builder = makeInstance("jerry-01", "Jerry", "builder");
+    const builder = makeInstance("jerry-01", "Jerry", "executor");
     const { router, msg } = setup([builder]);
 
     const decision = {
       decision: "activate_next",
       reason: "blueprint complete",
-      next_link: "build",
+      next_link: "execute",
     };
     await router.route(
       completionMessage("plan", JSON.stringify(decision), asInstanceId("tom-01")),
@@ -548,7 +583,7 @@ describe("ChainRouter.handleCompletionReport — activate_next", () => {
     expect(msg.sent).toHaveLength(1);
     const dispatch = msg.sent[0];
     expect(dispatch.type).toBe("task_dispatch");
-    expect(dispatch.link).toBe("build");
+    expect(dispatch.link).toBe("execute");
     expect(dispatch.to_instance).toBe(builder.id);
     expect(dispatch.task_id).toBeTruthy();
     expect("task_description" in dispatch).toBe(true);
@@ -557,7 +592,7 @@ describe("ChainRouter.handleCompletionReport — activate_next", () => {
 
   it("reuses the existing pending task for the chain's next link instead of creating a duplicate", async () => {
     const planner = makeInstance("tom-01", "Tom", "planner");
-    const builder = makeInstance("jerry-01", "Jerry", "builder");
+    const builder = makeInstance("jerry-01", "Jerry", "executor");
     const { router, queue, msg } = setup([planner, builder]);
 
     // First: seed the chain with handleTaskDefinitions (5 pending tasks
@@ -565,14 +600,14 @@ describe("ChainRouter.handleCompletionReport — activate_next", () => {
     await router.route(chainDefMessage(chainDefJson()));
     const initialPending = await queue.listPending();
     expect(initialPending).toHaveLength(5);
-    const buildTaskId = initialPending.find((t) => t.link === "build")!.id;
+    const buildTaskId = initialPending.find((t) => t.link === "execute")!.id;
     const dispatchedToPlannerCount = msg.sent.length;
 
     // Then: Tom reports activate_next → build.
     const decision = {
       decision: "activate_next",
       reason: "blueprint complete",
-      next_link: "build",
+      next_link: "execute",
     };
     await router.route(
       completionMessage("plan", JSON.stringify(decision), planner.id),
@@ -593,13 +628,13 @@ describe("ChainRouter.handleCompletionReport — activate_next", () => {
   it("falls back to pushing a new task when no pending task matches the chain/link", async () => {
     // Activate without ever seeding the chain — e.g. recovery after the
     // original pending task was cleared.
-    const builder = makeInstance("jerry-01", "Jerry", "builder");
+    const builder = makeInstance("jerry-01", "Jerry", "executor");
     const { router, queue, msg } = setup([builder]);
 
     const decision = {
       decision: "activate_next",
       reason: "ad-hoc",
-      next_link: "build",
+      next_link: "execute",
     };
     await router.route(
       completionMessage("plan", JSON.stringify(decision), asInstanceId("tom-01")),
@@ -607,7 +642,7 @@ describe("ChainRouter.handleCompletionReport — activate_next", () => {
 
     const pending = await queue.listPending();
     expect(pending).toHaveLength(1);
-    expect(pending[0].link).toBe("build");
+    expect(pending[0].link).toBe("execute");
     expect(msg.sent).toHaveLength(1);
     expect(msg.sent[0].task_id).toBe(pending[0].id);
   });
@@ -652,7 +687,7 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     // Jerry's inbox as a fresh pending build task with retry_count=1,
     // not as an opaque direct message.
     const tom = makeInstance("tom-01", "Tom", "planner");
-    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const jerry = makeInstance("jerry-01", "Jerry", "executor");
     const { router, msg, queue } = setup([tom, jerry]);
     await router.route(chainDefMessage(chainDefJson()));
     expect(msg.sent[0].to_instance).toBe(tom.id); // plan dispatched to Tom
@@ -664,7 +699,7 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
         JSON.stringify({
           decision: "activate_next",
           reason: "ok",
-          next_link: "build",
+          next_link: "execute",
         }),
         tom.id,
       ),
@@ -688,7 +723,7 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     const fb = msg.sent.at(-1)!;
     expect(fb.type).toBe("task_dispatch");
     expect(fb.to_instance).toBe(jerry.id);
-    expect(fb.link).toBe("build");
+    expect(fb.link).toBe("execute");
     expect(fb.task_description).toBe("Add page_size<=100 validation");
     expect(fb.task_id).toBeTruthy();
 
@@ -696,7 +731,7 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     // to Jerry and carrying the feedback as its description.
     const pending = await queue.listPending();
     const retry = pending.find(
-      (t) => t.link === "build" && (t.retry_count ?? 0) >= 1,
+      (t) => t.link === "execute" && (t.retry_count ?? 0) >= 1,
     );
     expect(retry).toBeTruthy();
     expect(retry!.assigned_to).toBe(jerry.id);
@@ -705,7 +740,7 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
 
   it("honors explicit feedback_target over the prior-link fallback", async () => {
     const tom = makeInstance("tom-01", "Tom", "planner");
-    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const jerry = makeInstance("jerry-01", "Jerry", "executor");
     const { router, msg } = setup([tom, jerry]);
     await router.route(chainDefMessage(chainDefJson()));
     const targetOverride = asInstanceId("custom-target-instance");
@@ -771,7 +806,7 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
     // a resolvable prior-link target (otherwise A6 drops it before A5
     // gets a chance to count).
     const tom = makeInstance("tom-01", "Tom", "planner");
-    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const jerry = makeInstance("jerry-01", "Jerry", "executor");
     const { router, msg, bus, audit, queue } = setup([tom, jerry], {
       max_chain_retries: 1,
     });
@@ -784,7 +819,7 @@ describe("ChainRouter.handleCompletionReport — feedback / reject / close_chain
         JSON.stringify({
           decision: "activate_next",
           reason: "ok",
-          next_link: "build",
+          next_link: "execute",
         }),
         tom.id,
       ),
@@ -893,7 +928,7 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
     // then close the chain on the fourth (accept).
     const reports: [TaskLink, string][] = [
       ["plan", "aaaaaaa"],
-      ["build", "bbbbbbb"],
+      ["execute", "bbbbbbb"],
       ["verify", "ccccccc"],
       ["review", "ddddddd"],
     ];
@@ -935,7 +970,7 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
 
     expect(validated.map((v) => v.task_link)).toEqual([
       "plan",
-      "build",
+      "execute",
       "verify",
       "review",
       "accept",
@@ -952,21 +987,21 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
   it("aborts close_chain as merge_failed and pushes a retry to the link's worker on conflict", async () => {
     // Setup: tom + jerry, chain dispatched, build recorded as the link
     // owned by Jerry in link_workers. Then drive build → activate_next
-    // so the manifest's link_workers["build"] = jerry. Close the chain
+    // so the manifest's link_workers["execute"] = jerry. Close the chain
     // with a merge validator that throws on the build commit only —
     // verify the chain becomes "merge_failed" (not "completed"), the
     // chain_merge_failed event fires with the failure list, and Jerry
     // receives a retry task addressed to him with a description naming
     // the conflicting sha/branch.
     const tom = makeInstance("tom-01", "Tom", "planner");
-    const jerry = makeInstance("jerry-01", "Jerry", "builder");
+    const jerry = makeInstance("jerry-01", "Jerry", "executor");
     const lucy = makeInstance("lucy-01", "Lucy", "verifier");
     const mia = makeInstance("mia-01", "Mia", "reviewer");
     const leo = makeInstance("leo-01", "Leo", "accepter");
 
     const mergeValidator = {
       async validate(commit: { branch: string; sha: string; task_link: string }) {
-        if (commit.task_link === "build") {
+        if (commit.task_link === "execute") {
           throw new Error(
             `merge ${commit.branch} conflicted at ${commit.sha}`,
           );
@@ -1003,8 +1038,8 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
     // fully populated and chainCommits collects one commit per link.
     await router.route(chainDefMessage(chainDefJson()));
     const flow: { link: TaskLink; next: TaskLink | null; from: InstanceId }[] = [
-      { link: "plan", next: "build", from: tom.id },
-      { link: "build", next: "verify", from: jerry.id },
+      { link: "plan", next: "execute", from: tom.id },
+      { link: "execute", next: "verify", from: jerry.id },
       { link: "verify", next: "review", from: lucy.id },
       { link: "review", next: "accept", from: mia.id },
     ];
@@ -1054,8 +1089,8 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
     expect(mfEvent).toBeTruthy();
     if (mfEvent && mfEvent.type === "chain_merge_failed") {
       expect(mfEvent.failures).toHaveLength(1);
-      expect(mfEvent.failures[0].link).toBe("build");
-      expect(mfEvent.failures[0].sha).toBe("build-sha");
+      expect(mfEvent.failures[0].link).toBe("execute");
+      expect(mfEvent.failures[0].sha).toBe("execute-sha");
     }
 
     // chain_closed also fires (TUI shows the chain ended).
@@ -1070,7 +1105,7 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
       (m) =>
         m.type === "task_dispatch" &&
         m.to_instance === jerry.id &&
-        m.link === "build" &&
+        m.link === "execute" &&
         typeof m.task_description === "string" &&
         m.task_description.includes("Merge conflict"),
     );
@@ -1126,10 +1161,11 @@ describe("ChainRouter.handleCompletionReport — merge validation on close_chain
 });
 
 const NEXT_LINK: Record<string, TaskLink> = {
-  plan: "build",
-  build: "verify",
+  plan: "execute",
+  execute: "verify",
   verify: "review",
   review: "accept",
+  accept: "explore",
 };
 
 // ---------------------------------------------------------------------------
@@ -1228,11 +1264,11 @@ function memoryRefreshMessage(content: string): Message {
     type: "memory_refresh",
     from_instance: asInstanceId("alpha"),
     from_name: "alpha",
-    from_role: "builder",
+    from_role: "executor",
     to_instance: LEADER_ID,
     to_name: null,
     content,
-    link: "build",
+    link: "execute",
     task_id: null,
     chain_id: null,
     task_title: null,
@@ -1371,5 +1407,223 @@ describe("ChainRouter slash commands", () => {
     // /init was not called.
     expect(bs.run_count).toBe(0);
     expect(bs.refresh_stale_count).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.7 NEW — magic loop (FR-31, FR-33, FR-34, FR-35)
+// ---------------------------------------------------------------------------
+
+describe("ChainRouter — spawn_chain decision (FR-33)", () => {
+  // Seed a chain manifest directly in the FakeChainAudit so we can
+  // drive handleCompletionReport without rebuilding the full
+  // requirement → decompose → dispatch flow.
+  async function seedMagicChain(
+    audit: FakeChainAudit,
+    chainId: ChainId,
+    chainDepth: number,
+  ): Promise<void> {
+    await audit.openChain(chainId, {
+      created_at: new Date().toISOString(),
+      leader_id: LEADER_ID,
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+      magic_mode: true,
+      parent_chain_id: null,
+      chain_depth: chainDepth,
+    });
+  }
+
+  it("spawn_chain at explore closes the parent and injects a user_input with spawned_from + next_requirement", async () => {
+    const mergeValidator = {
+      // skip = no new commits to merge; treated as success.
+      async validate(): Promise<{ decision: "skip"; reason: string }> {
+        return { decision: "skip", reason: "no commits" };
+      },
+    };
+    const { router, msg, audit } = setup([], {
+      magic_mode: true,
+      merge_validator: mergeValidator,
+    });
+    await seedMagicChain(audit, CHAIN_ID, 0);
+
+    const decision = JSON.stringify({
+      decision: "spawn_chain",
+      reason: "ready for the next iteration",
+      next_requirement: "Add caching to the export endpoint",
+    });
+    await router.route(
+      completionMessage("explore", decision, asInstanceId("lisa-01")),
+    );
+
+    // Parent closed as completed (merge succeeded, no failures).
+    const closure = audit.closures.find(
+      (c) => c.chainId === CHAIN_ID,
+    );
+    expect(closure?.status).toBe("completed");
+
+    // Synthetic user_input message was injected with the new fields.
+    const spawned = msg.sent.find(
+      (m) => m.type === "user_input" && m.spawned_from === CHAIN_ID,
+    );
+    expect(spawned).toBeTruthy();
+    expect(spawned!.content).toBe("Add caching to the export endpoint");
+    expect(spawned!.next_requirement).toBe("Add caching to the export endpoint");
+    expect(spawned!.spawned_from).toBe(CHAIN_ID);
+  });
+
+  it("spawn_chain at accept (non-explore link) is rejected as invalid_decision and aborts the chain", async () => {
+    const { router, msg, audit } = setup([], { magic_mode: true });
+    await seedMagicChain(audit, CHAIN_ID, 0);
+
+    const decision = JSON.stringify({
+      decision: "spawn_chain",
+      reason: "trying to spawn early",
+      next_requirement: "should not happen",
+    });
+    await router.route(
+      completionMessage("accept", decision, asInstanceId("jack-01")),
+    );
+
+    // invalid_decision audit + chain closed as aborted.
+    expect(audit.events.some((e) => e.event === "invalid_decision")).toBe(true);
+    const closure = audit.closures.find((c) => c.chainId === CHAIN_ID);
+    expect(closure?.status).toBe("aborted");
+
+    // No user_input spawn message was written.
+    expect(
+      msg.sent.some(
+        (m) => m.type === "user_input" && m.spawned_from === CHAIN_ID,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("ChainRouter — magic_max_chains cap (FR-34)", () => {
+  async function seedMagicChain(
+    audit: FakeChainAudit,
+    chainId: ChainId,
+    chainDepth: number,
+  ): Promise<void> {
+    await audit.openChain(chainId, {
+      created_at: new Date().toISOString(),
+      leader_id: LEADER_ID,
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+      magic_mode: true,
+      parent_chain_id: null,
+      chain_depth: chainDepth,
+    });
+  }
+
+  it("demotes spawn_chain to close_chain when chain_depth + 1 reaches the cap", async () => {
+    const mergeValidator = {
+      async validate(): Promise<{ decision: "skip"; reason: string }> {
+        return { decision: "skip", reason: "no commits" };
+      },
+    };
+    const { router, msg, audit, bus } = setup([], {
+      magic_mode: true,
+      magic_max_chains: 2,
+      merge_validator: mergeValidator,
+    });
+    // Parent depth=1 → spawning a child would make it depth=2 → hits
+    // the cap (>= 2). The router must emit magic_depth_exhausted and
+    // NOT write a spawn message.
+    await seedMagicChain(audit, CHAIN_ID, 1);
+
+    const decision = JSON.stringify({
+      decision: "spawn_chain",
+      reason: "want to keep going",
+      next_requirement: "should be dropped",
+    });
+    await router.route(
+      completionMessage("explore", decision, asInstanceId("lisa-01")),
+    );
+
+    expect(audit.events.some((e) => e.event === "magic_depth_exhausted")).toBe(
+      true,
+    );
+    expect(
+      bus.emitted.some((e) => e.type === "magic_depth_exhausted"),
+    ).toBe(true);
+    // Parent chain still closes as completed (the merge succeeded,
+    // the demotion just skips the spawn).
+    const closure = audit.closures.find((c) => c.chainId === CHAIN_ID);
+    expect(closure?.status).toBe("completed");
+    // No spawn message.
+    expect(
+      msg.sent.some(
+        (m) => m.type === "user_input" && m.spawned_from === CHAIN_ID,
+      ),
+    ).toBe(false);
+  });
+
+  it("null magic_max_chains is unlimited (no demotion at any depth)", async () => {
+    const mergeValidator = {
+      async validate(): Promise<{ decision: "skip"; reason: string }> {
+        return { decision: "skip", reason: "no commits" };
+      },
+    };
+    const { router, msg, audit } = setup([], {
+      magic_mode: true,
+      magic_max_chains: null,
+      merge_validator: mergeValidator,
+    });
+    await seedMagicChain(audit, CHAIN_ID, 99);
+
+    const decision = JSON.stringify({
+      decision: "spawn_chain",
+      reason: "deep magic",
+      next_requirement: "iterate further",
+    });
+    await router.route(
+      completionMessage("explore", decision, asInstanceId("lisa-01")),
+    );
+
+    expect(audit.events.some((e) => e.event === "magic_depth_exhausted")).toBe(
+      false,
+    );
+    expect(
+      msg.sent.some(
+        (m) => m.type === "user_input" && m.spawned_from === CHAIN_ID,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("ChainRouter — explore link routing (FR-31)", () => {
+  it("LINK_TO_ROLE maps explore to explorer (compile-time + runtime lock)", async () => {
+    // Indirect proof: feed an activate_next on accept under magic_mode
+    // — the router will look up the explorer worker. Without an
+    // explorer in the registry the dispatch is skipped (logged), but
+    // chain state still advances. We assert that the explore link is
+    // a valid TaskLink the router recognizes.
+    const { router, audit } = setup(
+      [makeInstance("lisa-01", "Lisa", "explorer")],
+      { magic_mode: true },
+    );
+    const chainId = asChainId(CHAIN_ID);
+    await audit.openChain(chainId, {
+      created_at: new Date().toISOString(),
+      leader_id: LEADER_ID,
+      leader_name: "Leader",
+      requirement_path: "/tmp/req.md",
+      magic_mode: true,
+    });
+
+    // Just confirm the magic-mode accept→explore decision is legal —
+    // the router does not throw invalid_decision when handed it.
+    const decision = JSON.stringify({
+      decision: "activate_next",
+      reason: "accepted; explore next",
+      next_link: "explore",
+    });
+    await router.route(
+      completionMessage("accept", decision, asInstanceId("jack-01")),
+    );
+    expect(audit.events.some((e) => e.event === "invalid_decision")).toBe(
+      false,
+    );
   });
 });

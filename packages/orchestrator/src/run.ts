@@ -65,6 +65,13 @@ export interface RunInput {
   name?: string;
   debug?: boolean;
   y_flag?: boolean;
+  // v0.7 NEW — `--magic` (autonomous loop). Enables the explore link
+  // and spawn_chain decisions across the cluster.
+  magic?: boolean;
+  // v0.7 NEW — hard cap on chain_forest depth. `null` (default) is
+  // unlimited. Env `CO_MAGIC_MAX_CHAINS` overrides this argument when
+  // present and parseable.
+  magic_max_chains?: number | null;
 }
 
 export interface OrchestratorPaths {
@@ -114,12 +121,25 @@ export async function runOrchestrator(
   });
 
   // Phase 2: worktrees
+  // v0.7 NEW — resolve magic-mode + depth cap. Env overrides CLI.
+  const magicMode = input.magic === true;
+  const envMaxChainsRaw = process.env.CO_MAGIC_MAX_CHAINS;
+  const envMaxChains =
+    envMaxChainsRaw && Number.isFinite(Number(envMaxChainsRaw))
+      ? Number(envMaxChainsRaw)
+      : null;
+  const magicMaxChains =
+    envMaxChains != null
+      ? envMaxChains
+      : input.magic_max_chains ?? null;
+
   const worktreeConfigs = await initializeWorktrees({
     project_root: projectRoot,
     worker_count: input.worker_count,
     template_dir: paths.template_dir,
     skills_dir: paths.skills_dir,
     logger: logger.child("worktree"),
+    magic_mode: magicMode,
   });
   const leaderId = asInstanceId(randomUUID().replace(/-/g, ""));
 
@@ -139,6 +159,10 @@ export async function runOrchestrator(
         pid: process.pid,
         host: os.hostname(),
         started_at: new Date().toISOString(),
+        // v0.7 NEW — broadcast magic flags so workers know whether
+        // spawn_chain decisions and explore links are in play.
+        magic_mode: magicMode,
+        magic_max_chains: magicMaxChains,
       }),
       "utf-8",
     ),
@@ -243,6 +267,17 @@ export async function runOrchestrator(
     chain_audit: chainAudit,
     memory_bootstrap: memoryBootstrap,
     max_chain_retries: maxChainRetries,
+    magic_mode: magicMode,
+    magic_max_chains: magicMaxChains,
+  });
+
+  // v0.7 NEW — seed LeaderState so the TUI [MAGIC] badge renders on
+  // first frame instead of waiting for the next chain event. The
+  // event must be emitted AFTER the bus is wired to state.apply.
+  bus.emit({
+    type: "magic_mode_configured",
+    magic_mode: magicMode,
+    magic_max_chains: magicMaxChains,
   });
 
   const leaderWatcher = new LeaderWatcher(

@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name("claude-orchestrator")
   .description("Multi-agent orchestration CLI backed by ZooKeeper")
-  .version(`0.6.0 (protocol ${PROTOCOL_VERSION})`)
+  .version(`0.7.0 (protocol ${PROTOCOL_VERSION})`)
   .option("-z, --zookeeper <hosts>", "ZooKeeper connection string (env: ZK_HOSTS)")
   .option("-d, --debug", "Enable debug mode");
 
@@ -28,16 +28,39 @@ program
     },
     6,
   )
+  .option(
+    "--magic",
+    "Enable autonomous loop (Explorer + spawn_chain). The 6th worker is " +
+      "assigned the explorer role and the chain gains an explore link.",
+  )
+  .option(
+    "--magic-max-chains <m>",
+    "Hard cap on chain_forest depth (env: CO_MAGIC_MAX_CHAINS). Omit for unlimited.",
+    (raw) => {
+      const n = parseInt(raw, 10);
+      if (!Number.isFinite(n) || n < 1) {
+        throw new Error("`--magic-max-chains` must be a positive integer");
+      }
+      return n;
+    },
+  )
   .option("-y, --yes", "Skip interactive prompts, auto-approve based on history")
   .action(async function (this: Command) {
-    const { worker, yes } = this.opts() as { worker: number; yes?: boolean };
+    const opts = this.opts() as {
+      worker: number;
+      yes?: boolean;
+      magic?: boolean;
+      magicMaxChains?: number;
+    };
     const debug = Boolean(this.optsWithGlobals().debug);
     const zk = (this.optsWithGlobals().zookeeper as string | undefined);
     await runOrchestrator({
       zk_hosts: zk ?? process.env.ZK_HOSTS ?? "127.0.0.1:2181",
-      worker_count: worker,
+      worker_count: opts.worker,
       debug,
-      y_flag: Boolean(yes),
+      y_flag: Boolean(opts.yes),
+      magic: Boolean(opts.magic),
+      magic_max_chains: opts.magicMaxChains ?? null,
     });
   });
 
