@@ -4,11 +4,11 @@
 >
 > **目的**：把启动行为分解为可观察的中间态与最终态，逐项核对 `CLAUDE.md` / `docs/v0.7/` 中的"预期"和 `packages/*/src/` 中的"实际"，差异处给出判定与修复方案。
 >
-> **本文是纸面静态推导验证**。真机运行的截图、PID、耗时等留待后续 `01-startup-worker-6-runtime.md` 回填（§7）。
+> **本文是纸面静态推导验证**。真机运行的截图、PID、耗时等留待后续 `01-startup-worker-6-runtime.md` 回填（§5）。
 
 ---
 
-## 1. 范围与判定基准
+## 1. 范围
 
 ### 1.1 用户行为
 ```bash
@@ -24,15 +24,6 @@
 - `--magic` / `--magic-max-chains`（留待 02-magic-mode eval）。
 - `/init` 与用户输入路由（留待 03-input-routing eval）。
 - 决策链、合并、shutdown 路径。
-
-### 1.4 判定基准
-| 来源 | 权威性 |
-|------|--------|
-| `packages/*/src/`（代码） | **事实**（实际行为） |
-| `docs/v0.7/dd/` + `docs/v0.7/prd/` | **设计预期**（v0.7 现行有效） |
-| 根 `CLAUDE.md` | **运行手册**（漂移最严重的一份） |
-
-差异处取**逐条判断**：以代码为准（回写文档）／以文档为准（改代码）／两边都对（仅补遗）。
 
 ---
 
@@ -53,9 +44,9 @@
 
 ---
 
-## 3. 输出对照（按 5 个 Phase 拆分）
+## 3. 启动行为（按 5 个 Phase 拆分）
 
-> **预期文档锚**：`docs/v0.7/dd/01-architecture.md` §6 "启动 5 阶段（FR-01）"；CLAUDE.md "Architecture > Orchestrator" 段。
+> **设计参考**：`docs/v0.7/dd/01-architecture.md` §6 "启动 5 阶段（FR-01）"。
 > **实际代码锚**：`packages/orchestrator/src/run.ts:93-351`。
 
 ### 3.1 Phase 1 — 环境自检与 init
@@ -68,15 +59,6 @@
 | 2 | `InitChecker.runAll` 4 步 | `run.ts:105-111` | global config / user CLAUDE.md / team CLAUDE.md / skills |
 | 3 | `loadConfig` | `run.ts:114-117` | 五层合并：CLI > env > project > global > default |
 | 4 | `commitInitFiles` | `run.ts:118-121` → `:373-406` | `auto_commit_init_files=true` 时自动 `git commit -m "chore: init orchestrator workspace files"` |
-
-**预期对照**：
-
-| 观察点 | docs/v0.7 | CLAUDE.md | 一致？ |
-|--------|-----------|-----------|--------|
-| 工作区干净 | DD `01-architecture.md` §6 隐含 | 未提 | ✗（CLAUDE.md 漏） |
-| InitChecker 4 步 | DD `01-architecture.md` §6 Phase 1 | 未提 | ✗（CLAUDE.md 漏） |
-| 五层配置合并 | DD `01-architecture.md` §8 完整覆盖 | 仅"两层合并（global + project）" | ✗（CLAUDE.md 简化失真） |
-| auto_commit_init_files | DD `01-architecture.md` §8 表格 | 未提 | ✗（CLAUDE.md 漏） |
 
 ### 3.2 Phase 2 — Worktree 初始化 + Leader ZK 临时节点
 
@@ -103,7 +85,7 @@
    - `.claude/skills/{skill}/SKILL.md` — 10 个 skill（强制覆盖：先 `rm` 旧目录再 copy）
    - `.claude-orchestrator/agents/*.md` — 20 个模板（全量复制）。TemplateEngine 在 worker boot 时把此目录作为 `primary_dir`，回落到 `<project_root>/templates/agents/`（见 `packages/orchestrator/src/child-boot.ts:74-82`）。
 
-   > **历史修复（D17）**：曾经此处还会额外写入 `<worktree>/.claude-orchestrator/config.json`（仅 seed、无消费者）和 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`（路径与 `DocsCommitter` 期望的 `<co_root>/docs/{name}/` 错位且无消费者）。已通过提交 [TBD] 删除（详见 §6 D17）。
+   > **历史**：早期版本还会额外写入 `<worktree>/.claude-orchestrator/config.json`（仅 seed、无消费者）和 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`（路径与 `DocsCommitter` 期望的 `<co_root>/docs/{name}/` 错位且无消费者），已删除。
 
 4. ZK connect + ensure_paths 创建 7 条路径（`zkPaths.allEnsurePaths()`，`packages/contracts/src/paths/zkPaths.ts:55-65`）：
    `/claude-orchestrator`、`/instances`、`/tasks`、`/tasks/pending`、`/tasks/claimed`、`/tasks/completed`、`/messages`。
@@ -120,18 +102,6 @@
      "magic_max_chains": null
    }
    ```
-
-**预期对照**：
-
-| 观察点 | docs/v0.7 | CLAUDE.md | 一致？ |
-|--------|-----------|-----------|--------|
-| 6 个 worker 命名 | DD `03-identity-and-roles.md` §1 BUILTIN_NAMES | 未列举 | ✗（CLAUDE.md 漏） |
-| 6 个 worker 角色顺序 | DD `03-identity-and-roles.md` §2 `planner>executor>verifier>reviewer>accepter` + 第 6 默认 executor | "1 planner + 1 builder + 1 verifier + 1 reviewer + 1 acceptor" | ✗（CLAUDE.md：术语错 + 第 6 角色未提；详见 §6 D2/D3/D5） |
-| branch 命名 | DD `03-identity-and-roles.md` §3 `claude-orchestrator/{name}-workspace` | 未提 | ✗ |
-| 模板 seed 数量 | DD `03-identity-and-roles.md` §4 + `templates/agents/` 实际 20 个 | "5 + 5 + identity/decompose/evaluate/commit/merge/task-doc" | ✗（CLAUDE.md 计数错，详见 §6 D7） |
-| skills seed 数量 | DD `09-audit-and-cache.md` 隐含；`skills/` 实际 10 个 | "6 + CLI ref + developer ref" | ✗（CLAUDE.md 计数错，详见 §6 D9） |
-| `/leader` payload 字段 | DD `02-contracts-and-protocol.md` §11.1 完整字段 | "Leader metadata"（含糊） | ✗（CLAUDE.md 模糊，详见 §6 D13） |
-| 7 条 ensure_paths | DD `01-architecture.md` §3 ZK 节点全景 | ZK 树缺 `/messages` 注释、未提 ensure 时机 | △（部分一致） |
 
 ### 3.3 Phase 3 — Leader 子系统装配
 
@@ -164,14 +134,6 @@ _magic_mode      = false
 _magic_max_chains = null
 ```
 来源：`packages/leader/src/state.ts:38-202`。
-
-**预期对照**：
-
-| 观察点 | docs/v0.7 | CLAUDE.md | 一致？ |
-|--------|-----------|-----------|--------|
-| 13 个装配步骤 | DD `01-architecture.md` §6 + 各子系统专章 | 列出 5 个子系统名（WorkerMonitor、TaskOrchestrator、TaskRecovery、LeaderWatcher、ChainRouter），未提 magic_mode_configured 事件 | △（CLAUDE.md 不完整） |
-| LeaderState 17 个事件类型 | DD `01-architecture.md` §5 EventBus | 列出 "17 event types" 但未枚举 | △ |
-| 首帧 `magic_mode=false` | DD `04-tui-and-input.md` `[MAGIC]` 徽标 | 未提 | ✗（CLAUDE.md 漏 magic 整段，详见 §6 D6） |
 
 ### 3.4 Phase 4 — Worker 子进程 fork
 
@@ -216,19 +178,11 @@ _in_progress                     = []
 _events.length                   = 7   // magic_mode_configured + 6 × worker_joined
 ```
 
-**预期对照**：
-
-| 观察点 | docs/v0.7 | CLAUDE.md | 一致？ |
-|--------|-----------|-----------|--------|
-| Worker 子进程 fork 模型 | DD `01-architecture.md` §1 + `06-tasks-and-workers.md` §3 | "Workers run as child processes (forked by the orchestrator)" | ✓ |
-| Worker ZK ephemeral payload | DD `02-contracts-and-protocol.md` §11.2 Instance schema | 未列字段 | △（CLAUDE.md 简化） |
-| `worker_joined` 触发链路 | DD `01-architecture.md` §5 EventBus | "WorkerMonitor watches /instances children → emits worker_joined / worker_left" | ✓ |
-
 ### 3.5 Phase 5 — 等待 shutdown
 
 **实际**（`run.ts:335-350`）：仅注册 SIGINT / SIGTERM cleanup handler；运行期无可观察的进程级输出，所有状态变化由 TUI 反映。
 
-**预期对照**：与 DD `01-architecture.md` §7 "关键交互行为表"中 `Ctrl+C in TUI` 行为一致。CLAUDE.md 未独立描述 Phase 5。
+**设计参考**：DD `01-architecture.md` §7 "关键交互行为表"。
 
 ### 3.6 TUI 首帧渲染
 
@@ -240,13 +194,6 @@ _events.length                   = 7   // magic_mode_configured + 6 × worker_jo
 - **EVENT LOG 面板**：含 7 条事件（顺序：`magic_mode_configured` + `worker_joined × 6`）。
 - **INPUT 行**：空，光标就绪。
 - **顶栏徽标**：`[MAGIC]` **不显示**（`_magic_mode=false`）。
-
-**预期对照**：
-
-| 观察点 | docs/v0.7 | CLAUDE.md | 一致？ |
-|--------|-----------|-----------|--------|
-| 六面板布局 | DD `04-tui-and-input.md` §2 / §3 | "ANSI escape-code rendering" + 简单结构描述 | △（CLAUDE.md 简化） |
-| `[MAGIC]` 徽标不显示 | DD `04-tui-and-input.md` §9 | 未提 | ✗（CLAUDE.md 漏） |
 
 ### 3.7 ZK 节点最终态
 
@@ -333,77 +280,7 @@ state.events[0].type === "magic_mode_configured"
 state.events.slice(1).every(e => e.type === "worker_joined")
 ```
 
----
-
-## 5. 一致性总结
-
-| 维度 | 与 `docs/v0.7/` | 与根 `CLAUDE.md` | 代码本身 |
-|------|-----------------|-------------------|----------|
-| 命令行解析 | ✓ 一致 | △ 未明示默认值 | ✓ |
-| Phase 1 环境/init | ✓ 一致 | ✗ 多处漏（D10/D11/D12） | ✓ |
-| Phase 2 worktree（命名/角色/branch） | ✓ 一致 | ✗ 角色术语错（D2/D3）+ 第 6 角色漏（D5）+ 计数错（D7/D9） | ✓ |
-| Phase 2 worktree 内 seed | ✓ 一致（D17 已修复） | — | ✓（D17 已修复） |
-| Phase 2 `/leader` payload | ✓ 一致 | ✗ 字段含糊（D13） | ✓ |
-| Phase 3 子系统装配 | ✓ 一致 | △ 不完整 | ✓ |
-| Phase 4 worker fork | ✓ 一致 | ✓ 一致 | ✓ |
-| Phase 5 shutdown | ✓ 一致 | △ 未独立描述 | ✓ |
-| TUI 首帧 | ✓ 一致 | △ 简化 | ✓ |
-| 代码路径前缀 | — | ✗ 全部错位（D1） | — |
-| Magic mode | ✓ 一致 | ✗ 完全未提（D6） | ✓ |
-| 配置层数 | ✓ 一致 | ✗ 5 层简化为 2 层（D16） | ✓ |
-| 文件系统最终态 | ✓ 一致（D17 已修复） | ✗ CLAUDE.md 未提（D14） | ✓（D17 已修复） |
-
-**结论**：根 `CLAUDE.md` 是文档漂移的主体，需要按 §6 逐条回写。`docs/v0.7/` 与代码的"设计意图"高度一致；启动相关的代码 bug（**D17**：worktree 内冗余 seed）已修复，使代码完整匹配设计。
-
----
-
-## 6. 差异清单（CLAUDE.md vs. 代码 / docs/v0.7）
-
-| ID | 主题 | CLAUDE.md 原文 / 状态 | 代码 / DD 实际 | 判定 | 修复方案 |
-|----|------|----------------------|----------------|------|----------|
-| **D1** | 源码路径前缀 | `src/leader/`、`src/worker/`、`src/orchestrator/`、... | 实际 `packages/{cli,orchestrator,leader,worker,coordination,contracts,infra,runtime}/src/`（pnpm monorepo） | 代码为准 | CLAUDE.md "Architecture" 全段路径回写 `src/X` → `packages/X/src/`，更新 "Key Files" 表 |
-| **D2** | 角色名 builder | `1 planner + 1 builder + ...`、`build` link | `executor`（contracts 强类型枚举 + `LINK_TO_ROLE`） | 代码为准 | CLAUDE.md 全文 `builder` → `executor`、`build` link → `execute` |
-| **D3** | 角色名 acceptor | `acceptor` | `accepter`（注意拼写） | 代码为准 | CLAUDE.md 全文 `acceptor` → `accepter` |
-| **D4** | 责任链 link 名 | `plan → build → verify → review → accept` | `plan → execute → verify → review → accept`（`state.ts:29-36` LINK_TO_ROLE） | 代码为准 | 同 D2 修复同时覆盖此处 |
-| **D5** | 第 6 worker 默认角色 | 未提及 | 非 magic = `executor`（`worktree-initializer.ts:60`）；magic = `explorer`（MAGIC_ROLE_PRIORITY） | 代码合理 | CLAUDE.md 补：standard 模式第 6 默认 executor，magic 模式才是 explorer |
-| **D6** | magic 模式整段 | 完全未提 | `--magic` / `--magic-max-chains` / `CO_MAGIC_MAX_CHAINS` / `explorer` 角色 / `spawn_chain` / `chain_forest` / `[MAGIC]` 徽标 / chain_audit `magic_mode_configured` 事件 | 代码合理（v0.7 NEW） | CLAUDE.md 新增 "v0.7 Magic Mode" 一节，指向 `docs/v0.7/dd/10-magic-loop.md` |
-| **D7** | 模板数量 | "5 role-named system prompts + 5 task wrappers + identity/decompose/evaluate/commit/merge/task-doc" | 实际 `templates/agents/` 共 **20 个**：6 × `worker-{role}.md`（含 explorer）+ 6 × `worker-{role}-task.md` + worker-identity.md + worker-decompose.md + worker-evaluate.md + worker-evaluate-format-hint.md + worker-commit-message.md + worker-merge-decision.md + worker-memorize-dir.md + worker-memorize-file.md | 代码为准 | CLAUDE.md 更新 "templates/" 一行：角色数 5→6（含 explorer）；任务 wrapper 5→6；增列 format-hint / commit-message / memorize-{dir,file} |
-| **D8** | claude-memory 角色配置数 | "6 role configs" | 实际 6 × `personal-claude-{role}.md` + 1 × `team-claude.md` | 一致 | — |
-| **D9** | skills 数量 | "6 responsibility chain skills + CLI ref + developer ref" | 实际 10 个：`task-{planning,execution,verification,review,acceptance,exploration,traceability}` + `test-driven-development` + `claude-orchestrator` + `claude-code-developer` | 代码为准 | CLAUDE.md 更新 "skills/" 一行：扩到 10 个，列出新增的 exploration / traceability / tdd |
-| **D10** | 工作区干净检查 | 未提 | `ensureCleanWorkspace`（`run.ts:353-365`）强制 `git status --porcelain` 为空，否则 throw | 代码合理 | CLAUDE.md "Development Commands" 段补：启动前置条件 "工作区无未提交变更" |
-| **D11** | InitChecker 4 步 | 未提 | `InitChecker.runAll` 4 步（global config / user CLAUDE.md / team CLAUDE.md / skills），见 `run.ts:105-111` | 代码合理 | CLAUDE.md "Architecture > Orchestrator" 段补 Phase 1 实际工作 |
-| **D12** | auto_commit_init_files | 未提 | 默认 true，启动时自动 `git commit -m "chore: init orchestrator workspace files"`（`run.ts:373-406`） | 代码合理 | CLAUDE.md "Configuration Layering" 段补 git 配置项 |
-| **D13** | `/leader` 节点字段 | "Leader metadata"（含糊一行） | `{protocol_version, leader_id, pid, host, started_at, magic_mode, magic_max_chains}` | 代码为准 | CLAUDE.md "ZK Node Tree" 段把 `/leader` 注释展开为字段表 |
-| **D14** | personal CLAUDE.md 路径 | 未提 | seed 目标曾错置于 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`，但代码库各处对其均无读取（含 claude-cli 标准内存路径）。D17 修复时已一并删除整段 seed 代码 | 代码为准 | 已通过 D17 修复一并解决；CLAUDE.md 无需新增此条目录 |
-| **D15** | 测试体系 | "All test files have been removed in v0.7" + `tests/CLAUDE.md` 仍是 ground truth | 已确认（`pnpm test` 报 "no test files found"） | 一致 | — |
-| **D16** | 配置层数 | "merges two config files: Global + Project" | 实际五层：CLI args → env vars → project config → global config → defaults（`packages/infra/src/config/config-loader.ts`） | 代码为准 | CLAUDE.md "Configuration Layering" 段改写为 5 层 ✅ |
-| **D17** | worktree 内多写一层 `.claude-orchestrator/`（已修复） | 未提 | 原 `initializeWorktrees:254-260` 在 worktree 内写 `.claude-orchestrator/config.json`（无消费者）；原 `seedWorktreeAssets:331-345` 写 `.claude-orchestrator/docs/{name}/CLAUDE.md`（无消费者）。审计确认 `.claude-orchestrator/agents/*.md` 被 `child-boot.ts:74-82` 用作 TemplateEngine `primary_dir`，**必须保留**。设计意图（`co-root-initializer.ts:30-31, :60-67`）允许 worktree 内放置运行时模板，仅禁止把 CO 运行时状态（docs/、tasks/、chains/）写入 worktree | 已修复 | ✅ 已在 `worktree-initializer.ts` 删除 config.json 与 personal CLAUDE.md 写入；agents 复制保留（TemplateEngine 依赖） |
-
-### 修复进度
-
-| 状态 | 项目 | 触达文件 |
-|------|------|----------|
-| ✅ 已修复 | **D17**（worktree 内冗余 seed） | `packages/orchestrator/src/worktree-initializer.ts` 删除 `config.json` 与 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md` 两处写入；agents 复制保留（TemplateEngine primary_dir 依赖） |
-| ✅ 已修复 | **D14**（personal CLAUDE.md 路径） | 随 D17 一并删除（审计确认无消费者；后续若启用个人内存需新增 seed → CO root） |
-| ✅ 已修复 | **D1**（源码路径前缀） | `CLAUDE.md` 全文 `src/X/` → `packages/X/src/`；新增 "Package Layout" 一节、重写 "Key Files" 表 |
-| ✅ 已修复 | **D2**（builder → executor） | `CLAUDE.md` Roles / Role-Link Task Claiming / Responsibility Chain |
-| ✅ 已修复 | **D3**（acceptor → accepter） | `CLAUDE.md` Roles 等多处 |
-| ✅ 已修复 | **D4**（build link → execute） | `CLAUDE.md` "Responsibility Chain" + "Role-Link Task Claiming" |
-| ✅ 已修复 | **D5**（第 6 worker 默认角色） | `CLAUDE.md` "Roles" 一节补 standard / magic 两种填充表 |
-| ✅ 已修复 | **D6**（magic mode） | `CLAUDE.md` 新增 "Magic Mode (v0.7 NEW)" 一节 + "Development Commands" 补 `--magic` 示例 |
-| ✅ 已修复 | **D7**（模板数量） | `CLAUDE.md` "Key Files" 末尾 `templates/agents/` 列出全部 20 个 |
-| ✅ 已修复 | **D9**（skills 数量） | `CLAUDE.md` "Key Files" 末尾 `skills/` 列出全部 10 个 |
-| ✅ 已修复 | **D10**（工作区干净） | `CLAUDE.md` "Development Commands" 注释 + "Orchestrator" 5-phase 表 Phase 1 |
-| ✅ 已修复 | **D11**（InitChecker 4 步） | `CLAUDE.md` "Orchestrator" 5-phase 启动表 Phase 1 |
-| ✅ 已修复 | **D12**（auto_commit_init_files） | `CLAUDE.md` "Configuration Layering" 段 + 5-phase 表 |
-| ✅ 已修复 | **D13**（`/leader` 节点字段） | `CLAUDE.md` "ZK Node Tree" 段展开完整 payload |
-| ✅ 已修复 | **D16**（配置 5 层） | `CLAUDE.md` "Configuration Layering" 段重写 |
-| — | **D8**（claude-memory 角色配置数） | 一致，无需改动 |
-| — | **D15**（测试体系） | 一致，无需改动 |
-
----
-
-## 7. 后续真机验证项（留待 `01-startup-worker-6-runtime.md`）
+## 5. 后续真机验证项（留待 `01-startup-worker-6-runtime.md`）
 
 本份纸面验证无法 100% 闭环，下一份 evals 文档需要真机跑一次 `--worker 6` 并回填：
 
@@ -416,8 +293,7 @@ state.events.slice(1).every(e => e.type === "worker_joined")
 
 ---
 
-## 8. 维护
+## 6. 维护
 
 - 任何改动 `packages/orchestrator/src/run.ts`、`worktree-initializer.ts`、`packages/leader/src/state.ts` 的 PR 都应回看 §3 / §4 是否仍然成立。
-- §6 差异清单中任一项被实际修复（PR 合入后），把该行标记为 `~~已修~~` 并附 PR 号，保留历史。
 - 与本场景不相关的新行为变更（如 `--magic` 内部细节）不应混入本文，请新建编号 02+ 的 evals 文档。
