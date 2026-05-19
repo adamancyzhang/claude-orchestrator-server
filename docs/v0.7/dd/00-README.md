@@ -8,7 +8,6 @@
 
 - DD **不复用 v0.6 及更早版本的设计内容**；所有结构基于 v0.7 PRD 重新论证
 - 每条 FR 在 DD 中指定**唯一主文件**深度展开，其它文件以 `参见 0X-xxx.md §Y` 交叉引用，禁止重复实现细节
-- v0.7 NEW 增量内容均以 `**[v0.7 NEW]**` 标记，与 PRD 风格一致
 - schema 与协议字段以 `02-contracts-and-protocol.md` 为**唯一真相源**
 
 ---
@@ -18,16 +17,16 @@
 | 文件 | 回答的问题 |
 |---|---|
 | `00-README.md`（本文） | 目录索引、FR×File 矩阵、阅读路径、命名规范 |
-| `01-architecture.md` | 进程拓扑、ZK 节点全景、模块切分、启动 5 阶段、Cache 目录布局、**包结构与依赖（v0.7 NEW §11）** |
-| `02-contracts-and-protocol.md` | 所有 Zod schema、branded ID、14 个错误类（含 rc1 git 五分类）、`PROTOCOL_VERSION` 0.7.0、`roleWeights` 6×6、Decision×Link 合法性矩阵、**LinkCommitRecord / UpstreamCommits（v0.7 NEW rc1）** |
+| `01-architecture.md` | 进程拓扑、ZK 节点全景、模块切分、启动 5 阶段、Cache 目录布局、**包结构与依赖** |
+| `02-contracts-and-protocol.md` | 所有 Zod schema、branded ID、14 个错误类（git 五分类）、`PROTOCOL_VERSION` 0.7.0、`roleWeights` 6×6、Decision×Link 合法性矩阵、**LinkCommitRecord / UpstreamCommits** |
 | `03-identity-and-roles.md` | name pool、role 优先级填充（默认 + `--magic`）、WorktreeInitializer、身份卡三段拼接、Explorer 角色 |
 | `04-tui-and-input.md` | TUI 六面板、键位、INPUT 路由、`/init` slash、`[MAGIC]` 徽标、事件颜色映射 |
-| `05-chain-router-and-decisions.md` | ChainRouter 状态机、五态决策机械路由、`resolveFeedbackTarget` / `dispatchFeedbackAsRetry`、**spawn_chain 路由（v0.7 NEW）** |
-| `06-tasks-and-workers.md` | TaskQueue.claim 排序、Worker 执行流、SelfEvaluator 三连重试、CommitChecker、跨角色协助、Recovery、子进程重启、自杀机制、**Explorer task prompt（v0.7 NEW）**、**pre-task rebase / 双轨 commit / DocsCommitter / git 错误五分类（v0.7 NEW rc1）** |
-| `07-merge-validator-and-closure.md` | MergeDecision 三态、`isCommitMerged` + `merge-base --is-ancestor`、merge_failed 终态 + accept-link Worker retry、git 错误五分类、**单次合并 accept-link 分支（v0.7 NEW rc1）**、**close vs spawn 复用（v0.7 NEW）** |
+| `05-chain-router-and-decisions.md` | ChainRouter 状态机、五态决策机械路由、`resolveFeedbackTarget` / `dispatchFeedbackAsRetry`、**spawn_chain 路由** |
+| `06-tasks-and-workers.md` | TaskQueue.claim 排序、Worker 执行流、SelfEvaluator 三连重试、CommitChecker、跨角色协助、Recovery、子进程重启、自杀机制、**Explorer task prompt**、**pre-task rebase / 双轨 commit / DocsCommitter / git 错误五分类** |
+| `07-merge-validator-and-closure.md` | MergeDecision 三态、`isCommitMerged` + `merge-base --is-ancestor`、merge_failed 终态 + accept-link Worker retry、git 错误五分类、**单次合并 accept-link 分支**、**close vs spawn 复用** |
 | `08-memory-and-bootstrap.md` | MemoryBootstrap、`/init`、`memory_refresh` 增量、`refreshStale` |
-| `09-audit-and-cache.md` | ChainAudit API（含 `recordLinkCommit` / `collectUpstreamCommits` / `clearLinkCommitsFrom` rc1 三方法）、manifest 字段全表、audit.jsonl 事件类型、Cache 目录、Lifecycle hooks + `CO_*` env、TUI 渲染挂钩 |
-| `10-magic-loop.md` | **v0.7 NEW 收束**：`--magic` 配置传播、spawn_chain 端到端时序、Chain Forest 模型、终止条件矩阵、v0.7/v0.6 不兼容性 |
+| `09-audit-and-cache.md` | ChainAudit API（含 `recordLinkCommit` / `collectUpstreamCommits` / `clearLinkCommitsFrom` 三方法）、manifest 字段全表、audit.jsonl 事件类型、Cache 目录、Lifecycle hooks + `CO_*` env、TUI 渲染挂钩 |
+| `10-magic-loop.md` | **收束**：`--magic` 配置传播、spawn_chain 端到端时序、Chain Forest 模型、终止条件矩阵、v0.6 与 v0.7 不兼容性 |
 
 ---
 
@@ -37,8 +36,8 @@
 |---|---|
 | **架构师** | 00 → 01 → 02 → 05 → 10 |
 | **实现者**（按既有约束实现） | 02 → 01 → 09 → 06 → 07 → 05 → 03 → 08 → 04 → 10 |
-| **v0.7 NEW 增量实现者** | 10（全貌）→ 02（schema 差异）→ 05 §4.6（spawn_chain 路由）→ 03 §6（explorer 角色）→ 06 §11（Explorer task）→ 07 §7（merge 复用）→ 09 §1.3 / §4.3（manifest 与 audit 增量） |
-| **验收人** | 00（FR×File 矩阵）→ 10（v0.7 NEW 端到端）→ 04（FR-01~04）→ 06（FR-12~14, 21~25）→ 07（FR-15~17） → 05（FR-09~11, 16, 18~20）→ 09（FR-26~27, 35）→ 08（FR-28~30）→ 03（FR-05~08, 31~32） |
+| **增量实现者** | 10（全貌）→ 02（schema 差异）→ 05 §4.6（spawn_chain 路由）→ 03 §6（explorer 角色）→ 06 §11（Explorer task）→ 07 §7（merge 复用）→ 09 §1.3 / §4.3（manifest 与 audit 增量） |
+| **验收人** | 00（FR×File 矩阵）→ 10→ 04（FR-01~04）→ 06（FR-12~14, 21~25）→ 07（FR-15~17） → 05（FR-09~11, 16, 18~20）→ 09（FR-26~27, 35）→ 08（FR-28~30）→ 03（FR-05~08, 31~32） |
 | **PM / 决策者** | 00 → `docs/v0.7/prd/01-overview.md` → 10（自主循环模型） |
 
 ---
@@ -56,7 +55,7 @@
 | **FR-07** | Git worktree 隔离 | `03-identity-and-roles.md` §3 | `01-architecture.md` §1 |
 | **FR-08** | 身份注入三段拼接 | `03-identity-and-roles.md` §4 | `02-contracts-and-protocol.md` §3 |
 | **FR-09** | 五链责任链（含 magic 第 6 链） | `05-chain-router-and-decisions.md` §2 | `02-contracts-and-protocol.md` §3.1 |
-| **FR-10** | EvalDecision 五态 **[v0.7 NEW]** | `02-contracts-and-protocol.md` §5 + `05-chain-router-and-decisions.md` §4 | `06-tasks-and-workers.md` §5 |
+| **FR-10** | EvalDecision 五态 | `02-contracts-and-protocol.md` §5 + `05-chain-router-and-decisions.md` §4 | `06-tasks-and-workers.md` §5 |
 | **FR-11** | ChainDef 拆解（plan 可 null） | `02-contracts-and-protocol.md` §7 + `05-chain-router-and-decisions.md` §3 / §7 | — |
 | **FR-12** | SelfEvaluator 三连重试 + format-hint | `06-tasks-and-workers.md` §5 | `02-contracts-and-protocol.md` §5 |
 | **FR-13** | 自动 commit + claude 生成 message | `06-tasks-and-workers.md` §4 | — |
@@ -77,11 +76,11 @@
 | **FR-28** | `/init` slash 触发 bootstrap | `08-memory-and-bootstrap.md` §4 | `04-tui-and-input.md` §6 |
 | **FR-29** | `memory_refresh` 增量 | `08-memory-and-bootstrap.md` §5 | `06-tasks-and-workers.md` §4 |
 | **FR-30** | `refreshStale` 陈旧扫描 | `08-memory-and-bootstrap.md` §6 | — |
-| **FR-31** | Explorer 角色与 explore 链节 **[v0.7 NEW]** | `03-identity-and-roles.md` §6 + `06-tasks-and-workers.md` §11 | `02-contracts-and-protocol.md` §3 / §4 |
-| **FR-32** | `--magic` 启动开关 **[v0.7 NEW]** | `03-identity-and-roles.md` §2.2 + `10-magic-loop.md` §1 | `04-tui-and-input.md` §8 |
-| **FR-33** | `spawn_chain` 决策与链派生 **[v0.7 NEW]** | `05-chain-router-and-decisions.md` §4.6 + `10-magic-loop.md` §4 | `07-merge-validator-and-closure.md` §7 / `02-contracts-and-protocol.md` §5 |
-| **FR-34** | `--magic-max-chains` 上限 **[v0.7 NEW]** | `10-magic-loop.md` §5 + `05-chain-router-and-decisions.md` §4.6 步骤 2 | `04-tui-and-input.md` §4.2 |
-| **FR-35** | ChainAudit manifest 扩展 **[v0.7 NEW]** | `02-contracts-and-protocol.md` §6 + `09-audit-and-cache.md` §1.3 / §4.3 | `10-magic-loop.md` §7 |
+| **FR-31** | Explorer 角色与 explore 链节 | `03-identity-and-roles.md` §6 + `06-tasks-and-workers.md` §11 | `02-contracts-and-protocol.md` §3 / §4 |
+| **FR-32** | `--magic` 启动开关 | `03-identity-and-roles.md` §2.2 + `10-magic-loop.md` §1 | `04-tui-and-input.md` §8 |
+| **FR-33** | `spawn_chain` 决策与链派生 | `05-chain-router-and-decisions.md` §4.6 + `10-magic-loop.md` §4 | `07-merge-validator-and-closure.md` §7 / `02-contracts-and-protocol.md` §5 |
+| **FR-34** | `--magic-max-chains` 上限 | `10-magic-loop.md` §5 + `05-chain-router-and-decisions.md` §4.6 步骤 2 | `04-tui-and-input.md` §4.2 |
+| **FR-35** | ChainAudit manifest 扩展 | `02-contracts-and-protocol.md` §6 + `09-audit-and-cache.md` §1.3 / §4.3 | `10-magic-loop.md` §7 |
 
 > 矩阵不变量：35 行全部有"主文件"标记；多个文件出现的字段必然在 `02-contracts-and-protocol.md` 中有 schema 定义。
 
@@ -112,7 +111,7 @@ graph TD
     R06[06 任务执行/生命周期]
   end
 
-  subgraph "v0.7 NEW 收束"
+  subgraph " 收束"
     R10[10 --magic 自主循环]
   end
 
@@ -152,8 +151,8 @@ graph TD
 # 35 条 FR 全数被引用：
 grep -rn "FR-\(0[1-9]\|[12][0-9]\|3[0-5]\)" docs/v0.7/dd/ | sort -u
 
-# v0.7 NEW 标记完整性：
-grep -rn "v0.7 NEW" docs/v0.7/dd/
+# 标记完整性：
+grep -rn "" docs/v0.7/dd/
 
 # 范围隔离：以下命令应无输出（不引用旧版本设计）：
 grep -rn "rc0-v0.6\|v0.6/dd\|rc1-v0.6\|v0.5/" docs/v0.7/dd/
@@ -168,7 +167,7 @@ grep -rn "rc0-v0.6\|v0.6/dd\|rc1-v0.6\|v0.5/" docs/v0.7/dd/
 | 检查项 | 通过条件 |
 |---|---|
 | 全部 35 条 FR 在矩阵中有主文件标记 | §4 表格 35 行 |
-| v0.7 NEW 5 条 FR 都有主+次文件 | FR-31..35 在 §4 中均双标 |
+| 5 条 FR 都有主+次文件 | FR-31..35 在 §4 中均双标 |
 | schema 字段不冲突 | 02 中字段名与 03~10 中提及一致；本目录无 schema 重定义 |
 | Mermaid 渲染无语法错误 | 在 GitHub / VS Code mermaid 预览器打开 01 / 05 / 06 / 07 / 10 验证 |
 | 交叉引用目标存在 | `grep -rn '参见.*\.md' docs/v0.7/dd/` 列出的文件名都在本目录 |
@@ -181,5 +180,5 @@ grep -rn "rc0-v0.6\|v0.6/dd\|rc1-v0.6\|v0.5/" docs/v0.7/dd/
 
 - **代码实现**：DD 仅给 schema、伪代码、状态机、时序。具体 TS 实现留给后续 PR。
 - **测试用例**：单元/集成测试设计在 v0.7 DD 范围之外；候选独立目录 `docs/v0.7/test-plan/`。
-- **验收 checklist**：v0.7 不再维护独立 acceptance-checklist 文档（旧 RC0 版本已随 `rc0-v0.6/` 目录移除）。验收以 PRD `04-functional-requirements.md` 每条 FR 末尾的"done 判定"为准,v0.7 NEW 验收项已嵌入对应 FR 的判定列。
+- **验收 checklist**：v0.7 不再维护独立 acceptance-checklist 文档（旧 RC0 版本已随 `rc0-v0.6/` 目录移除）。验收以 PRD `04-functional-requirements.md` 每条 FR 末尾的"done 判定"为准, 验收项已嵌入对应 FR 的判定列。
 - **运维手册**：备份、监控、容量规划等不在 v0.7 DD 范围。

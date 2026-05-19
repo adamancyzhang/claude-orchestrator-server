@@ -114,21 +114,21 @@
 - **回避方法**：扩展 `MemoryBootstrap.enumerateSources` 自行加入规则
 - **v0.7 是否修复**：候选
 
-### 4.4 Worktree 复用 + `reset_on_reuse=true` 有损清理 **[v0.7 NEW]**
+### 4.4 Worktree 复用 + `reset_on_reuse=true` 有损清理
 
 - **当前行为**：orchestrator 启动时若发现 `<projects_root>/<worker_name>/` 已存在的 worktree，默认走"复用"路径：`git reset --hard <leader_head>` + `git clean -fd`，**丢弃 worktree 中所有未 commit 的变更**
 - **用户影响**：人工在 worktree 中遗留的实验性代码 / 未 push 的本地 commit 会被清掉（提交到 worker 分支的 commit 仍保留在远端）
 - **回避方法**：(a) 启动前 `git stash` 保护变更；(b) 显式禁用 `reset_on_reuse`（仅作为内部参数，需修改 worktree-initializer 调用，目前未对外暴露配置）
-- **v0.7 是否修复**：不计划，复用 + 硬重置是 rc1 pre-task rebase 模型的前提（每个 link 必须从已知基线起步）
+- **v0.7 是否修复**：不计划，复用 + 硬重置是 pre-task rebase 模型的前提（每个 link 必须从已知基线起步）
 
-### 4.5 跨 chain 不传 `link_commits` / `upstream_commits` **[v0.7 NEW]**
+### 4.5 跨 chain 不传 `link_commits` / `upstream_commits`
 
 - **当前行为**：spawn_chain 派生的子链开新 manifest，`link_commits={}`；子链的 plan link 不感知父链 worktree commit；pre-task rebase 在子链 plan 处无 upstream，跳过
 - **用户影响**：子链是"从 main 重新出发"的独立链；若 Explorer `next_requirement` 隐含依赖父链未合并的代码，可能导致子链 verify / review 失败
 - **回避方法**：父链必须先 close_chain merge 成功，再让 Explorer 启动子链；子链通过 main 上的合并 commit 间接看到父链产出（与 §1.1 close_chain 单向不可逆配套）
 - **v0.7 是否修复**：不计划；跨 chain 上下文传递不是 v0.7 目标（PRD §6.1 已声明 Explorer 不读跨 chain 历史）
 
-### 4.6 Docs commit best-effort，可缺失 **[v0.7 NEW]**
+### 4.6 Docs commit best-effort，可缺失
 
 - **当前行为**：双轨 commit 中**轨 B**（CO root `docs/<worker_name>/`）使用 `git commit --only`、限定路径作用域，但若并发 Worker 同时写、`.git/index.lock` 抢锁失败，DocsCommitter 返回 `null` 而非抛错；`LinkCommitRecord.docs=null`；audit 仅 `log.error`，不进事件流
 - **用户影响**：CO root 仓上可能漏掉某个 link 的 `result.md` commit（项目仓代码 commit 不受影响）；TUI 不感知；close_chain merge 不阻塞
@@ -156,7 +156,7 @@
 - **回避方法**：使用 `@co/coordination` 包写自定义脚本
 - **v0.7 是否修复**：候选（按需求）
 
-## 6. v0.7 NEW：自主循环模式（`--magic`）边界
+## 6. ��自主循环模式（`--magic`）边界
 
 ### 6.1 Explorer 不可读跨 chain 历史上下文
 
@@ -198,9 +198,9 @@
 为避免误把上述边界当作待修缺陷，明确以下场景必须纳入 v0.7 验收范围：
 
 - 单链 P→E→V→R→A 全程顺利的"快乐路径"（默认模式）
-- **[v0.7 NEW]** `--magic` 模式 P→E→V→R→A→Explore→（spawn_chain → 第二条链 → 第二条链完整闭环）的循环路径
-- **[v0.7 NEW]** Explorer 输出 `close_chain` 终止循环路径
-- **[v0.7 NEW]** `--magic-max-chains M` 达上限时 `spawn_chain` 被降级
+- `--magic` 模式 P→E→V→R→A→Explore→（spawn_chain → 第二条链 → 第二条链完整闭环）的循环路径
+- Explorer 输出 `close_chain` 终止循环路径
+- `--magic-max-chains M` 达上限时 `spawn_chain` 被降级
 - 任一链节 feedback 单步回退到上一链节
 - Worker 子进程崩溃后 `task_recovered` + 子进程重启（≤3 次）
 - close_chain 正常合并到 main
@@ -211,4 +211,4 @@
 - chain_id 重用冲突拒绝（FR-20 / R-06）
 - evaluator 三连失败一律 `reject`（FR-22 / R-03）
 
-A-* / R-* 编号体系沿用自 v0.6 RC0,旧 acceptance-checklist 文档已随 v0.6 目录移除；v0.7 验收以 `04-functional-requirements.md` 每条 FR 末尾的"done 判定"为准,v0.7 NEW 验收项已嵌入对应 FR 的判定列。
+A-* / R-* 编号体系沿用自 v0.6 RC0,旧 acceptance-checklist 文档已随 v0.6 目录移除；v0.7 验收以 `04-functional-requirements.md` 每条 FR 末尾的"done 判定"为准, 验收项已嵌入对应 FR 的判定列。

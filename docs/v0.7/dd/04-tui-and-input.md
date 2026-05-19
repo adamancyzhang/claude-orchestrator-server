@@ -1,6 +1,6 @@
 # 04 — TUI 与用户输入
 
-> **DD 定位**：TUI 六面板组件树与渲染节流；键盘交互完整映射；INPUT 框 → ZK message 路由；`/init` slash 解析；**[v0.7 NEW]** `[MAGIC]` 标题徽标与 magic 事件渲染。
+> **DD 定位**：TUI 六面板组件树与渲染节流；键盘交互完整映射；INPUT 框 → ZK message 路由；`/init` slash 解析； `[MAGIC]` 标题徽标与 magic 事件渲染。
 >
 > **PRD 锚**：FR-02 / FR-03 / FR-04 / FR-28（/init 入口）/ FR-32（MAGIC 徽标）/ FR-34（降级提示）。
 >
@@ -73,7 +73,7 @@
 |---|---|---|
 | `#` | 1-based index | 用于 1-9 键直跳 |
 | `Name` | worker.name | NAME_POOL 中的字符串 |
-| `Role` | worker.role | planner / executor / verifier / reviewer / accepter / **explorer** [v0.7 NEW] |
+| `Role` | worker.role | planner / executor / verifier / reviewer / accepter / **explorer** |
 | `Current` | worker.currentTask?.task_id ?? 'Idle' | 跨角色协助时附 `Executor ◀←` 标记 |
 
 ### 3.2 `Executor ◀←` 跨角色标记（PRD 02 §4.2）
@@ -114,7 +114,7 @@ LeaderState.appendEventLog(line, color):
 
 ### 4.2 事件 → 行映射
 
-详见 `09-audit-and-cache.md` §7（同一映射表）。本文聚焦 v0.7 NEW 项：
+详见 `09-audit-and-cache.md` §7（同一映射表）。本文聚焦 项：
 
 | 事件 | 渲染行 | 颜色 |
 |---|---|---|
@@ -264,7 +264,7 @@ sequenceDiagram
 ```text
 title = `Claude Orchestrator v${PROTOCOL_VERSION}`
 if config.magic_mode:
-  title += '  [MAGIC]'                                // [v0.7 NEW]
+  title += '  [MAGIC]'                                //
 if state.activeChainDepth != null:
   title += `  chain-depth=${state.activeChainDepth}`
 title += `  Leader=${leaderShortId}  Workers=${state.workers.length}`

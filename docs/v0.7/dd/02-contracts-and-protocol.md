@@ -4,7 +4,7 @@
 >
 > **PRD 锚**：`docs/v0.7/prd/04-functional-requirements.md` FR-05 / FR-10 / FR-11 / FR-26 / FR-31 / FR-33 / FR-35；`docs/v0.7/prd/05-non-functional.md` §7（PROTOCOL_VERSION）。
 >
-> **v0.7 NEW 标记**：协议增量包括 `TaskLinkSchema.execute` 重命名、`TaskLinkSchema.explore` 新增、`InstanceRoleSchema.executor/explorer`、`EvalDecisionSchema.spawn_chain`、`ChainManifestSchema` 四个新字段、`PROTOCOL_VERSION` 升至 `"0.7.0"`。本文所有 v0.7 NEW 内容以 `**[v0.7 NEW]**` 标记。
+> **标记**：协议增量包括 `TaskLinkSchema.execute` 重命名、`TaskLinkSchema.explore` 新增、`InstanceRoleSchema.executor/explorer`、`EvalDecisionSchema.spawn_chain`、`ChainManifestSchema` 四个新字段、`PROTOCOL_VERSION` 升至 `"0.7.0"`。本文所有 内容以标记。
 
 ---
 
@@ -68,18 +68,18 @@ export const MessageId  = (s: string): MessageId  => /* assert prefix "msg-"   *
 
 ## 3. 责任链枚举
 
-### 3.1 TaskLinkSchema **[v0.7 NEW]**
+### 3.1 TaskLinkSchema
 
 ```ts
 import { z } from 'zod';
 
 export const TaskLinkSchema = z.enum([
   'plan',
-  'execute',  // [v0.7 rename] was 'build'
+  'execute',  // was 'build'
   'verify',
   'review',
   'accept',
-  'explore',  // [v0.7 NEW] only valid in --magic mode
+  'explore',  // only valid in --magic mode
 ]);
 export type TaskLink = z.infer<typeof TaskLinkSchema>;
 
@@ -92,7 +92,7 @@ export const NEXT_LINKS: Record<TaskLink, TaskLink | null> = {
   execute: 'verify',
   verify:  'review',
   review:  'accept',
-  accept:  'explore',  // [v0.7 NEW] only used when magic_mode=true; else accept→close_chain
+  accept:  'explore',  // only used when magic_mode=true; else accept→close_chain
   explore: null,
 };
 
@@ -108,17 +108,17 @@ export const PREV_LINKS: Record<TaskLink, TaskLink | null> = {
 
 > 在默认模式（`magic_mode=false`）下，accept link 的合法 EvalDecision 只能是 `close_chain` / `reject` / `feedback`，不会用到 `NEXT_LINKS.accept`。详见 §5 决策合法性矩阵。
 
-### 3.2 InstanceRoleSchema **[v0.7 NEW]**
+### 3.2 InstanceRoleSchema
 
 ```ts
 export const InstanceRoleSchema = z.enum([
   'leader',
   'planner',
-  'executor',  // [v0.7 rename] was 'builder'
+  'executor',  // was 'builder'
   'verifier',
   'reviewer',
   'accepter',
-  'explorer',  // [v0.7 NEW]
+  'explorer',  //
 ]);
 export type InstanceRole = z.infer<typeof InstanceRoleSchema>;
 
@@ -133,13 +133,13 @@ PRD 02-personas-and-roles.md §4 中的精确数值，落到 TS 常量：
 
 ```ts
 export const roleWeights: Record<InstanceRole, Record<TaskLink, number>> = {
-  //         plan  execute  verify  review  accept  explore  [v0.7 NEW]
+  //         plan  execute  verify  review  accept  explore
   planner:  { plan: 100, execute: 10,  verify: 10,  review: 20,  accept: 10,  explore: 20  },
   executor: { plan: 10,  execute: 100, verify: 20,  review: 10,  accept: 10,  explore: 10  },
   verifier: { plan: 10,  execute: 20,  verify: 100, review: 20,  accept: 10,  explore: 10  },
   reviewer: { plan: 20,  execute: 10,  verify: 20,  review: 100, accept: 20,  explore: 10  },
   accepter: { plan: 10,  execute: 10,  verify: 10,  review: 20,  accept: 100, explore: 20  },
-  explorer: { plan: 20,  execute: 10,  verify: 10,  review: 20,  accept: 10,  explore: 100 }, // [v0.7 NEW]
+  explorer: { plan: 20,  execute: 10,  verify: 10,  review: 20,  accept: 10,  explore: 100 }, //
   leader:   { plan: 0,   execute: 0,   verify: 0,   review: 0,   accept: 0,   explore: 0   },
 };
 ```
@@ -152,7 +152,7 @@ export const roleWeights: Record<InstanceRole, Record<TaskLink, number>> = {
 
 ## 5. EvalDecision 五态
 
-### 5.1 EvalDecisionSchema **[v0.7 NEW]**
+### 5.1 EvalDecisionSchema
 
 ```ts
 const EvalDecisionBase = z.object({
@@ -165,7 +165,7 @@ export const EvalDecisionSchema = z.discriminatedUnion('decision', [
   EvalDecisionBase.extend({ decision: z.literal('feedback')      }),
   EvalDecisionBase.extend({ decision: z.literal('reject')        }),
   EvalDecisionBase.extend({ decision: z.literal('close_chain')   }),
-  // [v0.7 NEW] —— spawn_chain：仅 explore link 合法；必须携带 next_requirement
+  // —— spawn_chain：仅 explore link 合法；必须携带 next_requirement
   EvalDecisionBase.extend({
     decision: z.literal('spawn_chain'),
     next_requirement: z.string().min(1),
@@ -182,7 +182,7 @@ export type EvalDecision = z.infer<typeof EvalDecisionSchema>;
 | `feedback`      | ❌（plan 无前置，PREV=null）→ FR-19 静默丢 | ✅ → plan | ✅ → execute | ✅ → verify | ✅ → review | ✅ → accept |
 | `reject`        | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `close_chain`   | ⚠️ 只在 SelfEvaluator 三连失败 fallback 时被强制为 `reject`，正常路径不出现 | ⚠️ 同上 | ⚠️ 同上 | ⚠️ 同上 | ✅ 默认链终态 | ✅ Explorer 自主终止循环 |
-| **`spawn_chain`** **[v0.7 NEW]** | ❌ ValidationError → reject | ❌ | ❌ | ❌ | ❌ | ✅ 仅此一处合法 |
+| **`spawn_chain`** | ❌ ValidationError → reject | ❌ | ❌ | ❌ | ❌ | ✅ 仅此一处合法 |
 
 > 实现纪律：ChainRouter 在分发前必须做 link × decision 合法性检查，违规决策 → audit `invalid_decision` + reject。详见 `05-chain-router-and-decisions.md` §4。
 
@@ -211,9 +211,9 @@ function resolveFeedbackTarget(
 
 ---
 
-## 6. ChainManifest schema **[v0.7 NEW 字段]**
+## 6. ChainManifest schema **[ 字段]**
 
-### 6.0 LinkCommitRecord **[v0.7 NEW]**
+### 6.0 LinkCommitRecord
 
 ```ts
 // 每条 link 的双轨 commit 记录（rc1 worktree 工作流）
@@ -225,7 +225,7 @@ export const LinkCommitRecordSchema = z.object({
 export type LinkCommitRecord = z.infer<typeof LinkCommitRecordSchema>;
 ```
 
-> 代码归属：`packages/leader/src/chain-audit.ts:29`（接口当前以 TS interface 形式定义，schema 层 v0.7 NEW 收敛为 Zod，方便 ZK/manifest 反序列化校验）。
+> 代码归属：`packages/leader/src/chain-audit.ts:29`（接口当前以 TS interface 形式定义，schema 层 收敛为 Zod，方便 ZK/manifest 反序列化校验）。
 
 > 字段语义：
 > - `worktree` 与 `docs` 解耦：worktree commit 是任务"代码产出"的真相源；docs commit 是 best-effort 的归档（CO root 仓共享，并发写入可失败，详见 `06-tasks-and-workers.md` §4.5）。
@@ -267,7 +267,7 @@ export const ChainManifestSchema = z.object({
   link_tasks:         z.record(TaskLinkSchema, TaskIdSchema).partial(),
   link_workers:       z.record(TaskLinkSchema, InstanceIdSchema).partial(),
 
-  // —— rc1 worktree 工作流 **[v0.7 NEW]** ——
+  // —— worktree 工作流 ——
   link_commits:       z.record(TaskLinkSchema, LinkCommitRecordSchema).partial().default({}),
   // 每个 link 完成时由 ChainAudit.recordLinkCommit(chainId, link, {worktree, docs, branch}) 写入；
   // 下游 link dispatch 前由 ChainAudit.collectUpstreamCommits(chainId) 读取并注入 task_dispatch.upstream_commits；
@@ -280,16 +280,16 @@ export const ChainManifestSchema = z.object({
   // —— 需求文本指针
   requirement_path:   z.string(),  // 形如 "<cache_dir>/chains/<chain_id>/requirement.md"
 
-  // —— v0.7 NEW：链森林 ——
-  parent_chain_id:    ChainIdSchema.nullable(),       // [v0.7 NEW] 顶层链为 null
-  child_chain_ids:    z.array(ChainIdSchema).default([]), // [v0.7 NEW] spawn_chain 派生
-  chain_depth:        z.number().int().nonnegative().default(0), // [v0.7 NEW] 顶层=0
-  magic_mode:         z.boolean().default(false),     // [v0.7 NEW] 是否由 --magic 启动创建
+  // —— ��链森林 ——
+  parent_chain_id:    ChainIdSchema.nullable(),       // 顶层链为 null
+  child_chain_ids:    z.array(ChainIdSchema).default([]), // spawn_chain 派生
+  chain_depth:        z.number().int().nonnegative().default(0), // 顶层=0
+  magic_mode:         z.boolean().default(false),     // 是否由 --magic 启动创建
 });
 export type ChainManifest = z.infer<typeof ChainManifestSchema>;
 ```
 
-### 6.3 v0.7 NEW 字段语义
+### 6.3 字段语义
 
 | 字段 | 顶层链（首链） | 子链（spawn_chain 派生） |
 |---|---|---|
@@ -323,7 +323,7 @@ export const ChainDefSchema = z.object({
   verify:    TaskSpecSchema,
   review:    TaskSpecSchema,
   accept:    TaskSpecSchema,
-  explore:   TaskSpecSchema.optional(),  // [v0.7 NEW] 仅 magic_mode=true 时存在
+  explore:   TaskSpecSchema.optional(),  // 仅 magic_mode=true 时存在
 });
 export type ChainDef = z.infer<typeof ChainDefSchema>;
 ```
@@ -356,7 +356,7 @@ export const TaskSchema = z.object({
   claimed_at:    z.string().datetime().nullable(),
   completed_at:  z.string().datetime().nullable(),
 
-  // —— v0.7 NEW —— rc1 worktree 工作流
+  // —— —— worktree 工作流
   upstream_commits: UpstreamCommitsSchema.optional(),  // 见 §9
 });
 export type Task = z.infer<typeof TaskSchema>;
@@ -394,11 +394,11 @@ export const MessageSchema = z.object({
   chain_id:     ChainIdSchema.optional(),
   link:         TaskLinkSchema.optional(),
 
-  // —— v0.7 NEW —— spawn_chain 注入的 user_input 携带这两个字段
-  spawned_from: ChainIdSchema.optional(),  // [v0.7 NEW]
-  next_requirement: z.string().optional(),  // [v0.7 NEW] 与 spawned_from 配对
+  // —— —— spawn_chain 注入的 user_input 携带这两个字段
+  spawned_from: ChainIdSchema.optional(),  //
+  next_requirement: z.string().optional(),  // 与 spawned_from 配对
 
-  // —— v0.7 NEW —— rc1 worktree 工作流：下游 link 的 pre-task rebase 用
+  // —— —— worktree 工作流：下游 link 的 pre-task rebase 用
   upstream_commits: UpstreamCommitsSchema.optional(),
 });
 export type Message = z.infer<typeof MessageSchema>;
@@ -446,7 +446,7 @@ export type MergeDecision = z.infer<typeof MergeDecisionSchema>;
 
 > 详见 `07-merge-validator-and-closure.md` §2。
 >
-> **rc1 调用模型（**[v0.7 NEW]**）**：close_chain 仅调 `MergeValidator.validate()` **一次**（针对 accept-link 分支），产生**一条** MergeDecision。schema 本身不变；语义层从"每 link 一个 decision"收敛为"每 close_chain 一个 decision"。legacy fallback（详见 `07-merge-validator-and-closure.md` §6.7）仍能产生多条 decision，schema 上向后兼容。
+> **rc1 调用模型**：close_chain 仅调 `MergeValidator.validate()` **一次**（针对 accept-link 分支），产生**一条** MergeDecision。schema 本身不变；语义层从"每 link 一个 decision"收敛为"每 close_chain 一个 decision"。legacy fallback（详见 `07-merge-validator-and-closure.md` §6.7）仍能产生多条 decision，schema 上向后兼容。
 
 ---
 
@@ -466,7 +466,7 @@ export type MergeDecision = z.infer<typeof MergeDecisionSchema>;
 }
 ```
 
-> `magic_mode` 与 `magic_max_chains` 是 [v0.7 NEW] 字段。Worker 通过它感知"本次启动是否 --magic"，从而决定是否启用 explore link 与 spawn_chain 决策（详见 `10-magic-loop.md` §1）。
+> `magic_mode` 与 `magic_max_chains` 是 字段。Worker 通过它感知"本次启动是否 --magic"，从而决定是否启用 explore link 与 spawn_chain 决策（详见 `10-magic-loop.md` §1）。
 
 ### 11.2 `/instances/{instance_id}`（EPHEMERAL）
 
@@ -570,21 +570,21 @@ export class MergeConflictError extends CoError {           // MERGE_CONFLICT �
 export class WorktreeError extends CoError {                // WORKTREE_FAILED — FR-07 worktree 创建/初始化失败
   constructor(message: string, cause?: unknown);
 }
-export class MagicDepthExhaustedError extends CoError {     // MAGIC_DEPTH_EXHAUSTED — FR-34 **[v0.7 NEW]**
+export class MagicDepthExhaustedError extends CoError {     // MAGIC_DEPTH_EXHAUSTED — FR-34
   constructor(public chainDepth: number, public maxChains: number);
 }
 
-// —— Git 五分类（rc1 worktree 工作流，**[v0.7 NEW]**） ——
-export class WorktreeLockedError extends CoError {          // WORKTREE_LOCKED **[v0.7 NEW]**
+// —— Git 五分类（rc1 worktree 工作流，） ——
+export class WorktreeLockedError extends CoError {          // WORKTREE_LOCKED
   constructor(message: string, public readonly stderr: string = "", cause?: unknown);
 }
-export class GitPermissionError extends CoError {           // GIT_PERMISSION_DENIED **[v0.7 NEW]**
+export class GitPermissionError extends CoError {           // GIT_PERMISSION_DENIED
   constructor(message: string, public readonly stderr: string = "", cause?: unknown);
 }
-export class GitNetworkError extends CoError {              // GIT_NETWORK_FAILED **[v0.7 NEW]**
+export class GitNetworkError extends CoError {              // GIT_NETWORK_FAILED
   constructor(message: string, public readonly stderr: string = "", cause?: unknown);
 }
-export class RebaseConflictError extends CoError {          // REBASE_CONFLICT — pre-task rebase 冲突 **[v0.7 NEW]**
+export class RebaseConflictError extends CoError {          // REBASE_CONFLICT — pre-task rebase 冲突
   constructor(message: string, public readonly conflict_files: string[] = [], cause?: unknown);
 }
 ```
@@ -630,7 +630,7 @@ export const AuditEventTypeSchema = z.enum([
   'task_recovered',
   'task_failed',
   'invalid_decision',           // FR-10 link×decision 合法性
-  // —— [v0.7 NEW]
+  // ——
   'chain_spawned',              // FR-33 父链 audit
   'chain_spawned_from',         // FR-33 子链 audit
   'magic_depth_exhausted',      // FR-34

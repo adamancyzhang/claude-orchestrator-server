@@ -239,8 +239,8 @@ export type LeaderEventMap = {
   chain_opened:       { chain_id: ChainId; magic_mode: boolean; chain_depth: number };
   chain_closed:       { chain_id: ChainId; status: ChainStatus };
   chain_merge_failed: { chain_id: ChainId; failures: ChainManifest['merge_failures'] };
-  chain_spawned:      { parent: ChainId; child: ChainId };   // [v0.7 NEW]
-  magic_depth_exhausted: { chain_id: ChainId; max_chains: number }; // [v0.7 NEW]
+  chain_spawned:      { parent: ChainId; child: ChainId };   //
+  magic_depth_exhausted: { chain_id: ChainId; max_chains: number }; //
 
   // —— 调试
   debug_info:         { message: string; payload?: unknown };
@@ -282,7 +282,7 @@ sequenceDiagram
 
 > 5 阶段：(1) 环境自检；(2) Worktree 初始化；(3) Leader 启动 + TUI；(4) Worker fork；(5) 等待事件。
 >
-> **[v0.7 NEW]** `--magic` 时 (2) 阶段的 role 填充顺序变为 `planner > executor > verifier > reviewer > accepter > explorer`（详见 `03-identity-and-roles.md` §2.2）；(3) 阶段 `/leader.magic_mode=true`；(4) 阶段所有 Worker 在校验 protocol 之外额外读取 `magic_mode` 用于决定是否启用 spawn_chain 决策合法性。
+> `--magic` 时 (2) 阶段的 role 填充顺序变为 `planner > executor > verifier > reviewer > accepter > explorer`（详见 `03-identity-and-roles.md` §2.2）；(3) 阶段 `/leader.magic_mode=true`；(4) 阶段所有 Worker 在校验 protocol 之外额外读取 `magic_mode` 用于决定是否启用 spawn_chain 决策合法性。
 
 ---
 
@@ -321,13 +321,13 @@ CLI 参数 / 环境变量
 | `hooks.worker_message_start` 等 | `null` | 全局 |
 | `--worker N` | `6`(最小 6) | CLI |
 | `max_total_retries` (`CO_CHAIN_MAX_RETRIES`) | `9` | env |
-| **`git.merge_target_branch`** **[v0.7 NEW]** | `null`（回退到 Leader HEAD） | 全局 / 项目 |
-| **`git.remote`** **[v0.7 NEW]** | `"origin"`（`null` 关闭 fetch / pre-task remote 同步） | 全局 / 项目 |
-| **`git.auto_commit_init_files`** **[v0.7 NEW]** | `true` | 全局 / 项目 |
-| **`git.auto_commit_init_files_branch`** **[v0.7 NEW]** | `null`（不另起分支） | 全局 / 项目 |
-| **`worktree.reset_on_reuse`** **[v0.7 NEW]** | `true`（worktree 复用时 `git reset --hard <leader_head>`） | orchestrator 内部参数（非用户配置层；详见 `06-tasks-and-workers.md` §1） |
-| **`--magic`** **[v0.7 NEW]** | 关 | CLI |
-| **`--magic-max-chains M`** **[v0.7 NEW]** | unlimited | CLI / env `CO_MAGIC_MAX_CHAINS` |
+| **`git.merge_target_branch`** | `null`（回退到 Leader HEAD） | 全局 / 项目 |
+| **`git.remote`** | `"origin"`（`null` 关闭 fetch / pre-task remote 同步） | 全局 / 项目 |
+| **`git.auto_commit_init_files`** | `true` | 全局 / 项目 |
+| **`git.auto_commit_init_files_branch`** | `null`（不另起分支） | 全局 / 项目 |
+| **`worktree.reset_on_reuse`** | `true`（worktree 复用时 `git reset --hard <leader_head>`） | orchestrator 内部参数（非用户配置层；详见 `06-tasks-and-workers.md` §1） |
+| **`--magic`** | 关 | CLI |
+| **`--magic-max-chains M`** | unlimited | CLI / env `CO_MAGIC_MAX_CHAINS` |
 
 > **rc1 worktree 工作流相关键**：
 > - `git.merge_target_branch=null` 时 MergeValidator 在 `validate()` 现场 `git rev-parse --abbrev-ref HEAD` 取 Leader 进程当前分支；显式设 `"main"` 适用于"在 feature 分支启动 orchestrator 但要合并回 main"的工作流。
@@ -447,6 +447,6 @@ graph TD
 
 ### 11.2 与 v0.6 的差异
 
-- v0.6 仅 7 个包（`worker` 拆出 `coordination` 是 v0.7 NEW，把"Worker 与 ZK 的消息读写"从 worker 业务剥离）。
-- `contracts` 在 v0.7 NEW 增 `LinkCommitRecord` / `UpstreamCommitsSchema` / 4 个 git 错误类 / `MagicDepthExhaustedError`（详见 `02-contracts-and-protocol.md` §6.0 / §9 / §12）。
-- `worker` 在 v0.7 NEW 增 `DocsCommitter` 子模块（双轨 commit，详见 `06-tasks-and-workers.md` §4.5）。
+- v0.6 仅 7 个包（`worker` 拆出 `coordination` 是 ��把"Worker 与 ZK 的消息读写"从 worker 业务剥离）。
+- `contracts` 在 增 `LinkCommitRecord` / `UpstreamCommitsSchema` / 4 个 git 错误类 / `MagicDepthExhaustedError`（详见 `02-contracts-and-protocol.md` §6.0 / §9 / §12）。
+- `worker` 在 增 `DocsCommitter` 子模块（双轨 commit，详见 `06-tasks-and-workers.md` §4.5）。

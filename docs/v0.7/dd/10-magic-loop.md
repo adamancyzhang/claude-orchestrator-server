@@ -1,6 +1,6 @@
-# 10 — `--magic` 自主循环（v0.7 NEW 收束）
+# 10 — `--magic` 自主循环
 
-> **DD 定位**：v0.7 NEW 5 条 FR（FR-31 ~ FR-35）的端到端贯穿；自主循环的生命周期、终止条件、Chain Forest 模型、协议不兼容性收束。
+> **DD 定位**： 5 条 FR（FR-31 ~ FR-35）的端到端贯穿；自主循环的生命周期、终止条件、Chain Forest 模型、协议不兼容性收束。
 >
 > **本文角色**：聚合视图。细则在其它文件深度展开：
 > - schema 在 `02-contracts-and-protocol.md` §3 / §5 / §6
@@ -50,9 +50,9 @@ Worker child-runner 读 /leader 节点：
 
 ---
 
-## 2. v0.7 NEW 协议变更收束
+## 2. 协议变更收束
 
-| 维度 | v0.7 NEW | 主文件 |
+| 维度 | | 主文件 |
 |---|---|---|
 | `TaskLink` 新增 `explore` + 重命名 `build→execute` | schema | `02-contracts-and-protocol.md` §3.1 |
 | `InstanceRole` 新增 `explorer` + 重命名 `builder→executor` | schema | `02-contracts-and-protocol.md` §3.2 |
@@ -312,7 +312,7 @@ PRD §7（协议版本升级）明示：**v0.7 与 v0.6 不兼容；升级需停
 
 ---
 
-## 11. v0.7 NEW FR ↔ 实现位置矩阵
+## 11. FR ↔ 实现位置矩阵
 
 | FR | 标题 | 主实现位置 | 次实现位置 |
 |---|---|---|---|

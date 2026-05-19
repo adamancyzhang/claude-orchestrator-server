@@ -1,6 +1,6 @@
 # 06 — 任务执行与 Worker 生命周期
 
-> **DD 定位**：Worker 子进程从 fork 到关停的完整生命周期；TaskQueue.claim 排序；任务执行流（消息 → 模板 → claude → commit → 自评估 → completion_report）；SelfEvaluator 三连重试；CommitChecker 区分"无变更"与"失败"；跨角色协助；孤儿任务回收；子进程重启；父进程死亡自杀；**[v0.7 NEW]** Explorer task prompt 上下文汇编。
+> **DD 定位**：Worker 子进程从 fork 到关停的完整生命周期；TaskQueue.claim 排序；任务执行流（消息 → 模板 → claude → commit → 自评估 → completion_report）；SelfEvaluator 三连重试；CommitChecker 区分"无变更"与"失败"；跨角色协助；孤儿任务回收；子进程重启；父进程死亡自杀； Explorer task prompt 上下文汇编。
 >
 > **PRD 锚**：FR-12 / FR-13 / FR-14 / FR-21 / FR-22 / FR-23 / FR-24 / FR-25 / FR-31。
 >
@@ -95,7 +95,7 @@ sequenceDiagram
   ML->>ML: read message JSON；按 type 派发
   alt type == 'task_dispatch'
     ML->>TE: execute(task)
-    TE->>RB: preTaskRebase(msg.upstream_commits)   %% [v0.7 NEW] 见 §3.5
+    TE->>RB: preTaskRebase(msg.upstream_commits)   %% 见 §3.5
     alt rebase 冲突
       RB-->>TE: throw RebaseConflictError
       TE->>L: send completion_report {decision:'feedback', feedback_target:<self>, reason:'rebase conflict: ...'}
@@ -128,7 +128,7 @@ sequenceDiagram
 
 > Hook env 完整清单见 `09-audit-and-cache.md` §6.3。
 
-### 3.5 pre-task rebase 算法 **[v0.7 NEW]**
+### 3.5 pre-task rebase 算法
 
 任务真正执行 claude-cli 之前，Worker 把自己分支 rebase 到上游 link 的 worktree commit 上，确保 in-progress 任务在 git 上能"看到"上游产物。算法：
 
@@ -167,7 +167,7 @@ preTaskRebase(upstream: UpstreamCommits | undefined):
 **为什么不在 plan link rebase**：plan 是链的起点，没有上游 link；plan 直接基于 `<leader_head>` 工作。
 **为什么 accept 取 review**：accept link 把所有前序代码线性化为单一分支（close_chain 合并目标）；review 的 worktree SHA 是当前最新代码状态。
 
-### 3.6 git 错误五分类（任务执行期）**[v0.7 NEW]**
+### 3.6 git 错误五分类（任务执行期）
 
 Worker 任务执行流中 git 失败按错误类分流：
 
@@ -183,9 +183,9 @@ Worker 任务执行流中 git 失败按错误类分流：
 > 不变量：
 > - **只有 conflict（rebase / commit 内冲突）触发 retry**；锁 / 权限 / 网络三类**不**触发 retry，因为它们是基础设施级问题，让 Worker 反复 retry 只会刷日志。
 > - 错误分类的真相源：`packages/leader/src/merge-validator.ts:204` `classifyGitError`。
-> - PRD 锚：FR-36（git 错误五分类，**[v0.7 NEW]**）；详见 `04-functional-requirements.md`。
+> - PRD 锚：FR-36（git 错误五分类，）；详见 `04-functional-requirements.md`。
 
-### 3.7 ChainRouter 注入 upstream_commits **[v0.7 NEW]**
+### 3.7 ChainRouter 注入 upstream_commits
 
 ChainRouter `dispatchNextLink(chain_id, next_link)` 必须在派发前注入 upstream：
 
@@ -209,7 +209,7 @@ dispatchNextLink(chain_id, next_link):
 
 ---
 
-## 4. CommitChecker（FR-13 + FR-21）— rc1 双轨 commit **[v0.7 NEW]**
+## 4. CommitChecker（FR-13 + FR-21）— 双轨 commit
 
 Worker 完成一个 link 任务时产生**两类 commit**，落到**两个不同的 git 仓**：
 
@@ -290,7 +290,7 @@ Worker 捕获 CommitFailedError 后，**不**调用 SelfEvaluator，直接构造
 | WorktreeLocked / GitPermission / GitNetwork | 否（终止；不重试） | 否 |
 | SelfEvaluator 自身三连失败 | 是（输出 reject，详见 §5） | 是（已先于 SelfEvaluator 运行） |
 
-### 4.5 DocsCommitter（轨 B：CO root 仓）**[v0.7 NEW]**
+### 4.5 DocsCommitter（轨 B：CO root 仓）
 
 DocsCommitter 把 Worker 在 `<co_root>/docs/<worker_name>/` 下的产出（`result.md` / `task-doc.md` / 评估日志归档）commit 到 CO root 仓。**所有 Worker 共享同一个 CO root 工作树**（不同于项目仓的 per-Worker 分支隔离），所以并发安全是关键。
 
@@ -541,7 +541,7 @@ stateDiagram-v2
 
 ---
 
-## 11. Explorer task prompt 上下文汇编 **[v0.7 NEW]**
+## 11. Explorer task prompt 上下文汇编
 
 Explorer 任务（仅 `--magic` 模式存在）的 prompt 必须包含足够上下文，让 Explorer 能基于"现链全貌"决定下一轮需求：
 

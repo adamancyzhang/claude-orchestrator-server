@@ -1,6 +1,6 @@
 # 05 — 链路推进与 EvalDecision 路由（核心）
 
-> **DD 定位**：ChainRouter 的状态机、NEXT_LINKS / PREV_LINKS 双端常量、EvalDecision 五态机械路由、`resolveFeedbackTarget` 算法、`dispatchFeedbackAsRetry` + retry 计数、ChainDef 拆解（plan 可 null + `--magic` 追加 explore）、**[v0.7 NEW]** `spawn_chain` 分支、`invalid_decision` 兜底。
+> **DD 定位**：ChainRouter 的状态机、NEXT_LINKS / PREV_LINKS 双端常量、EvalDecision 五态机械路由、`resolveFeedbackTarget` 算法、`dispatchFeedbackAsRetry` + retry 计数、ChainDef 拆解（plan 可 null + `--magic` 追加 explore）、 `spawn_chain` 分支、`invalid_decision` 兜底。
 >
 > **PRD 锚**：FR-09 / FR-10 / FR-11 / FR-16 / FR-18 / FR-19 / FR-20 / FR-33。
 >
@@ -77,7 +77,7 @@ PRD FR-09 要求"NEXT_LINKS / PREV_LINKS 与 CHAIN_LINKS 在 Leader 与 Worker �
 | 来源 | content / 元字段 |
 |---|---|
 | **TUI 输入** | content = 用户原文；无 chain_id 字段（ChainRouter 自动生成） |
-| **[v0.7 NEW] spawn_chain 派生** | content = Explorer 的 `next_requirement`；含 `spawned_from = <parent_chain_id>`；无 chain_id（仍由 ChainRouter 生成新 ID） |
+| **spawn_chain 派生** | content = Explorer 的 `next_requirement`；含 `spawned_from = <parent_chain_id>`；无 chain_id（仍由 ChainRouter 生成新 ID） |
 
 ### 3.2 算法
 
@@ -85,7 +85,7 @@ PRD FR-09 要求"NEXT_LINKS / PREV_LINKS 与 CHAIN_LINKS 在 Leader 与 Worker �
 ChainRouter.handleRequirement(msg):
   // 1. 解析需求
   requirement = msg.content
-  parentChainId = msg.spawned_from ?? null                          // [v0.7 NEW]
+  parentChainId = msg.spawned_from ?? null                          //
   parentDepth = parentChainId ? readManifest(parentChainId).chain_depth : -1
   magicMode = leaderConfig.magic_mode
   newDepth = parentDepth + 1
@@ -190,7 +190,7 @@ ChainRouter.handleCompletionReport(msg):
     case 'feedback':       handleFeedback(chainId, link, decision, manifest)
     case 'reject':         handleReject(chainId, link, decision)
     case 'close_chain':    handleCloseChain(chainId, manifest)
-    case 'spawn_chain':    handleSpawnChain(chainId, decision, manifest)   // [v0.7 NEW]
+    case 'spawn_chain':    handleSpawnChain(chainId, decision, manifest)   //
 ```
 
 ### 4.2 activate_next 分支
@@ -265,7 +265,7 @@ handleCloseChain(chainId, manifest):
       pushMergeRetryTask(chainId, failure, manifest)            // 详见 07 §4.2 / §5
 ```
 
-### 4.6 [v0.7 NEW] spawn_chain 分支
+### 4.6 spawn_chain 分支
 
 ```text
 handleSpawnChain(chainId, decision, manifest):
