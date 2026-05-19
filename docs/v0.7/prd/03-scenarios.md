@@ -12,7 +12,7 @@
 | S-04 | Worker 子进程崩溃 → 孤儿回收 + 自动重启 | happy（恢复路径） |
 | S-05 | Execute 后 commit 失败 → 强制 feedback 回同 Worker | RC0（R-01） |
 | S-06 | close_chain 合并冲突 → `merge_failed` + Executor retry | RC0（R-02） |
-| **S-10** | **[v0.7 NEW] `--magic` 自主循环：Explorer `spawn_chain` 起下一条 chain** | **v0.7 NEW** |
+| **S-10**| **`--magic` 自主循环：Explorer `spawn_chain` 起下一条 chain** | 自主循环 |
 | S-07 | 反馈循环超过 max_total_retries → 链 aborted | RC0（R-04） |
 | S-08 | 不可解析 feedback → 静默丢弃 + audit | RC0（R-05） |
 | S-09 | 已 completed 的 chain_id 被重新输入 → 拒绝 | RC0（R-06） |
@@ -34,7 +34,7 @@ claude-orchestrator run --worker 6
 **用户体验**
 
 1. 终端进入 TUI，6 个面板（TEAM / PENDING / IN PROGRESS / WORKER MESSAGES / EVENT LOG / INPUT）就位
-2. TEAM 面板出现 6 行：Tom (planner) / Jerry (executor) / Lucy (verifier) / Thomas (reviewer) / Jack (accepter) / Lisa (executor)。**[v0.7 NEW]** 若加 `--magic` 启动，Lisa 的 role 变为 `explorer`，TUI 标题栏显示 `[MAGIC]`
+2. TEAM 面板出现 6 行：Tom (planner) / Jerry (executor) / Lucy (verifier) / Thomas (reviewer) / Jack (accepter) / Lisa (executor)。 若加 `--magic` 启动，Lisa 的 role 变为 `explorer`，TUI 标题栏显示 `[MAGIC]`
 3. EVENT LOG 滚动出现 `worker_joined ×6` 后稳定
 4. INPUT 框出现光标
 
@@ -205,7 +205,7 @@ CommitChecker 静默 `return null` → watcher 走 self-evaluator → 通常输�
 
 ---
 
-## S-06 — close_chain 合并冲突 → `merge_failed` + accept-link Worker retry（R-02）**[v0.7 rc1 修订]**
+## S-06 — close_chain 合并冲突 → `merge_failed` + accept-link Worker retry（R-02）**[v0.7 修订]**
 
 **触发**
 
@@ -230,7 +230,7 @@ Jack（accept-link Worker）收件箱出现新 task_dispatch，description 含 `
    a. audit `merge_failure { category: 'conflict', branch, error, conflict_files }`
    b. ChainAudit `closeChain(chainId, "merge_failed", { failures })`
    c. 发射 `chain_merge_failed` 事件（TUI 红字渲染）
-   d. push 一条 priority=HIGH、assigned_to=**accept-link Worker**、link=`accept` 的 retry task（rc1：不再按失败 link 派给中间 link 的 Worker）
+   d. push 一条 priority=HIGH、assigned_to=**accept-link Worker**、link=`accept` 的 retry task（不按失败 link 派给中间 link 的 Worker）
 4. emit `chain_closed`，链状态为 `merge_failed`
 
 **与 worktree_locked / permission / network 的差异**
@@ -243,12 +243,12 @@ Jack（accept-link Worker）收件箱出现新 task_dispatch，description 含 `
 
 **后续（conflict 路径）**
 
-Jack 在自己 worktree 中 `git fetch origin main && git rebase origin/main`，解决冲突、重新 commit → SelfEvaluator → 输出 `activate_next` → ChainRouter 在 `[merge retry]` 特例分支识别 → 重新触发 `runCloseChainMerge`。最终 main 含 1 个 `--no-ff` merge commit（rc1 单次合并），manifest.status 变为 `completed`。
+Jack 在自己 worktree 中 `git fetch origin main && git rebase origin/main`，解决冲突、重新 commit → SelfEvaluator → 输出 `activate_next` → ChainRouter 在 `[merge retry]` 特例分支识别 → 重新触发 `runCloseChainMerge`。最终 main 含 1 个 `--no-ff` merge commit（单次合并），manifest.status 变为 `completed`。
 
 **修复前的旧行为**（已修复）
 
 - v0.6 `runMergeValidation` 用 `logger.warn` 吞掉失败、循环继续；`close_chain` 不论 failures 都写 `status="completed"` → 主线半合并、链标完成、用户无感（FR-17 修复）。
-- v0.6 ancestry 检查依赖 `git branch --contains` —— shared `.git` 下永远返回 true，所有 merge 被静默跳过（rc1 改用 `git merge-base --is-ancestor` 修复，详见 `../dd/07-merge-validator-and-closure.md` §6.4）。
+- v0.6 ancestry 检查依赖 `git branch --contains` —— shared `.git` 下永远返回 true，所有 merge 被静默跳过（改用 `git merge-base --is-ancestor` 修复，详见 `../dd/07-merge-validator-and-closure.md` §6.4）。
 
 ---
 
@@ -386,7 +386,7 @@ Worker 完成任务后 SelfEvaluator 重试 3 次输出 JSON 都不符合 EvalDe
 
 ---
 
-## S-10 — `--magic` 自主循环：Explorer `spawn_chain` 起下一条 chain **[v0.7 NEW]**
+## S-10 — `--magic` 自主循环：Explorer `spawn_chain` 起下一条 chain
 
 **触发**
 

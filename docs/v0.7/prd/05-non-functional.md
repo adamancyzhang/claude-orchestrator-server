@@ -24,12 +24,12 @@
 | chain_id 冲突 | 重写已终态 chain 的 manifest 被拒绝（抛 `ChainConflictError`）；原 manifest 不被覆盖；audit 记 `chain_id_conflict` |
 | commit 失败 | 强制 feedback 回同 Worker；retry 计入 `total_retry_count` |
 | evaluator 三连失败 | 强制 `reject`（不论 link），链转 `aborted`；不允许 "无声 close_chain" 绕过质量门 |
-| 合并冲突 **[v0.7 rc1 修订]** | rc1 单次合并 accept-link：成功则 1 个 `--no-ff` commit；失败按 git 错误五分类分流（详见 FR-36） |
-| **[v0.7 NEW]** `MergeConflictError` / `RebaseConflictError` | **触发 retry**：merge 冲突 → 派 retry 给 accept-link Worker；rebase 冲突 → 强制 feedback 给同 Worker；都计入 `total_retry_count` |
-| **[v0.7 NEW]** `WorktreeLockedError` / `GitPermissionError` / `GitNetworkError` | **不触发 retry**：audit `merge_failure { category }` 后终止本次操作；提示操作员排查 `.git/index.lock` / 目录权限 / 网络 |
-| **[v0.7 NEW]** Docs commit 失败 | best-effort 语义：`DocsCommitter.commitIfChanged` 返回 `null` 而非抛错；写入 `LinkCommitRecord.docs=null`；不阻塞 worktree commit 与 completion_report；不计入 retry |
-| **[v0.7 NEW]** `--magic` 循环深度上限 | `--magic-max-chains M`（默认 `unlimited`），`CO_MAGIC_MAX_CHAINS` 环境变量覆写；达上限时 `spawn_chain` 决策被 Leader 降级为 `close_chain`、不再创建下一条 chain；audit 记 `magic_depth_exhausted` |
-| **[v0.7 NEW]** Explorer 自我熔断 | Explorer 自评估失败 3 次仍触发 reject-only fallback（FR-22）；这种情况下不会跨链传播，magic 循环自动终止 |
+| 合并冲突 **[v0.7 修订]** | 单次合并 accept-link：成功则 1 个 `--no-ff` commit；失败按 git 错误五分类分流（详见 FR-36） |
+| `MergeConflictError` / `RebaseConflictError` | **触发 retry**：merge 冲突 → 派 retry 给 accept-link Worker；rebase 冲突 → 强制 feedback 给同 Worker；都计入 `total_retry_count` |
+| `WorktreeLockedError` / `GitPermissionError` / `GitNetworkError` | **不触发 retry**：audit `merge_failure { category }` 后终止本次操作；提示操作员排查 `.git/index.lock` / 目录权限 / 网络 |
+| Docs commit 失败 | best-effort 语义：`DocsCommitter.commitIfChanged` 返回 `null` 而非抛错；写入 `LinkCommitRecord.docs=null`；不阻塞 worktree commit 与 completion_report；不计入 retry |
+| `--magic` 循环深度上限 | `--magic-max-chains M`（默认 `unlimited`），`CO_MAGIC_MAX_CHAINS` 环境变量覆写；达上限时 `spawn_chain` 决策被 Leader 降级为 `close_chain`、不再创建下一条 chain；audit 记 `magic_depth_exhausted` |
+| Explorer 自我熔断 | Explorer 自评估失败 3 次仍触发 reject-only fallback（FR-22）；这种情况下不会跨链传播，magic 循环自动终止 |
 
 详见 `../dd/06-tasks-and-workers.md`（Recovery、子进程重启、自杀机制）、`../dd/07-merge-validator-and-closure.md`（merge_failed 终态、accept-link retry）与 `04-functional-requirements.md` 第 6 / 7 域。
 
@@ -41,7 +41,7 @@
 | ZK 单节点容量 | ZK 原生限制 1 MiB；result 超过 64 KiB 落盘并以 `file://` 引用 |
 | TUI 渲染节流 | TUI 在每个事件后重绘（ANSI escape-code），EVENT LOG 滚动保留最近 100 条 |
 | `--fork-session` 干净分支 | SelfEvaluator 每次重试 `--fork-session` 消除格式错误输出的锚定效应 |
-| 并发上限 | Worker 数默认 6，最小 6（默认模式：5 个 role + 1 个 executor 兜底；**[v0.7 NEW]** `--magic` 模式：6 个 role 精确匹配）；上限不硬约束（仅受机器资源限制） |
+| 并发上限 | Worker 数默认 6，最小 6（默认模式：5 个 role + 1 个 executor 兜底； `--magic` 模式：6 个 role 精确匹配）；上限不硬约束（仅受机器资源限制） |
 
 ## 4. 安全
 
@@ -99,13 +99,13 @@ Worktree 配置（<worktree>/.claude-orchestrator/config.json）
 | chain 反馈硬上限 | env `CO_CHAIN_MAX_RETRIES` | 默认 9 |
 | worktree 段落 | 项目根 | 启动时由 WorktreeInitializer 写入 |
 | 单 Worker 身份 | worktree 内 | name / role / instance_id |
-| **[v0.7 NEW]** merge 目标分支 | 全局 / 项目 `git.merge_target_branch` | `null`（fallback 到 Leader 启动时的 HEAD）；显式设 `"main"` 适用于 feature 分支启动但合并回 main |
-| **[v0.7 NEW]** git 远端 | 全局 / 项目 `git.remote` | `"origin"`；设 `null` 关闭 MergeValidator `git fetch` 与 Worker pre-task `git fetch <sha>` |
-| **[v0.7 NEW]** init 文件自动 commit | 全局 / 项目 `git.auto_commit_init_files` | `true`；orchestrator 启动时自动 commit 项目根 / CO root 的 init files |
-| **[v0.7 NEW]** init commit 专用分支 | 全局 / 项目 `git.auto_commit_init_files_branch` | `null`（用当前分支）；非空时 `git checkout -B <branch>` 后 commit |
-| **[v0.7 NEW]** worktree 复用清理 | orchestrator 内部参数 `reset_on_reuse` | `true`（worktree 复用时 `git reset --hard <leader_head>`，**有损**：丢弃未 commit 工作）；非用户配置层，详见 `../dd/06-tasks-and-workers.md` §1 |
-| **[v0.7 NEW]** 自主循环开关 | CLI `--magic` flag | 默认关闭；启用后启用 explore 链节 + spawn_chain 决策 |
-| **[v0.7 NEW]** 自主循环深度上限 | CLI `--magic-max-chains M` / env `CO_MAGIC_MAX_CHAINS` | 默认 `unlimited`；与 `--magic` 配合，控制 `spawn_chain` 派生新 chain 的最大层数 |
+| merge 目标分支 | 全局 / 项目 `git.merge_target_branch` | `null`（fallback 到 Leader 启动时的 HEAD）；显式设 `"main"` 适用于 feature 分支启动但合并回 main |
+| git 远端 | 全局 / 项目 `git.remote` | `"origin"`；设 `null` 关闭 MergeValidator `git fetch` 与 Worker pre-task `git fetch <sha>` |
+| init 文件自动 commit | 全局 / 项目 `git.auto_commit_init_files` | `true`；orchestrator 启动时自动 commit 项目根 / CO root 的 init files |
+| init commit 专用分支 | 全局 / 项目 `git.auto_commit_init_files_branch` | `null`（用当前分支）；非空时 `git checkout -B <branch>` 后 commit |
+| worktree 复用清理 | orchestrator 内部参数 `reset_on_reuse` | `true`（worktree 复用时 `git reset --hard <leader_head>`，**有损**：丢弃未 commit 工作）；非用户配置层，详见 `../dd/06-tasks-and-workers.md` §1 |
+| 自主循环开关 | CLI `--magic` flag | 默认关闭；启用后启用 explore 链节 + spawn_chain 决策 |
+| 自主循环深度上限 | CLI `--magic-max-chains M` / env `CO_MAGIC_MAX_CHAINS` | 默认 `unlimited`；与 `--magic` 配合，控制 `spawn_chain` 派生新 chain 的最大层数 |
 
 ### 6.3 CLI 命令面
 
@@ -118,8 +118,8 @@ Worktree 配置（<worktree>/.claude-orchestrator/config.json）
 | `--worker N` | 6 | Worker 数；最小 6 |
 | `-z <hosts>` | 全局配置 / 127.0.0.1:2181 | ZK 连接地址 |
 | `--debug` | false | 启用 prompt 与执行 trace 打印 |
-| **[v0.7 NEW]** `--magic` | false | 启用自主循环（追加 explore 链节 + spawn_chain 决策） |
-| **[v0.7 NEW]** `--magic-max-chains M` | unlimited | `--magic` 模式下 chain 派生层数上限 |
+| `--magic` | false | 启用自主循环（追加 explore 链节 + spawn_chain 决策） |
+| `--magic-max-chains M` | unlimited | `--magic` 模式下 chain 派生层数上限 |
 
 详见 `../dd/01-architecture.md`（启动 5 阶段、Cache 目录、CLI 配置层）。
 

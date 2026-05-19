@@ -1,6 +1,6 @@
 # 03 — 身份注入与角色分配
 
-> **DD 定位**：name pool 与 role 优先级填充、Worktree 创建幂等算法、`buildIdentityPrompt` 三段拼接、`roleWeights` 认领排序，以及 **[v0.7 NEW]** explorer 模板字段。
+> **DD 定位**：name pool 与 role 优先级填充、Worktree 创建幂等算法、`buildIdentityPrompt` 三段拼接、`roleWeights` 认领排序，以及 explorer 模板字段。
 >
 > **PRD 锚**：FR-05 / FR-06 / FR-07 / FR-08 / FR-31（explorer 模板） / FR-32（magic role 分配）。
 >
@@ -45,7 +45,7 @@ planner > executor > verifier > reviewer > accepter
 | 6 | executor（兜底，覆盖"execute 是瓶颈"） |
 | 7+ | executor |
 
-### 2.2 `--magic` 模式 **[v0.7 NEW]**
+### 2.2 `--magic` 模式
 
 填充顺序：
 
@@ -178,7 +178,7 @@ WorktreeInitializer.initialize(workerCount, magicMode, projectRoot):
 | verifier | task-verification |
 | reviewer | task-review |
 | accepter | task-acceptance |
-| **explorer** **[v0.7 NEW]** | task-exploration |
+| **explorer** | task-exploration |
 
 ---
 
@@ -217,7 +217,7 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 
 ### 4.3 第 2 段：角色 memory
 
-`templates/claude-memory/personal-claude-${role}.md` —— 包括 explorer **[v0.7 NEW]**。
+`templates/claude-memory/personal-claude-${role}.md` —— 包括 explorer 。
 
 每个角色一份 markdown，内容典型结构：
 
@@ -241,7 +241,7 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 `templates/agents/worker-${role}.md` 原样拼接（不做占位符替换，因其内容不依赖具体 name）。定义角色的工作流约束，如：
 
 - `worker-verifier.md`：必须先列证据再下结论
-- `worker-explorer.md`（**[v0.7 NEW]**）：必须在自评估时同时输出 `next_requirement` 字段（如果选 `spawn_chain`）
+- `worker-explorer.md`：必须在自评估时同时输出 `next_requirement` 字段（如果选 `spawn_chain`）
 
 ### 4.5 cache-friendly 调用
 
@@ -291,7 +291,7 @@ claude --append-system-prompt "<part1>\n\n---\n\n<part2>\n\n---\n\n<part3>" \
 
 ---
 
-## 6. Explorer 角色完整说明 **[v0.7 NEW]**
+## 6. Explorer 角色完整说明
 
 ### 6.1 模板清单
 

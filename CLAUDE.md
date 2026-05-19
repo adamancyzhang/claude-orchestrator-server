@@ -32,7 +32,7 @@ pnpm pkgcheck
 # Start with debug trace
 ./bin/claude-orchestrator run --worker 6 --debug
 
-# Magic mode (v0.7 NEW): the 6th worker becomes `explorer` and chains may spawn sub-chains
+# Magic mode: the 6th worker becomes `explorer` and chains may spawn sub-chains
 ./bin/claude-orchestrator run --worker 6 --magic
 ./bin/claude-orchestrator run --worker 6 --magic --magic-max-chains 5
 
@@ -169,7 +169,7 @@ The orchestrator manages 5 roles in standard mode, 6 in magic mode:
 | 3 | `verifier` | `verify` | Runs tests, type checks, lint |
 | 4 | `reviewer` | `review` | Reads diff, flags issues |
 | 5 | `accepter` | `accept` | Final acceptance + merge readiness check |
-| 6 | `explorer` | `explore` | **[v0.7 NEW]** Only present with `--magic`; may spawn sub-chains |
+| 6 | `explorer` | `explore` | Only present with `--magic`; may spawn sub-chains |
 
 `packages/orchestrator/src/worktree-initializer.ts` assigns roles by `ROLE_PRIORITY` (standard) or `MAGIC_ROLE_PRIORITY` (magic). For `--worker 6`:
 - **Standard**: `planner, executor, verifier, reviewer, accepter, executor` (the 6th defaults to a second `executor`).
@@ -257,7 +257,7 @@ Workers read `/leader` on connect to validate `protocol_version` and pick up `ma
 
 Context store (`/context`) is not implemented — no paths exist in `zkPaths.ts`.
 
-### Magic Mode (v0.7 NEW)
+### Magic Mode
 
 `--magic` enables the autonomous loop:
 

@@ -32,9 +32,9 @@ export interface ChainAudit {
     chainId: ChainId,
     requirement: string,
     options: {
-      magic_mode: boolean;                  // [v0.7 NEW]
-      parent_chain_id: ChainId | null;      // [v0.7 NEW]
-      chain_depth: number;                  // [v0.7 NEW]
+      magic_mode: boolean;                  //
+      parent_chain_id: ChainId | null;      //
+      chain_depth: number;                  //
       max_total_retries?: number;           // 默认 9，CO_CHAIN_MAX_RETRIES 覆写
     },
   ): Promise<ChainManifest>;
@@ -49,7 +49,7 @@ export interface ChainAudit {
     extra?: {
       reason?: string;                                            // abort_reason
       failures?: ChainManifest['merge_failures'];                 // merge_failed 必填
-      child_chain_id?: ChainId;                                   // [v0.7 NEW] spawn_chain 时同步 append
+      child_chain_id?: ChainId;                                   // spawn_chain 时同步 append
     },
   ): Promise<ChainManifest>;
 
@@ -57,9 +57,9 @@ export interface ChainAudit {
   recordLinkTask(chainId: ChainId, link: TaskLink, taskId: TaskId): Promise<void>;
   recordLinkWorker(chainId: ChainId, link: TaskLink, instanceId: InstanceId): Promise<void>;
   incrementRetry(chainId: ChainId): Promise<number>;             // 返回新的 total_retry_count
-  appendChildChain(chainId: ChainId, child: ChainId): Promise<void>; // [v0.7 NEW]
+  appendChildChain(chainId: ChainId, child: ChainId): Promise<void>; //
 
-  // —— rc1 worktree 工作流（**[v0.7 NEW]**，与 02 §6.0 LinkCommitRecord 协同）
+  // —— worktree 工作流（，与 02 §6.0 LinkCommitRecord 协同）
   recordLinkCommit(
     chainId: ChainId,
     link: TaskLink,
@@ -90,7 +90,7 @@ export interface ChainAudit {
 }
 ```
 
-> **rc1 三方法的代码归属**：`packages/leader/src/chain-audit.ts:218`（recordLinkCommit）/`:249`（collectUpstreamCommits）/`:268`（clearLinkCommitsFrom）。`LinkCommitRecord` 定义见 `02-contracts-and-protocol.md` §6.0；`UpstreamCommits` 定义见 §9。
+> **三方法的代码归属**：`packages/leader/src/chain-audit.ts:218`（recordLinkCommit）/`:249`（collectUpstreamCommits）/`:268`（clearLinkCommitsFrom）。`LinkCommitRecord` 定义见 `02-contracts-and-protocol.md` §6.0；`UpstreamCommits` 定义见 §9。
 
 ### 1.3 manifest.json 字段全表
 
@@ -105,14 +105,14 @@ export interface ChainAudit {
 | `merge_failures[]` | { link, branch, error } | closeChain（仅 `merge_failed`） | MergeValidator（详见 `07-merge-validator-and-closure.md` §4） |
 | `link_tasks[link]` | TaskId | ChainRouter push 任务后 | ChainRouter |
 | `link_workers[link]` | InstanceId | task_claimed 事件后 | ChainRouter（订阅 `task_claimed`） |
-| **`link_commits[link]`** **[v0.7 NEW]** | LinkCommitRecord | Worker 任务完成 → completion_report 到达 | ChainRouter.handleCompletionReport（调 `recordLinkCommit`） |
+| **`link_commits[link]`** | LinkCommitRecord | Worker 任务完成 → completion_report 到达 | ChainRouter.handleCompletionReport（调 `recordLinkCommit`） |
 | `total_retry_count` | int | incrementRetry | ChainRouter（feedback 派发前） |
 | `max_total_retries` | int | openChain | ChainAudit（读 env） |
 | `requirement_path` | string | openChain | ChainAudit |
-| **`parent_chain_id`** **[v0.7 NEW]** | ChainId \| null | openChain | ChainAudit |
-| **`child_chain_ids[]`** **[v0.7 NEW]** | ChainId[] | appendChildChain | ChainRouter（spawn_chain 时） |
-| **`chain_depth`** **[v0.7 NEW]** | int | openChain | ChainAudit |
-| **`magic_mode`** **[v0.7 NEW]** | boolean | openChain | ChainAudit |
+| **`parent_chain_id`** | ChainId \| null | openChain | ChainAudit |
+| **`child_chain_ids[]`** | ChainId[] | appendChildChain | ChainRouter（spawn_chain 时） |
+| **`chain_depth`** | int | openChain | ChainAudit |
+| **`magic_mode`** | boolean | openChain | ChainAudit |
 
 > Schema 见 `02-contracts-and-protocol.md` §6.2。
 
@@ -142,10 +142,10 @@ openChain(chainId, requirement, opts):
     total_retry_count: 0,
     max_total_retries: opts.max_total_retries ?? envInt('CO_CHAIN_MAX_RETRIES', 9),
     requirement_path: '<cache>/chains/<chainId>/requirement.md',
-    parent_chain_id: opts.parent_chain_id,        // [v0.7 NEW]
-    child_chain_ids: [],                          // [v0.7 NEW]
-    chain_depth: opts.chain_depth,                // [v0.7 NEW]
-    magic_mode: opts.magic_mode,                  // [v0.7 NEW]
+    parent_chain_id: opts.parent_chain_id,        //
+    child_chain_ids: [],                          //
+    chain_depth: opts.chain_depth,                //
+    magic_mode: opts.magic_mode,                  //
   }
   writeFile(<cache>/chains/<chainId>/requirement.md, requirement)
   writeManifestAtomic(manifest)
@@ -166,7 +166,7 @@ closeChain(chainId, status, extra):
     manifest.abort_reason = extra.reason ?? 'unspecified'
   if status == 'merge_failed':
     manifest.merge_failures = extra.failures ?? []
-  if extra.child_chain_id:                       // [v0.7 NEW]
+  if extra.child_chain_id:                       //
     manifest.child_chain_ids.push(extra.child_chain_id)
   writeManifestAtomic(manifest)
   appendAudit({ event_type: 'chain_closed', chain_id, detail: { status, ...extra } })
@@ -215,7 +215,7 @@ sequenceDiagram
 | 来源 | 内容 |
 |---|---|
 | 默认（TUI 输入） | 用户在 INPUT 框内打的原文（多行也保留） |
-| **[v0.7 NEW]** spawn_chain 派生 | Explorer 输出的 `next_requirement` 字段原文；可在文件头追加 `> Spawned from: <parent_chain_id>` 一行作为可读性补充（非必须） |
+| spawn_chain 派生 | Explorer 输出的 `next_requirement` 字段原文；可在文件头追加 `> Spawned from: <parent_chain_id>` 一行作为可读性补充（非必须） |
 | memory_refresh 不创建 requirement.md（不是 chain） |  |
 
 文件以 UTF-8 写盘，无 BOM。
@@ -252,7 +252,7 @@ sequenceDiagram
 | `task_failed` | retry_count > 3 归档 | `task_id`, `retry_count` |
 | `invalid_decision` | ChainRouter 检测到 link × decision 非法组合 | `link`, `decision`, `expected_links` |
 
-### 4.3 事件触发表（v0.7 NEW）
+### 4.3 事件触发表
 
 | event_type | 触发位置 | detail 必含 |
 |---|---|---|
@@ -396,8 +396,8 @@ LeaderEventBus 发出的事件按类型映射到 EVENT LOG 行（详见 `04-tui-
 | `chain_merge_failed` | `MERGE_FAILED chain <id>: N branch(es)` | 红 |
 | `worker_left` | `worker_left <name> (<reason>)` | 黄 |
 | `worker_restarted` | `restart N/3 <name>` | 默认 |
-| **`chain_spawned`** **[v0.7 NEW]** | `chain_spawned <parent> → <child>` | 青 |
-| **`magic_depth_exhausted`** **[v0.7 NEW]** | `[debug] magic loop depth N reached: spawn_chain demoted to close_chain` | 黄 |
+| **`chain_spawned`** | `chain_spawned <parent> → <child>` | 青 |
+| **`magic_depth_exhausted`** | `[debug] magic loop depth N reached: spawn_chain demoted to close_chain` | 黄 |
 | `feedback_unresolved` | `feedback for chain <id>/<link> dropped: no resolvable target` | 灰 |
 | `chain_id_conflict` (debug_info) | `chain <id> already <status>; new requirement dropped` | 灰 |
 | `invalid_decision` (debug_info) | `invalid decision <d> on link <l>; chain aborted` | 红 |
