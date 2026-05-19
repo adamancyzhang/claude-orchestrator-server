@@ -20,7 +20,12 @@ export interface ChildSupervisorOptions {
   logger: ILogger;
 }
 
-export class ChildSupervisor {
+export interface IChildSupervisor {
+  start(configs: readonly WorktreeConfig[]): void | Promise<void>;
+  shutdown(timeoutMs?: number): Promise<void>;
+}
+
+export class ChildSupervisor implements IChildSupervisor {
   private children: ChildProcess[] = [];
   private restartCounts = new Map<string, number>();
   private shuttingDown = false;

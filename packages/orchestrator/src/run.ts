@@ -9,6 +9,8 @@ import {
   zkPaths,
   type ILogger,
   type InstanceId,
+  type IZkClient,
+  type ZkPath,
 } from "@co/contracts";
 import {
   Logger,
@@ -46,6 +48,8 @@ import {
 } from "@co/leader";
 import {
   ChildSupervisor,
+  type ChildSupervisorOptions,
+  type IChildSupervisor,
 } from "./child-supervisor.js";
 import {
   InitChecker,
@@ -80,6 +84,37 @@ export interface OrchestratorPaths {
   child_module: string;
 }
 
+export interface ZkClientFactoryInput {
+  hosts: string;
+  session_timeout_ms: number;
+  ensure_paths: readonly ZkPath[];
+}
+
+export interface OrchestratorDeps {
+  /**
+   * Factory for the leader's ZK client. Defaults to `new ZkClient(opts)`.
+   * Tests inject an in-memory fake here.
+   */
+  zk_factory?: (opts: ZkClientFactoryInput) => IZkClient;
+  /**
+   * Factory for the child supervisor (worker fork manager). Defaults
+   * to `new ChildSupervisor(opts)`. Tests inject a fake that simulates
+   * worker registration without forking real processes.
+   */
+  supervisor_factory?: (opts: ChildSupervisorOptions) => IChildSupervisor;
+  /**
+   * When true, skip console capture and TUI startup. Used by tests so
+   * they don't have their stdout hijacked or stdin raw-moded.
+   */
+  headless?: boolean;
+  /**
+   * Optional extra shutdown signal. When this promise resolves, the
+   * orchestrator runs cleanup and returns (same effect as SIGINT).
+   * Used by tests to drive the run loop to a clean exit.
+   */
+  shutdown_signal?: Promise<void>;
+}
+
 export function defaultPaths(): OrchestratorPaths {
   const pkgRoot = path.resolve(__dirname, "..");
   const projectRoot = path.resolve(pkgRoot, "..", "..");
@@ -93,6 +128,7 @@ export function defaultPaths(): OrchestratorPaths {
 export async function runOrchestrator(
   input: RunInput,
   paths: OrchestratorPaths = defaultPaths(),
+  deps: OrchestratorDeps = {},
 ): Promise<void> {
   const logger: ILogger = new Logger({
     namespace: "orchestrator",
@@ -143,11 +179,14 @@ export async function runOrchestrator(
   });
   const leaderId = asInstanceId(randomUUID().replace(/-/g, ""));
 
-  const zk = new ZkClient({
+  const zkOpts = {
     hosts: resolved.zk.hosts,
     session_timeout_ms: resolved.zk.session_timeout_ms,
     ensure_paths: zkPaths.allEnsurePaths(),
-  });
+  };
+  const zk: IZkClient = deps.zk_factory
+    ? deps.zk_factory(zkOpts)
+    : new ZkClient(zkOpts);
   await zk.connect();
 
   await zk.createEphemeral(
@@ -185,7 +224,7 @@ export async function runOrchestrator(
     logger: logger.child("co-root"),
     auto_commit_init_files: resolved.git.auto_commit_init_files,
   });
-  captureConsoleToFile(coRoot);
+  if (!deps.headless) captureConsoleToFile(coRoot);
 
   const messageRouter = new MessageRouter({ zk });
   const taskQueue = new TaskQueue({ zk });
@@ -313,10 +352,10 @@ export async function runOrchestrator(
     leader_name: leaderInstance.name,
     projects_root: resolved.projects_root,
   });
-  tui.start();
+  if (!deps.headless) tui.start();
 
   // Phase 4: fork workers
-  const supervisor = new ChildSupervisor({
+  const supervisorOpts: ChildSupervisorOptions = {
     child_module_path: paths.child_module,
     zk_hosts: resolved.zk.hosts,
     cli_command: resolved.commands.claude_cli,
@@ -325,21 +364,27 @@ export async function runOrchestrator(
     debug: input.debug ?? false,
     git_remote: resolved.git.remote,
     logger: logger.child("supervisor"),
-  });
+  };
+  const supervisor: IChildSupervisor = deps.supervisor_factory
+    ? deps.supervisor_factory(supervisorOpts)
+    : new ChildSupervisor(supervisorOpts);
   const workerConfigsForSupervisor = worktreeConfigs.map((c) => ({
     ...c,
     instance_id: c.instance_id,
   }));
-  supervisor.start(workerConfigsForSupervisor);
+  await Promise.resolve(supervisor.start(workerConfigsForSupervisor));
 
   // Phase 5: wait for shutdown
   await new Promise<void>((resolve) => {
+    let cleanedUp = false;
     const cleanup = async () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       await supervisor.shutdown();
       leaderWatcher.stop();
       monitor.stop();
       taskOrch.stop();
-      tui.stop();
+      if (!deps.headless) tui.stop();
       restoreConsole();
       await registry.unregister(leaderInstance.id).catch(() => undefined);
       await zk.close();
@@ -347,6 +392,9 @@ export async function runOrchestrator(
     };
     process.once("SIGINT", () => void cleanup());
     process.once("SIGTERM", () => void cleanup());
+    if (deps.shutdown_signal) {
+      void deps.shutdown_signal.then(() => cleanup());
+    }
   });
 }
 
