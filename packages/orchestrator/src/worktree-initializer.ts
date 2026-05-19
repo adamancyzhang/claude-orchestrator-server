@@ -252,12 +252,6 @@ export async function initializeWorktrees(
     }
 
     const instanceId = asInstanceId(randomUUID().replace(/-/g, ""));
-    const wtConfigDir = path.join(wtPath, ".claude-orchestrator");
-    await fs.promises.mkdir(wtConfigDir, { recursive: true });
-    await fs.promises.writeFile(
-      path.join(wtConfigDir, "config.json"),
-      JSON.stringify({ name, role, instance_id: instanceId }, null, 2),
-    );
 
     seedWorktreeAssets(wtPath, name, role, opts.template_dir, opts.skills_dir);
 
@@ -327,21 +321,5 @@ function seedWorktreeAssets(
   const teamDst = path.join(worktreePath, "CLAUDE.md");
   if (fs.existsSync(teamSrc) && !fs.existsSync(teamDst)) {
     fs.copyFileSync(teamSrc, teamDst);
-  }
-  const personalSrc = path.join(memoryDir, `personal-claude-${role}.md`);
-  const personalDst = path.join(
-    worktreePath,
-    ".claude-orchestrator",
-    "docs",
-    name,
-    "CLAUDE.md",
-  );
-  if (fs.existsSync(personalSrc) && !fs.existsSync(personalDst)) {
-    fs.mkdirSync(path.dirname(personalDst), { recursive: true });
-    let content = fs.readFileSync(personalSrc, "utf-8");
-    content = content
-      .replace(/\{\{name\}\}/g, name)
-      .replace(/\{\{role\}\}/g, role);
-    fs.writeFileSync(personalDst, content, "utf-8");
   }
 }
