@@ -376,14 +376,30 @@ state.events.slice(1).every(e => e.type === "worker_joined")
 | **D13** | `/leader` 节点字段 | "Leader metadata"（含糊一行） | `{protocol_version, leader_id, pid, host, started_at, magic_mode, magic_max_chains}` | 代码为准 | CLAUDE.md "ZK Node Tree" 段把 `/leader` 注释展开为字段表 |
 | **D14** | personal CLAUDE.md 路径 | 未提 | seed 目标曾错置于 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`，但代码库各处对其均无读取（含 claude-cli 标准内存路径）。D17 修复时已一并删除整段 seed 代码 | 代码为准 | 已通过 D17 修复一并解决；CLAUDE.md 无需新增此条目录 |
 | **D15** | 测试体系 | "All test files have been removed in v0.7" + `tests/CLAUDE.md` 仍是 ground truth | 已确认（`pnpm test` 报 "no test files found"） | 一致 | — |
-| **D16** | 配置层数 | "merges two config files: Global + Project" | 实际五层：CLI args → env vars → project config → global config → defaults（`packages/infra/src/config/config-loader.ts`） | 代码为准 | CLAUDE.md "Configuration Layering" 段改写为 5 层 |
+| **D16** | 配置层数 | "merges two config files: Global + Project" | 实际五层：CLI args → env vars → project config → global config → defaults（`packages/infra/src/config/config-loader.ts`） | 代码为准 | CLAUDE.md "Configuration Layering" 段改写为 5 层 ✅ |
 | **D17** | worktree 内多写一层 `.claude-orchestrator/`（已修复） | 未提 | 原 `initializeWorktrees:254-260` 在 worktree 内写 `.claude-orchestrator/config.json`（无消费者）；原 `seedWorktreeAssets:331-345` 写 `.claude-orchestrator/docs/{name}/CLAUDE.md`（无消费者）。审计确认 `.claude-orchestrator/agents/*.md` 被 `child-boot.ts:74-82` 用作 TemplateEngine `primary_dir`，**必须保留**。设计意图（`co-root-initializer.ts:30-31, :60-67`）允许 worktree 内放置运行时模板，仅禁止把 CO 运行时状态（docs/、tasks/、chains/）写入 worktree | 已修复 | ✅ 已在 `worktree-initializer.ts` 删除 config.json 与 personal CLAUDE.md 写入；agents 复制保留（TemplateEngine 依赖） |
 
-> **优先级建议**：
-> - **高优先级**（影响读者立刻找错文件或叫错术语）：D1/D2/D3/D4/D7/D9/D16
-> - **中优先级**（补遗）：D5/D6/D11/D12/D13
-> - **已修复**：D14（随 D17 一并解决）、D17
-> - **已一致**：D8/D15
+### 修复进度
+
+| 状态 | 项目 | 触达文件 |
+|------|------|----------|
+| ✅ 已修复 | **D17**（worktree 内冗余 seed） | `packages/orchestrator/src/worktree-initializer.ts` 删除 `config.json` 与 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md` 两处写入；agents 复制保留（TemplateEngine primary_dir 依赖） |
+| ✅ 已修复 | **D14**（personal CLAUDE.md 路径） | 随 D17 一并删除（审计确认无消费者；后续若启用个人内存需新增 seed → CO root） |
+| ✅ 已修复 | **D1**（源码路径前缀） | `CLAUDE.md` 全文 `src/X/` → `packages/X/src/`；新增 "Package Layout" 一节、重写 "Key Files" 表 |
+| ✅ 已修复 | **D2**（builder → executor） | `CLAUDE.md` Roles / Role-Link Task Claiming / Responsibility Chain |
+| ✅ 已修复 | **D3**（acceptor → accepter） | `CLAUDE.md` Roles 等多处 |
+| ✅ 已修复 | **D4**（build link → execute） | `CLAUDE.md` "Responsibility Chain" + "Role-Link Task Claiming" |
+| ✅ 已修复 | **D5**（第 6 worker 默认角色） | `CLAUDE.md` "Roles" 一节补 standard / magic 两种填充表 |
+| ✅ 已修复 | **D6**（magic mode） | `CLAUDE.md` 新增 "Magic Mode (v0.7 NEW)" 一节 + "Development Commands" 补 `--magic` 示例 |
+| ✅ 已修复 | **D7**（模板数量） | `CLAUDE.md` "Key Files" 末尾 `templates/agents/` 列出全部 20 个 |
+| ✅ 已修复 | **D9**（skills 数量） | `CLAUDE.md` "Key Files" 末尾 `skills/` 列出全部 10 个 |
+| ✅ 已修复 | **D10**（工作区干净） | `CLAUDE.md` "Development Commands" 注释 + "Orchestrator" 5-phase 表 Phase 1 |
+| ✅ 已修复 | **D11**（InitChecker 4 步） | `CLAUDE.md` "Orchestrator" 5-phase 启动表 Phase 1 |
+| ✅ 已修复 | **D12**（auto_commit_init_files） | `CLAUDE.md` "Configuration Layering" 段 + 5-phase 表 |
+| ✅ 已修复 | **D13**（`/leader` 节点字段） | `CLAUDE.md` "ZK Node Tree" 段展开完整 payload |
+| ✅ 已修复 | **D16**（配置 5 层） | `CLAUDE.md` "Configuration Layering" 段重写 |
+| — | **D8**（claude-memory 角色配置数） | 一致，无需改动 |
+| — | **D15**（测试体系） | 一致，无需改动 |
 
 ---
 
