@@ -98,14 +98,12 @@
 
    来源：`BUILTIN_NAMES`（`worktree-initializer.ts:26-31`）+ `ROLE_PRIORITY`（`:33-39`）+ 第 6 个落到 `executor`（`:60`）。
 
-3. 每个 worktree 内 seed 的内容（`seedWorktreeAssets`，`worktree-initializer.ts:292-347` + `initializeWorktrees:254-262`）。**设计意图**（见 `co-root-initializer.ts:30-31, :60-67` 与 `docs-committer.ts:30-54`）是：worktree 只放纯 git 工作树相关文件（`.git` + `CLAUDE.md` + `.claude/skills/`），所有 CO 运行时状态（含 `docs/<worker>/CLAUDE.md`）放到用户目录下的 CO root。但**当前实现**额外往 worktree 内写了一层 `.claude-orchestrator/`，与设计不符（详见 §6 D17）：
-   - **符合设计**：
-     - `CLAUDE.md` ← `templates/claude-memory/team-claude.md`（worktree 根，仅首次）
-     - `.claude/skills/{skill}/SKILL.md` — 10 个 skill（强制覆盖：先 `rm` 旧目录再 copy）
-   - **不符合设计（应清理或移到 CO root）**：
-     - `.claude-orchestrator/agents/*.md` — 20 个模板，写在 worktree 内（应由 `templates/agents/` 通过 TemplateEngine 读取，不必落到 worktree）
-     - `.claude-orchestrator/config.json` ← `{ name, role, instance_id }`（应只存在于 worktree 父目录的 `<project>/.claude-orchestrator/config.json` 中）
-     - `.claude-orchestrator/docs/{name}/CLAUDE.md` ← `personal-claude-{role}.md` 渲染（应直接落到 `<co_root>/docs/{name}/CLAUDE.md`）
+3. 每个 worktree 内 seed 的内容（`seedWorktreeAssets`，`worktree-initializer.ts:292-330`）：
+   - `CLAUDE.md` ← `templates/claude-memory/team-claude.md`（worktree 根，仅首次）
+   - `.claude/skills/{skill}/SKILL.md` — 10 个 skill（强制覆盖：先 `rm` 旧目录再 copy）
+   - `.claude-orchestrator/agents/*.md` — 20 个模板（全量复制）。TemplateEngine 在 worker boot 时把此目录作为 `primary_dir`，回落到 `<project_root>/templates/agents/`（见 `packages/orchestrator/src/child-boot.ts:74-82`）。
+
+   > **历史修复（D17）**：曾经此处还会额外写入 `<worktree>/.claude-orchestrator/config.json`（仅 seed、无消费者）和 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`（路径与 `DocsCommitter` 期望的 `<co_root>/docs/{name}/` 错位且无消费者）。已通过提交 [TBD] 删除（详见 §6 D17）。
 
 4. ZK connect + ensure_paths 创建 7 条路径（`zkPaths.allEnsurePaths()`，`packages/contracts/src/paths/zkPaths.ts:55-65`）：
    `/claude-orchestrator`、`/instances`、`/tasks`、`/tasks/pending`、`/tasks/claimed`、`/tasks/completed`、`/messages`。
@@ -268,13 +266,10 @@ _events.length                   = 7   // magic_mode_configured + 6 × worker_jo
 ### 3.8 文件系统最终态
 
 > **设计意图**（来自 `co-root-initializer.ts:30-31, :60-67`）：
-> - **项目根**只放"用户项目相关"：worktree 目录树 + 工作区级 worktree 注册表。
+> - **项目根**只放"用户项目相关"：worktree 目录树 + 工作区级 worktree 注册表 + worker 自身运行 claude-cli 时需要读取的模板（`<worktree>/.claude-orchestrator/agents/`，由 TemplateEngine 作 `primary_dir`）。
 > - **用户目录下的 CO root**（独立 git repo）放"CO 运行时状态"：`chains/`、`tasks/`、`messages/`、`docs/{name}/`、`merges/`、`audit.jsonl`、`console.log`。
-> - 单个 worktree 内部**不应再有 `.claude-orchestrator/` 子目录**。
->
-> 下方 `(per design)` 标注的层级为符合设计的预期。实际代码当前会额外在 worktree 内创建 `.claude-orchestrator/{config.json, agents/, docs/}`，与设计不符（详见 §6 D17）。
 
-#### 3.8.1 项目根（per design）
+#### 3.8.1 项目根
 ```
 <project_root>/
 └── .claude-orchestrator/
@@ -286,15 +281,14 @@ _events.length                   = 7   // magic_mode_configured + 6 × worker_jo
         ├── Thomas/   (reviewer)
         ├── Jack/     (accepter)
         └── Lisa/     (executor)
-            ├── .git                 # git worktree pointer
-            ├── CLAUDE.md            ← templates/claude-memory/team-claude.md
-            └── .claude/skills/{10 skills}/SKILL.md
-            # ↑ per design：仅这三类。实际代码额外写入 .claude-orchestrator/
-            #   {config.json, agents/*.md(×20), docs/{name}/CLAUDE.md}，
-            #   见 §6 D17。
+            ├── .git                          # git worktree pointer
+            ├── CLAUDE.md                     ← templates/claude-memory/team-claude.md
+            ├── .claude/skills/{10 skills}/SKILL.md
+            └── .claude-orchestrator/
+                └── agents/*.md               # 20 个模板（TemplateEngine 的 primary_dir）
 ```
 
-#### 3.8.2 用户目录下的 CO root（per design + 实际）
+#### 3.8.2 用户目录下的 CO root
 ```
 ~/.claude-orchestrator/projects/{leaderId}/        # ensureCoRoot 初始化
 ├── .git/                            # 与项目 git 隔离的独立仓库
@@ -304,18 +298,13 @@ _events.length                   = 7   // magic_mode_configured + 6 × worker_jo
 ├── tasks/                           # 每任务的 exec/eval/commit 日志
 ├── messages/                        # 每实例的 inbound.log
 ├── docs/                            # 每 worker 的 docs（DocsCommitter scope）
-│   ├── Tom/CLAUDE.md                ← 应由 seed 渲染 personal-claude-planner.md  （D17）
-│   ├── Jerry/CLAUDE.md              ← personal-claude-executor.md                （D17）
-│   ├── Lucy/CLAUDE.md               ← personal-claude-verifier.md                （D17）
-│   ├── Thomas/CLAUDE.md             ← personal-claude-reviewer.md                （D17）
-│   ├── Jack/CLAUDE.md               ← personal-claude-accepter.md                （D17）
-│   └── Lisa/CLAUDE.md               ← personal-claude-executor.md                （D17）
+│   └── {Tom,Jerry,...}/             # 启动时为空；由 worker 在执行任务时写入
 ├── merges/                          # MergeValidator 日志（按 chain_id）
 ├── audit.jsonl                      # ChainAudit manifest 日志
 └── console.log                      # captureConsoleToFile 写入
 ```
 
-> 注：CO root 的 docs/{name}/CLAUDE.md 当前**未被 seed**（D17：代码把 personal-claude-{role}.md 错误地写进了 worktree 内的 `.claude-orchestrator/docs/`）。DocsCommitter 仅在 `<co_root>/docs/{name}/` 存在时才会提交，因此首次启动时该目录为空，直到 Worker 自己写入文件。
+> 注：DocsCommitter 仅在 `<co_root>/docs/{name}/` 存在时才会提交（`docs-committer.ts:53-58`），因此首次启动时该目录为空，直到 Worker 在执行任务时写入文件。个人 CLAUDE.md（`templates/claude-memory/personal-claude-{role}.md`）目前**未被任何代码 seed 到 CO root** —— claude-cli 读取的是 `<worktree>/CLAUDE.md`（team-claude.md）作为内存上下文。如果未来要启用个人内存，需要新增 seed 逻辑写入 `<co_root>/docs/{name}/CLAUDE.md`，并把它纳入 claude-cli 的内存路径。
 
 ---
 
@@ -353,7 +342,7 @@ state.events.slice(1).every(e => e.type === "worker_joined")
 | 命令行解析 | ✓ 一致 | △ 未明示默认值 | ✓ |
 | Phase 1 环境/init | ✓ 一致 | ✗ 多处漏（D10/D11/D12） | ✓ |
 | Phase 2 worktree（命名/角色/branch） | ✓ 一致 | ✗ 角色术语错（D2/D3）+ 第 6 角色漏（D5）+ 计数错（D7/D9） | ✓ |
-| Phase 2 worktree 内 seed | ✗ **代码与设计不符**（D17） | — | ✗ **bug**（D17：seed 目标路径错位） |
+| Phase 2 worktree 内 seed | ✓ 一致（D17 已修复） | — | ✓（D17 已修复） |
 | Phase 2 `/leader` payload | ✓ 一致 | ✗ 字段含糊（D13） | ✓ |
 | Phase 3 子系统装配 | ✓ 一致 | △ 不完整 | ✓ |
 | Phase 4 worker fork | ✓ 一致 | ✓ 一致 | ✓ |
@@ -362,11 +351,9 @@ state.events.slice(1).every(e => e.type === "worker_joined")
 | 代码路径前缀 | — | ✗ 全部错位（D1） | — |
 | Magic mode | ✓ 一致 | ✗ 完全未提（D6） | ✓ |
 | 配置层数 | ✓ 一致 | ✗ 5 层简化为 2 层（D16） | ✓ |
-| 文件系统最终态 | ✗ 代码偏离设计（D17） | ✗ CLAUDE.md 同样未提（D14） | ✗ **bug**（D17） |
+| 文件系统最终态 | ✓ 一致（D17 已修复） | ✗ CLAUDE.md 未提（D14） | ✓（D17 已修复） |
 
-**结论**：
-1. 根 `CLAUDE.md` 是文档漂移的主体，需要按 §6 逐条回写。
-2. `docs/v0.7/` 与代码的"设计意图"高度一致，**唯一已知偏差**是 **D17**（`seedWorktreeAssets` + `initializeWorktrees:254-260` 把运行时数据写到了不该写的位置）—— 这是**代码 bug**，应按 D17 修复方案修代码使其匹配设计。
+**结论**：根 `CLAUDE.md` 是文档漂移的主体，需要按 §6 逐条回写。`docs/v0.7/` 与代码的"设计意图"高度一致；启动相关的代码 bug（**D17**：worktree 内冗余 seed）已修复，使代码完整匹配设计。
 
 ---
 
@@ -387,16 +374,32 @@ state.events.slice(1).every(e => e.type === "worker_joined")
 | **D11** | InitChecker 4 步 | 未提 | `InitChecker.runAll` 4 步（global config / user CLAUDE.md / team CLAUDE.md / skills），见 `run.ts:105-111` | 代码合理 | CLAUDE.md "Architecture > Orchestrator" 段补 Phase 1 实际工作 |
 | **D12** | auto_commit_init_files | 未提 | 默认 true，启动时自动 `git commit -m "chore: init orchestrator workspace files"`（`run.ts:373-406`） | 代码合理 | CLAUDE.md "Configuration Layering" 段补 git 配置项 |
 | **D13** | `/leader` 节点字段 | "Leader metadata"（含糊一行） | `{protocol_version, leader_id, pid, host, started_at, magic_mode, magic_max_chains}` | 代码为准 | CLAUDE.md "ZK Node Tree" 段把 `/leader` 注释展开为字段表 |
-| **D14** | personal CLAUDE.md 路径 | 未提 | 设计为 `<co_root>/docs/{name}/CLAUDE.md`（`co-root-initializer.ts:30-31` + `docs-committer.ts:53-54`）；当前 `seedWorktreeAssets` 错误写到 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`，详见 D17 | 文档为准（设计意图清晰） | 修复代码：把 `seedWorktreeAssets` 的 `personalDst` 改为 `<co_root>/docs/{name}/CLAUDE.md`；同步 CLAUDE.md 补这条目录结构 |
+| **D14** | personal CLAUDE.md 路径 | 未提 | seed 目标曾错置于 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`，但代码库各处对其均无读取（含 claude-cli 标准内存路径）。D17 修复时已一并删除整段 seed 代码 | 代码为准 | 已通过 D17 修复一并解决；CLAUDE.md 无需新增此条目录 |
 | **D15** | 测试体系 | "All test files have been removed in v0.7" + `tests/CLAUDE.md` 仍是 ground truth | 已确认（`pnpm test` 报 "no test files found"） | 一致 | — |
-| **D16** | 配置层数 | "merges two config files: Global + Project" | 实际五层：CLI args → env vars → project config → global config → defaults（`packages/infra/src/config/config-loader.ts`） | 代码为准 | CLAUDE.md "Configuration Layering" 段改写为 5 层 |
-| **D17** | worktree 内多写一层 `.claude-orchestrator/`（**新发现，与设计不符**） | 未提 | `initializeWorktrees:254-260` 在 worktree 内写 `.claude-orchestrator/config.json`；`seedWorktreeAssets:301-308, :331-345` 又写 `.claude-orchestrator/agents/*.md`（20 个）与 `.claude-orchestrator/docs/{name}/CLAUDE.md`。设计意图（`co-root-initializer.ts:30-31, :60-67`）明确"worktree 与 project config 留在 `<project>/.claude-orchestrator/`，CO 运行时状态（含 docs/）留在 CO root"。当前实现使运行时数据出现在两处，且 docs 路径与 `DocsCommitter` 期待的 `<co_root>/docs/{name}/` 完全错位 | 文档（设计意图）为准 | 修复代码：(a) 删除 `initializeWorktrees:254-260` 的 worktree 内 `config.json` 写入；(b) 删除 `seedWorktreeAssets` 中 agents 复制（TemplateEngine 直接从 `templates/agents/` 读，不需要落到 worktree）；(c) personal-claude-{role}.md 的目标改为 `<co_root>/docs/{name}/CLAUDE.md`（需要把 `co_root` 参数透传到 `seedWorktreeAssets`） |
+| **D16** | 配置层数 | "merges two config files: Global + Project" | 实际五层：CLI args → env vars → project config → global config → defaults（`packages/infra/src/config/config-loader.ts`） | 代码为准 | CLAUDE.md "Configuration Layering" 段改写为 5 层 ✅ |
+| **D17** | worktree 内多写一层 `.claude-orchestrator/`（已修复） | 未提 | 原 `initializeWorktrees:254-260` 在 worktree 内写 `.claude-orchestrator/config.json`（无消费者）；原 `seedWorktreeAssets:331-345` 写 `.claude-orchestrator/docs/{name}/CLAUDE.md`（无消费者）。审计确认 `.claude-orchestrator/agents/*.md` 被 `child-boot.ts:74-82` 用作 TemplateEngine `primary_dir`，**必须保留**。设计意图（`co-root-initializer.ts:30-31, :60-67`）允许 worktree 内放置运行时模板，仅禁止把 CO 运行时状态（docs/、tasks/、chains/）写入 worktree | 已修复 | ✅ 已在 `worktree-initializer.ts` 删除 config.json 与 personal CLAUDE.md 写入；agents 复制保留（TemplateEngine 依赖） |
 
-> **优先级建议**：
-> - **高优先级**（影响读者立刻找错文件或叫错术语）：D1/D2/D3/D4/D7/D9/D16
-> - **中优先级**（补遗）：D5/D6/D11/D12/D13/D14
-> - **代码 bug 优先级（建议尽快修）**：**D17**（涉及运行时目录划分错位，影响后续真机验证基线）
-> - **已一致**：D8/D15
+### 修复进度
+
+| 状态 | 项目 | 触达文件 |
+|------|------|----------|
+| ✅ 已修复 | **D17**（worktree 内冗余 seed） | `packages/orchestrator/src/worktree-initializer.ts` 删除 `config.json` 与 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md` 两处写入；agents 复制保留（TemplateEngine primary_dir 依赖） |
+| ✅ 已修复 | **D14**（personal CLAUDE.md 路径） | 随 D17 一并删除（审计确认无消费者；后续若启用个人内存需新增 seed → CO root） |
+| ✅ 已修复 | **D1**（源码路径前缀） | `CLAUDE.md` 全文 `src/X/` → `packages/X/src/`；新增 "Package Layout" 一节、重写 "Key Files" 表 |
+| ✅ 已修复 | **D2**（builder → executor） | `CLAUDE.md` Roles / Role-Link Task Claiming / Responsibility Chain |
+| ✅ 已修复 | **D3**（acceptor → accepter） | `CLAUDE.md` Roles 等多处 |
+| ✅ 已修复 | **D4**（build link → execute） | `CLAUDE.md` "Responsibility Chain" + "Role-Link Task Claiming" |
+| ✅ 已修复 | **D5**（第 6 worker 默认角色） | `CLAUDE.md` "Roles" 一节补 standard / magic 两种填充表 |
+| ✅ 已修复 | **D6**（magic mode） | `CLAUDE.md` 新增 "Magic Mode (v0.7 NEW)" 一节 + "Development Commands" 补 `--magic` 示例 |
+| ✅ 已修复 | **D7**（模板数量） | `CLAUDE.md` "Key Files" 末尾 `templates/agents/` 列出全部 20 个 |
+| ✅ 已修复 | **D9**（skills 数量） | `CLAUDE.md` "Key Files" 末尾 `skills/` 列出全部 10 个 |
+| ✅ 已修复 | **D10**（工作区干净） | `CLAUDE.md` "Development Commands" 注释 + "Orchestrator" 5-phase 表 Phase 1 |
+| ✅ 已修复 | **D11**（InitChecker 4 步） | `CLAUDE.md` "Orchestrator" 5-phase 启动表 Phase 1 |
+| ✅ 已修复 | **D12**（auto_commit_init_files） | `CLAUDE.md` "Configuration Layering" 段 + 5-phase 表 |
+| ✅ 已修复 | **D13**（`/leader` 节点字段） | `CLAUDE.md` "ZK Node Tree" 段展开完整 payload |
+| ✅ 已修复 | **D16**（配置 5 层） | `CLAUDE.md` "Configuration Layering" 段重写 |
+| — | **D8**（claude-memory 角色配置数） | 一致，无需改动 |
+| — | **D15**（测试体系） | 一致，无需改动 |
 
 ---
 
