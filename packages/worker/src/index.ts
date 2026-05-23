@@ -4,7 +4,8 @@ export {
 } from "./watcher.js";
 export {
   SelfEvaluator,
-  CHAIN_LINKS,
+  ALL_CHAIN_LINKS,
+  chainLinksFor,
   type EvaluateInput,
   type SelfEvaluatorOptions,
 } from "./evaluator.js";

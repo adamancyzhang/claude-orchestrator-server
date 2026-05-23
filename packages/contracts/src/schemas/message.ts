@@ -38,7 +38,7 @@ export const MessageSchema = z.object({
   read: z.boolean().default(false),
   created_at: z.string(),
   upstream_commits: UpstreamCommitsSchema.optional(),
-  // v0.7 NEW — populated when this user_input message was injected by
+  // populated when this user_input message was injected by
   // ChainRouter on a `spawn_chain` decision. `spawned_from` points at
   // the parent chain id; `next_requirement` is the Explorer-authored
   // requirement that bootstraps the child chain.

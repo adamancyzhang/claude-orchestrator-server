@@ -232,24 +232,28 @@ sequenceDiagram
 
 ### 4.2 事件触发表（默认）
 
+下表事件由 `ChainAudit.record(chain_id, ...)` 写入对应 chain 的 `audit.jsonl`。事件本身必有 chain 上下文；纯全局事件（`worker_joined` / `worker_status_changed` / `message_*` / `stream_chunk` / `debug_info` / `magic_mode_configured`）只发到 `LeaderEventBus` 供 TUI 渲染，不入 audit。
+
 | event_type | 触发位置 | detail 必含 |
 |---|---|---|
 | `chain_opened` | ChainAudit.openChain | `magic_mode`, `parent_chain_id`, `chain_depth` |
-| `requirement_received` | ChainRouter.handleRequirement | `requirement_length` |
+| `requirement_received` | ChainRouter.handleRequirement | `requirement_path` |
 | `task_dispatch` | ChainRouter push 任务到 ZK | `task_id`, `link`, `assigned_to?` |
-| `task_claimed` | TaskOrchestrator 监听 `/tasks/claimed` 变化 | `task_id`, `claimed_by` |
+| `task_claimed` | TaskOrchestrator 监听 `/tasks/claimed` 变化 | `task_id`, `link`, `worker_id` |
+| `task_completed` | TaskOrchestrator 在 claimed → 消失时记录 | `task_id`, `link`, `worker_id` |
+| `task_recovered` | TaskRecovery.recoverOrphan 重排成功 | `task_id`, `retry_count` |
+| `task_failed` | TaskRecovery.recoverOrphan 超 MAX_RETRIES 归档 | `task_id`, `retry_count`, `reason` |
+| `worker_left` | TaskRecovery 重排时记录被中断 worker | `instance_id`, `phase` |
 | `completion_report` | LeaderWatcher 收到 Worker 完成消息 | `task_id`, `decision`, `link` |
-| `feedback_sent` | ChainRouter.dispatchFeedbackAsRetry 成功 push | `from_link`, `to_link`, `target_worker`, `total_retry_count` |
+| `feedback_sent` | ChainRouter.dispatchFeedbackAsRetry / pushMergeConflictRetries 成功 push | `from_link`, `to_link`, `target_worker`, `total_retry_count` |
 | `feedback_unresolved` | resolveFeedbackTarget 返回 null（FR-19） | `chain_id`, `link`, `reason` |
 | `chain_id_conflict` | ChainConflictError 被捕获（FR-20） | `existing_status` |
 | `retry_ceiling_exceeded` | total_retry_count > max_total_retries（FR-18） | `total_retry_count`, `max_total_retries` |
-| `merge_validation_started` | runMergeValidation 入口 | `chain_id`, `link_count` |
-| `merge_validation_completed` | runMergeValidation 出口 | `decision_per_link`, `failures?` |
+| `merge_validation_started` | MergeValidator.validate 入口 | `sha`, `branch`, `mode` |
+| `merge_validation_completed` | MergeValidator.validate 决策落定 | `sha`, `branch`, `decision`, `mode` |
+| `merge_failure` | runCloseChainMerge 捕获到 git 失败（FR-17 / FR-36） | `category`, `branch`, `sha`, `error` |
+| `validation_failure` | ChainRouter 解析 ChainDef / decompose 输出失败（FR-11） | `reason` |
 | `chain_closed` | ChainAudit.closeChain | `status`, `reason?` |
-| `chain_merge_failed` | closeChain(status='merge_failed') | `failures[]` |
-| `worker_left` | WorkerMonitor 检测到 instance 消失 | `instance_id`, `reason` |
-| `task_recovered` | Recovery.reclaim | `task_id`, `retry_count` |
-| `task_failed` | retry_count > 3 归档 | `task_id`, `retry_count` |
 | `invalid_decision` | ChainRouter 检测到 link × decision 非法组合 | `link`, `decision`, `expected_links` |
 
 ### 4.3 事件触发表

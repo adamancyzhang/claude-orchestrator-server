@@ -1,11 +1,13 @@
 import { parseClaimedNodeName } from "@co/coordination";
 import type {
+  ChainId,
   ClaimRecord,
   IEventBus,
   ITaskQueue,
   LeaderEvent,
   TaskId,
 } from "@co/contracts";
+import type { ChainAudit } from "./chain-audit.js";
 
 export class TaskOrchestrator {
   private knownPending = new Set<TaskId>();
@@ -15,6 +17,7 @@ export class TaskOrchestrator {
   constructor(
     private readonly queue: ITaskQueue,
     private readonly bus: IEventBus<LeaderEvent>,
+    private readonly chain_audit?: ChainAudit,
   ) {}
 
   async start(): Promise<void> {
@@ -56,6 +59,17 @@ export class TaskOrchestrator {
           task_id: r.task_id,
           instance_id: r.instance_id,
         });
+        const chainId = r.task_snapshot?.chain_id ?? null;
+        if (chainId && this.chain_audit) {
+          void this.chain_audit
+            .record(chainId as ChainId, {
+              event: "task_claimed",
+              link: r.task_snapshot?.link ?? null,
+              task_id: r.task_id,
+              worker_id: r.instance_id,
+            })
+            .catch(() => undefined);
+        }
       }
     }
     for (const [key, prev] of this.knownClaimed) {
@@ -66,6 +80,17 @@ export class TaskOrchestrator {
           instance_id: prev.instance_id,
           duration_seconds: null,
         });
+        const chainId = prev.task_snapshot?.chain_id ?? null;
+        if (chainId && this.chain_audit) {
+          void this.chain_audit
+            .record(chainId as ChainId, {
+              event: "task_completed",
+              link: prev.task_snapshot?.link ?? null,
+              task_id: prev.task_id,
+              worker_id: prev.instance_id,
+            })
+            .catch(() => undefined);
+        }
       }
     }
     this.knownClaimed = new Map(records.map((r) => [`${r.instance_id}-${r.task_id}`, r]));

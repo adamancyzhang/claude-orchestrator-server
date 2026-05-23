@@ -13,7 +13,14 @@ import {
 } from "@co/contracts";
 import { extractJson } from "@co/runtime";
 
-export const CHAIN_LINKS: readonly TaskLink[] = [
+/**
+ * Type-level upper bound on every responsibility-chain link the schema
+ * knows about. Used only where the static set matters (template name
+ * lookup, type discrimination). Workers must NOT iterate this directly
+ * for runtime "is this a chain link" checks — use `chainLinksFor(magic_mode)`
+ * so `explore` is excluded in default mode (DD 02 §3.1).
+ */
+export const ALL_CHAIN_LINKS: readonly TaskLink[] = [
   "plan",
   "execute",
   "verify",
@@ -21,6 +28,23 @@ export const CHAIN_LINKS: readonly TaskLink[] = [
   "accept",
   "explore",
 ] as const;
+
+const DEFAULT_CHAIN_LINKS: readonly TaskLink[] = [
+  "plan",
+  "execute",
+  "verify",
+  "review",
+  "accept",
+] as const;
+
+/**
+ * Returns the runtime CHAIN_LINKS set the Worker should treat as
+ * legitimate chain links. `--magic` mode adds `explore` as the 6th
+ * link; default mode stops at `accept`.
+ */
+export function chainLinksFor(magicMode: boolean): readonly TaskLink[] {
+  return magicMode ? ALL_CHAIN_LINKS : DEFAULT_CHAIN_LINKS;
+}
 
 const MAX_RETRIES = 3;
 

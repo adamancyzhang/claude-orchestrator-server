@@ -1,5 +1,4 @@
 import {
-  PROTOCOL_VERSION,
   type IEventBus,
   type ILogger,
   type IMessageRouter,
@@ -197,6 +196,5 @@ export class TuiController {
       to_instance: this.opts.leader_id,
       content,
     });
-    void PROTOCOL_VERSION; // ensure runtime keeps reference for protocol log
   }
 }

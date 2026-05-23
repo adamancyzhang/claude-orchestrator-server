@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   asInstanceId,
-  PROTOCOL_VERSION,
   zkPaths,
   type ILogger,
   type InstanceRole,
@@ -19,7 +18,6 @@ import {
   TaskQueue,
 } from "@co/coordination";
 import {
-  CHAIN_LINKS,
   CommitChecker,
   SelfEvaluator,
   WorkerDocsCommitter,
@@ -28,8 +26,6 @@ import {
   type ChildConfig,
 } from "@co/worker";
 import { startParentAliveCheck } from "./child-supervisor.js";
-
-void CHAIN_LINKS;
 
 function resolveTemplateDir(worktreePath: string): string {
   const projectRoot = path.resolve(worktreePath, "..", "..", "..");
@@ -66,7 +62,6 @@ async function boot(config: ChildConfig): Promise<void> {
     worktree_branch: config.branch,
     pid: process.pid,
   });
-  void PROTOCOL_VERSION;
 
   const messageRouter = new MessageRouter({ zk });
   const taskQueue = new TaskQueue({ zk });
@@ -191,6 +186,7 @@ async function boot(config: ChildConfig): Promise<void> {
     identity_system_prompt: identitySystemPrompt,
     logger: logger.child("watcher"),
     git_remote: config.git_remote,
+    magic_mode: config.magic_mode,
   });
 
   await watcher.start();

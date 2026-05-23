@@ -45,7 +45,7 @@ export interface ChainManifest {
   link_commits?: Partial<Record<TaskLink, LinkCommitRecord>>;
   total_retry_count: number;
   max_total_retries: number;
-  // v0.7 NEW — Chain Forest fields. parent_chain_id is null for root
+  // Chain Forest fields. parent_chain_id is null for root
   // chains. child_chain_ids is append-only as spawn_chain derives
   // children. chain_depth is the parent depth + 1. magic_mode pins
   // whether this chain was opened under `--magic` so the routing
@@ -62,7 +62,7 @@ export interface ChainOpenMeta {
   leader_name: string;
   requirement_path: string;
   max_total_retries?: number;
-  // v0.7 NEW — required at openChain time so the manifest pins the
+  // required at openChain time so the manifest pins the
   // chain's place in the forest. Root chains pass parent_chain_id=null
   // and chain_depth=0.
   parent_chain_id?: ChainId | null;
@@ -76,15 +76,21 @@ export type ChainAuditEventType =
   | "requirement_received"
   | "chain_opened"
   | "task_dispatch"
+  | "task_claimed"
+  | "task_completed"
+  | "task_recovered"
+  | "task_failed"
+  | "worker_left"
   | "completion_report"
   | "feedback_sent"
   | "feedback_unresolved"
   | "chain_id_conflict"
+  | "merge_validation_started"
+  | "merge_validation_completed"
   | "merge_failure"
   | "retry_ceiling_exceeded"
   | "chain_closed"
   | "validation_failure"
-  // v0.7 NEW
   | "invalid_decision"
   | "chain_spawned"
   | "chain_spawned_from"
@@ -409,7 +415,7 @@ export class ChainAudit {
     try {
       const raw = await fs.promises.readFile(manifestPath, "utf-8");
       const parsed = JSON.parse(raw) as Partial<ChainManifest>;
-      // v0.7 NEW — v0.6 manifests lack the four forest fields. Coerce
+      // v0.6 manifests lack the four forest fields. Coerce
       // them to defaults so the rest of the leader treats legacy chains
       // as root chains in non-magic mode.
       const manifest: ChainManifest = {
@@ -426,7 +432,7 @@ export class ChainAudit {
   }
 
   /**
-   * v0.7 NEW — append a child chain id to a parent chain's manifest.
+   * append a child chain id to a parent chain's manifest.
    * Called by ChainRouter immediately after openChain'ing the child
    * chain so the parent's manifest.child_chain_ids reflects the
    * forest topology. Idempotent: skips if child already present.

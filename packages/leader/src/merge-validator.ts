@@ -8,6 +8,7 @@ import {
   MergeDecisionSchema,
   ValidationError,
   WorktreeLockedError,
+  type ChainId,
   type IClaudeRunner,
   type IEventBus,
   type IHookEngine,
@@ -15,6 +16,7 @@ import {
   type ITemplateEngine,
   type LeaderEvent,
   type MergeDecision,
+  type TaskLink,
 } from "@co/contracts";
 
 export interface CommitInfo {
@@ -37,8 +39,28 @@ export interface MergeValidatorOptions {
    * can subscribe to merge outcomes via global config `hooks.*`.
    */
   hooks?: IHookEngine;
+  /**
+   * Optional ChainAudit. When set, MergeValidator records
+   * `merge_validation_started` / `merge_validation_completed` /
+   * `merge_failure` events per (chain, link) so audit.jsonl carries
+   * the full merge timeline (DD 09 §4.2).
+   */
+  chain_audit?: import("./chain-audit.js").ChainAudit;
   logger: ILogger;
-  log_path_for: (key: string) => string;
+  /**
+   * Builds the on-disk log path for each validate() invocation. Receives
+   * the chain id, the link being merged, a timestamp, and a `kind`
+   * discriminator (`merge` for per-link askDecision logs, `final` for
+   * aggregate close-chain logs). DD 09 §5.3 specifies the layout
+   * `merges/chain-<chain_id>/merge-<link>-<ts>.log` and
+   * `merges/chain-<chain_id>/final-<ts>.log`.
+   */
+  log_path_for: (args: {
+    chain_id: ChainId | null;
+    link: TaskLink | null;
+    ts: string;
+    kind: "merge" | "final";
+  }) => string;
   /**
    * Explicit branch to merge into. When unset, falls back to leader
    * HEAD captured at validate() time. Set this from
@@ -58,8 +80,18 @@ export class MergeValidator {
 
   async validate(
     commit: CommitInfo,
+    chainId: ChainId | null,
     mode: "close" | "spawn" = "close",
   ): Promise<MergeDecision> {
+    if (chainId && this.opts.chain_audit) {
+      void this.opts.chain_audit
+        .record(chainId, {
+          event: "merge_validation_started",
+          link: (commit.task_link as TaskLink) || null,
+          payload: { sha: commit.sha, branch: commit.branch, mode },
+        })
+        .catch(() => undefined);
+    }
     const mainBranch =
       this.opts.merge_target_branch ??
       this.execGit(["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -85,7 +117,7 @@ export class MergeValidator {
       });
     }
 
-    const decision = await this.askDecision(commit, mainBranch);
+    const decision = await this.askDecision(commit, mainBranch, chainId);
 
     if (this.opts.hooks) {
       void this.opts.hooks.fire({
@@ -149,12 +181,28 @@ export class MergeValidator {
       this.execGit(["checkout", currentBranch]);
     }
 
+    if (chainId && this.opts.chain_audit) {
+      void this.opts.chain_audit
+        .record(chainId, {
+          event: "merge_validation_completed",
+          link: (commit.task_link as TaskLink) || null,
+          payload: {
+            sha: commit.sha,
+            branch: commit.branch,
+            decision: decision.decision,
+            mode,
+          },
+        })
+        .catch(() => undefined);
+    }
+
     return decision;
   }
 
   private async askDecision(
     commit: CommitInfo,
     mainBranch: string,
+    chainId: ChainId | null,
   ): Promise<MergeDecision> {
     const prompt = this.opts.template_engine.render(this.opts.template_name, {
       branch: commit.branch,
@@ -164,7 +212,12 @@ export class MergeValidator {
       task_link: commit.task_link,
       main_branch: mainBranch,
     });
-    const logPath = this.opts.log_path_for(`merge-${Date.now().toString(36)}`);
+    const logPath = this.opts.log_path_for({
+      chain_id: chainId,
+      link: (commit.task_link as TaskLink) || null,
+      ts: Date.now().toString(36),
+      kind: "merge",
+    });
     await this.opts.runner.run({ prompt, log_path: logPath });
     const output = await fs.promises.readFile(logPath, "utf-8");
     const parsed = MergeDecisionSchema.safeParse(JSON.parse(extractJson(output)));

@@ -612,29 +612,32 @@ export class RebaseConflictError extends CoError {          // REBASE_CONFLICT �
 
 ```ts
 export const AuditEventTypeSchema = z.enum([
-  // —— 默认（v0.6 继承）
+  // —— 链生命周期
   'chain_opened',
   'requirement_received',
   'task_dispatch',
   'task_claimed',
   'task_completed',
-  'completion_report',
-  'feedback_sent',
-  'feedback_unresolved',       // FR-19
-  'chain_id_conflict',          // FR-20
-  'retry_ceiling_exceeded',     // FR-18
-  'merge_validation_started',
-  'merge_validation_completed',
-  'chain_closed',
-  'chain_merge_failed',         // FR-17
-  'worker_left',
   'task_recovered',
   'task_failed',
-  'invalid_decision',           // FR-10 link×decision 合法性
-  // ——
-  'chain_spawned',              // FR-33 父链 audit
-  'chain_spawned_from',         // FR-33 子链 audit
-  'magic_depth_exhausted',      // FR-34
+  'worker_left',
+  'completion_report',
+  'chain_closed',
+  // —— 反馈与重试
+  'feedback_sent',
+  'feedback_unresolved',          // FR-19
+  'chain_id_conflict',             // FR-20
+  'retry_ceiling_exceeded',        // FR-18
+  // —— 合并与校验
+  'merge_validation_started',
+  'merge_validation_completed',
+  'merge_failure',                 // FR-17 / FR-36（合并冲突等分类失败）
+  'validation_failure',            // FR-11 ChainDef / decompose 输出非法
+  'invalid_decision',              // FR-10 link×decision 合法性
+  // —— 自主循环（--magic）
+  'chain_spawned',                 // FR-33 父链 audit
+  'chain_spawned_from',            // FR-33 子链 audit
+  'magic_depth_exhausted',         // FR-34
 ]);
 export type AuditEventType = z.infer<typeof AuditEventTypeSchema>;
 

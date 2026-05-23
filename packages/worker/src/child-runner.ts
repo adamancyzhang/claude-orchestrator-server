@@ -24,6 +24,13 @@ export interface ChildConfig {
    * task_completed) against this list. Empty means no hooks configured.
    */
   hooks: readonly HookCommand[];
+  /**
+   * Whether the cluster was launched with `--magic`. Drives the
+   * Worker's CHAIN_LINKS shape (default mode excludes `explore`) and
+   * lets the SelfEvaluator validate explore-link tasks only when magic
+   * is on.
+   */
+  magic_mode: boolean;
 }
 
 /**
