@@ -80,10 +80,10 @@
 
    来源：`BUILTIN_NAMES`（`worktree-initializer.ts:26-31`）+ `ROLE_PRIORITY`（`:33-39`）+ 第 6 个落到 `executor`（`:60`）。
 
-3. 每个 worktree 内 seed 的内容（`seedWorktreeAssets`，`worktree-initializer.ts:292-330`）：
-   - `CLAUDE.md` ← `templates/claude-memory/team-claude.md`（worktree 根，仅首次）
+3. 每个 worktree 内 seed 的内容（`seedWorktreeAssets`，`worktree-initializer.ts:286-325`）：
+   - `CLAUDE.md` ← `templates/claude-memory/team-claude.md`（worktree 根，仅当目标不存在时拷贝）
    - `.claude/skills/{skill}/SKILL.md` — 10 个 skill（强制覆盖：先 `rm` 旧目录再 copy）
-   - `.claude-orchestrator/agents/*.md` — 20 个模板（全量复制）。TemplateEngine 在 worker boot 时把此目录作为 `primary_dir`，回落到 `<project_root>/templates/agents/`（见 `packages/orchestrator/src/child-boot.ts:74-82`）。
+   - `.claude-orchestrator/agents/*.md` — 20 个模板（仅缺失文件会被拷贝；已存在的同名文件不会被覆盖，见 `worktree-initializer.ts:299-303`）。TemplateEngine 在 worker boot 时把此目录作为 `primary_dir`，回落到 `<project_root>/templates/agents/`（见 `packages/orchestrator/src/child-boot.ts:74-82`）。
 
    > **历史**：早期版本还会额外写入 `<worktree>/.claude-orchestrator/config.json`（仅 seed、无消费者）和 `<worktree>/.claude-orchestrator/docs/{name}/CLAUDE.md`（路径与 `DocsCommitter` 期望的 `<co_root>/docs/{name}/` 错位且无消费者），已删除。
 
@@ -110,8 +110,8 @@
 | 顺序 | 对象 | 代码位置 | 初始态 |
 |------|------|----------|--------|
 | 1 | `InstanceRegistry`（leader 注册） | `run.ts:171-178` | `/claude-orchestrator/instances/{leaderId}` EPHEMERAL；payload schema 见 `packages/coordination/src/instance-registry.ts:50-71` |
-| 2 | `ensureCoRoot` | `run.ts:181-187` | `<projects_root>/{leaderId}/` 与 `merges/`、`audit.jsonl` 就绪 |
-| 3 | `captureConsoleToFile` | `run.ts:188` | console.* 被重定向到 `<projects_root>/{leaderId}/console.log`，TUI 独占终端 |
+| 2 | `ensureCoRoot` | `run.ts:181-187` | `<projects_root>/{leaderId}/` 初始化为独立 git 仓库，写入 `.git/`、`.gitignore`、`README.md`（其余目录 `chains/`、`tasks/`、`messages/`、`docs/`、`merges/`、`audit.jsonl` 为按需生成，见 §3.8.2） |
+| 3 | `captureConsoleToFile` | `run.ts:188` | console.* 被重定向到 `<projects_root>/{leaderId}/leader-<timestamp>.log`（`console-capture.ts:18` 拼装文件名），TUI 独占终端 |
 | 4 | `MessageRouter` / `TaskQueue` | `run.ts:190-191` | ZK 路径 wrapper，无内存状态 |
 | 5 | `LeaderEventBus` + `LeaderState` | `run.ts:193-195` | `bus.onAny → state.apply` 已挂载 |
 | 6 | `TemplateEngine` / `ClaudeRunner` / `HookEngine` | `run.ts:197-207` | 模板从 `templates/agents/` 加载，runner 注入 `claude_cli` 命令 |
@@ -236,19 +236,23 @@ _events.length                   = 7   // magic_mode_configured + 6 × worker_jo
 ```
 
 #### 3.8.2 用户目录下的 CO root
+
+启动结束时 `ensureCoRoot` 只写入 3 项（`co-root-initializer.ts:53-68`），其余路径都是按需在运行时由 ChainAudit / DocsCommitter / MergeValidator / captureConsoleToFile 创建：
+
 ```
-~/.claude-orchestrator/projects/{leaderId}/        # ensureCoRoot 初始化
-├── .git/                            # 与项目 git 隔离的独立仓库
-├── .gitignore                       # tasks/*/exec-*.log 等模式
-├── README.md                        # ensureCoRoot 写入的说明
-├── chains/                          # 链 audit 数据（按 chain_id 分目录）
-├── tasks/                           # 每任务的 exec/eval/commit 日志
-├── messages/                        # 每实例的 inbound.log
-├── docs/                            # 每 worker 的 docs（DocsCommitter scope）
-│   └── {Tom,Jerry,...}/             # 启动时为空；由 worker 在执行任务时写入
-├── merges/                          # MergeValidator 日志（按 chain_id）
-├── audit.jsonl                      # ChainAudit manifest 日志
-└── console.log                      # captureConsoleToFile 写入
+~/.claude-orchestrator/projects/{leaderId}/
+├── .git/                            # ensureCoRoot — 与项目 git 隔离的独立仓库
+├── .gitignore                       # ensureCoRoot — tasks/*/exec-*.log 等模式
+├── README.md                        # ensureCoRoot — 说明文档
+│
+│  ── 以下为运行时按需生成（启动后不存在）──
+├── leader-<timestamp>.log           # 由 captureConsoleToFile 在 Phase 3 立即创建
+├── chains/<chain_id>/               # ChainAudit 在 open_chain 时创建
+├── tasks/<task_id>/                 # Worker 执行任务时创建
+├── messages/<instance_id>/          # MessageRouter.waitForMessage mkdirp
+├── docs/<worker_name>/              # Worker 写 docs 时创建（启动时为空）
+├── merges/<chain_id>.log            # MergeValidator 在 close_chain 时写
+└── audit.jsonl                      # ChainAudit 在打开第一个链时写到 chains/<chain_id>/audit.jsonl（注意：实际位于链子目录内，不在 CO root 顶层）
 ```
 
 > 注：DocsCommitter 仅在 `<co_root>/docs/{name}/` 存在时才会提交（`docs-committer.ts:53-58`），因此首次启动时该目录为空，直到 Worker 在执行任务时写入文件。个人 CLAUDE.md（`templates/claude-memory/personal-claude-{role}.md`）目前**未被任何代码 seed 到 CO root** —— claude-cli 读取的是 `<worktree>/CLAUDE.md`（team-claude.md）作为内存上下文。如果未来要启用个人内存，需要新增 seed 逻辑写入 `<co_root>/docs/{name}/CLAUDE.md`，并把它纳入 claude-cli 的内存路径。
@@ -297,3 +301,36 @@ state.events.slice(1).every(e => e.type === "worker_joined")
 
 - 任何改动 `packages/orchestrator/src/run.ts`、`worktree-initializer.ts`、`packages/leader/src/state.ts` 的 PR 都应回看 §3 / §4 是否仍然成立。
 - 与本场景不相关的新行为变更（如 `--magic` 内部细节）不应混入本文，请新建编号 02+ 的 evals 文档。
+
+---
+
+## 7. 关联自动化测试
+
+本场景的纸面断言已经通过下面的 e2e 测试自动验证：
+
+- **测试文件**：[`packages/orchestrator/tests/core/e2e/startup-worker-6.test.ts`](../../packages/orchestrator/tests/core/e2e/startup-worker-6.test.ts)
+- **运行方式**：`pnpm --filter @co/orchestrator test`
+- **运行依赖**：仅需 git 与 node；**不需要 docker / ZooKeeper**——ZK 操作由 `packages/orchestrator/tests/helpers/in-memory-zk-client.ts`（实现 `IZkClient`）模拟，节点树通过 `InMemoryZkClient.dumpTree()` 真实拉取后做快照比对。
+- **覆盖范围**：Phase 1-4（包含真实 worktree + 文件 seed + ZK 注册），Phase 5 由 `OrchestratorDeps.shutdown_signal` 触发清理后返回。Worker fork 由 `tests/helpers/fake-child-supervisor.ts` 替代——它直接调用 `InstanceRegistry.register(...)` 写入 fake ZK，与真实 worker child-runner 在启动时的首个 ZK 操作一致（`packages/orchestrator/src/child-boot.ts:59-68`），因此 `WorkerMonitor` 会触发真实的 `worker_joined` 事件流。
+
+### 7.1 本次添加 e2e 测试时发现并修复的文档漂移
+
+| # | 位置 | 原文 | 修复后 | 来源 |
+|---|------|------|--------|------|
+| F1 | §3.2 step 3 | "20 个模板（全量复制）" | "仅缺失文件会被拷贝" | `worktree-initializer.ts:299-303` 是 `if (!fs.existsSync(dst)) ...` |
+| F2 | §3.3 Phase 3 row 2 | "`merges/`、`audit.jsonl` 就绪" | `ensureCoRoot` 只写 `.git/`、`.gitignore`、`README.md` | `co-root-initializer.ts:53-68` |
+| F3 | §3.3 Phase 3 row 3 | "console.log" | "`leader-<timestamp>.log`" | `console-capture.ts:18` 用 `Date.now()` 拼名 |
+| F4 | §3.8.2 | 把全部子目录列为 `ensureCoRoot` 产物 | 拆分为 "启动写入" vs "运行时按需生成" | 同 F2；`audit.jsonl` 位于 `chains/<chain_id>/`，不在顶层 |
+
+### 7.2 为了让测试可注入而做的最小重构
+
+`packages/orchestrator/src/run.ts` 接受了第 3 个可选参数 `OrchestratorDeps`：
+
+| 字段 | 作用 |
+|------|------|
+| `zk_factory?` | 替换 `new ZkClient(opts)`；测试用 `InMemoryZkClient`。默认行为不变 |
+| `supervisor_factory?` | 替换 `new ChildSupervisor(opts)`；测试用 `FakeChildSupervisor`。默认行为不变 |
+| `headless?` | 跳过 `captureConsoleToFile` + `tui.start()`，避免 hijack stdout / stdin |
+| `shutdown_signal?` | 与 SIGINT 同等的可触发关闭信号，让测试能让 `runOrchestrator` 干净返回 |
+
+同时 `packages/orchestrator/src/child-supervisor.ts` 暴露了 `IChildSupervisor` 接口（`start` + `shutdown`），生产实现照旧。

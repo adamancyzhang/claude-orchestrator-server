@@ -16,9 +16,9 @@
 
 ## 现有文档
 
-| # | 文档 | 场景 | 类型 |
-|---|------|------|------|
-| 01 | [`01-startup-worker-6.md`](./01-startup-worker-6.md) | `./bin/claude-orchestrator run --worker 6` | 纸面静态推导 |
+| # | 文档 | 场景 | 类型 | 自动化 |
+|---|------|------|------|--------|
+| 01 | [`01-startup-worker-6.md`](./01-startup-worker-6.md) | `./bin/claude-orchestrator run --worker 6` | 纸面静态推导 + e2e 自动验证 | [`packages/orchestrator/tests/core/e2e/startup-worker-6.test.ts`](../../packages/orchestrator/tests/core/e2e/startup-worker-6.test.ts) |
 
 ## 写作规范
 

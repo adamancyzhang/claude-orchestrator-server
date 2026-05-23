@@ -1,4 +1,11 @@
-export { runOrchestrator, defaultPaths, type RunInput, type OrchestratorPaths } from "./run.js";
+export {
+  runOrchestrator,
+  defaultPaths,
+  type RunInput,
+  type OrchestratorPaths,
+  type OrchestratorDeps,
+  type ZkClientFactoryInput,
+} from "./run.js";
 export {
   initializeWorktrees,
   generateWorkerNames,
@@ -12,6 +19,7 @@ export {
   ChildSupervisor,
   startParentAliveCheck,
   type ChildSupervisorOptions,
+  type IChildSupervisor,
 } from "./child-supervisor.js";
 export {
   InitChecker,
