@@ -19,7 +19,7 @@ export const ChainDefSchema = z.object({
     verify: ChainTaskDefSchema,
     review: ChainTaskDefSchema,
     accept: ChainTaskDefSchema,
-    // v0.7 NEW — present iff magic_mode=true (validated in ChainRouter).
+    // present iff magic_mode=true (validated in ChainRouter).
     explore: ChainTaskDefSchema.optional(),
   }),
 });

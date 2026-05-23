@@ -165,10 +165,9 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 - Role: {{role}}
 - Worktree: {{worktreePath}}
 - Branch: {{worktreeBranch}}
-- Instance: {{instanceId}}
 ```
 
-5 个驼峰占位符由 `ClaudeRunner.buildIdentityPrompt()` 替换。
+4 个驼峰占位符由 `ClaudeRunner.buildIdentityPrompt()` 替换。`instance_id` 这类一次性 UUID 不放入身份卡，避免动态参数破坏 claude-cli 的 system prompt cache 命中。
 
 ### 6.2 第二段：角色专属 memory
 

@@ -16,6 +16,9 @@ export interface LeaderMessageEnv {
 export interface WorkerMessageEnv {
   CO_WORKER_NAME: string;
   CO_WORKER_ID: InstanceId;
+  CO_WORKER_ROLE: string;
+  CO_LEADER_ID: InstanceId;
+  CO_MESSAGE_ID: MessageId | "";
   CO_TASK_ID: TaskId | "";
   CO_LINK: TaskLink | "";
   CO_CHAIN_ID: ChainId | "";
@@ -26,6 +29,9 @@ export interface WorkerMessageEnv {
 export interface TaskHookEnv {
   CO_WORKER_NAME: string;
   CO_WORKER_ID: InstanceId;
+  CO_WORKER_ROLE: string;
+  CO_LEADER_ID: InstanceId;
+  CO_MESSAGE_ID: MessageId | "";
   CO_TASK_ID: TaskId;
   CO_LINK: TaskLink | "";
   CO_CHAIN_ID: ChainId | "";

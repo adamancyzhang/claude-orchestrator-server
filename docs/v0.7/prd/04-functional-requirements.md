@@ -98,7 +98,7 @@
 |------|------|
 | 一句话 | `worker-identity.md` + `personal-claude-{role}.md` + `worker-{role}.md` 三段拼接，通过 `--append-system-prompt` 注入；任务正文通过 `-p` 注入 |
 | 用户价值 | 身份/任务正交 → system prompt cache 命中，长期成本低 |
-| 完成判定 | (a) 任务运行时 `ps aux | grep claude` 看到 `--append-system-prompt`；(b) 注入串含 "You are **<name>**, a **<role>**"；(c) `worker-identity.md` 中 5 个占位符全部被替换 |
+| 完成判定 | (a) 任务运行时 `ps aux | grep claude` 看到 `--append-system-prompt`；(b) 注入串含 "You are **<name>**, a **<role>**"；(c) `worker-identity.md` 中 4 个占位符全部被替换 |
 | 追溯 | A-08 |
 
 ---

@@ -255,7 +255,6 @@ function eventToString(event: LeaderEvent): string {
       const branches = event.failures.map((f) => f.branch).join(", ");
       return `MERGE_FAILED chain ${event.chain_id}: ${event.failures.length} branch(es) [${branches}] — retry tasks pushed`;
     }
-    // v0.7 NEW
     case "chain_spawned":
       return `chain_spawned ${event.parent_chain_id} → ${event.child_chain_id} (depth=${event.chain_depth})`;
     case "magic_depth_exhausted":
@@ -382,7 +381,7 @@ export function composeFrame(input: ComposeFrameInput): string {
   });
   out += box(cols - 2, line, hint);
 
-  // v0.7 NEW — [MAGIC] badge surfaces magic-mode + the configured cap
+  // [MAGIC] badge surfaces magic-mode + the configured cap
   // so operators can tell at a glance whether spawn_chain decisions
   // will be honored.
   const magicBadge = state.magic_mode

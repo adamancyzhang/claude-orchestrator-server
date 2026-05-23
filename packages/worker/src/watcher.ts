@@ -22,7 +22,7 @@ import {
 } from "@co/contracts";
 import { ClaudeRunner } from "@co/runtime";
 import type { SelfEvaluator } from "./evaluator.js";
-import { CHAIN_LINKS } from "./evaluator.js";
+import { chainLinksFor } from "./evaluator.js";
 import type { CommitChecker, CommitResult } from "./commit-checker.js";
 import type { WorkerDocsCommitter } from "./docs-committer.js";
 
@@ -70,7 +70,7 @@ function pickImmediatePredecessor(
   // to gaps (e.g. accept gets a chain where plan committed but
   // execute/verify/review had no worktree commit — accept still
   // rebases onto plan).
-  // v0.7 NEW — `accept` is added to the upstream chain because the
+  // `accept` is added to the upstream chain because the
   // explore link rebases on top of accept's commit. The list omits
   // explore itself because no link follows it.
   type UpstreamKey = "plan" | "execute" | "verify" | "review" | "accept";
@@ -128,13 +128,22 @@ export interface WorkerWatcherOptions {
    * ResolvedConfig.git.remote via child-boot.
    */
   git_remote: string | null;
+  /**
+   * Whether the cluster was launched with `--magic`. Drives the set of
+   * links the Worker accepts as chain links (default mode excludes
+   * `explore`). Sourced from the leader's CLI flags via child-boot.
+   */
+  magic_mode: boolean;
 }
 
 export class WorkerWatcher {
   private stopped = false;
   private readonly inFlight = new Set<string>();
+  private readonly chainLinks: readonly TaskLink[];
 
-  constructor(private readonly opts: WorkerWatcherOptions) {}
+  constructor(private readonly opts: WorkerWatcherOptions) {
+    this.chainLinks = chainLinksFor(opts.magic_mode);
+  }
 
   async start(): Promise<void> {
     await this.opts.message_router.waitForMessage(
@@ -157,7 +166,7 @@ export class WorkerWatcher {
     const taskId =
       (msg.task_id as TaskId | null) ??
       asTaskId(`adhoc-${msg.id || Date.now().toString(36)}`);
-    const isChainLink = link !== null && CHAIN_LINKS.includes(link as TaskLink);
+    const isChainLink = link !== null && this.chainLinks.includes(link as TaskLink);
     const realTaskId =
       isChainLink && msg.task_id ? (msg.task_id as TaskId) : null;
 
@@ -241,6 +250,9 @@ export class WorkerWatcher {
           env: {
             CO_WORKER_NAME: this.opts.worker_name,
             CO_WORKER_ID: this.opts.instance_id,
+            CO_WORKER_ROLE: this.opts.worker_role,
+            CO_LEADER_ID: this.opts.leader_id,
+            CO_MESSAGE_ID: (msg.id as never) ?? "",
             CO_TASK_ID: realTaskId,
             CO_LINK: (link as TaskLink) ?? "",
             CO_CHAIN_ID: (msg.chain_id as ChainId) ?? "",
@@ -324,6 +336,9 @@ export class WorkerWatcher {
       env: {
         CO_WORKER_NAME: this.opts.worker_name,
         CO_WORKER_ID: this.opts.instance_id,
+        CO_WORKER_ROLE: this.opts.worker_role,
+        CO_LEADER_ID: this.opts.leader_id,
+        CO_MESSAGE_ID: (msg.id as never) ?? "",
         CO_TASK_ID: taskId,
         CO_LINK: (link as TaskLink) ?? "",
         CO_CHAIN_ID: (msg.chain_id as ChainId) ?? "",
@@ -426,6 +441,9 @@ export class WorkerWatcher {
       env: {
         CO_WORKER_NAME: this.opts.worker_name,
         CO_WORKER_ID: this.opts.instance_id,
+        CO_WORKER_ROLE: this.opts.worker_role,
+        CO_LEADER_ID: this.opts.leader_id,
+        CO_MESSAGE_ID: (msg.id as never) ?? "",
         CO_TASK_ID: taskId,
         CO_LINK: (link as TaskLink) ?? "",
         CO_CHAIN_ID: (msg.chain_id as ChainId) ?? "",
@@ -469,7 +487,7 @@ export class WorkerWatcher {
     let commit: CommitResult | null = null;
     let commitFailure: CommitFailedError | null = null;
     let docsSha: string | null = null;
-    if (link && CHAIN_LINKS.includes(link as TaskLink)) {
+    if (link && this.chainLinks.includes(link as TaskLink)) {
       try {
         commit = await this.opts.commit_checker.check(
           {
@@ -548,7 +566,7 @@ export class WorkerWatcher {
       }
     }
 
-    if (link && CHAIN_LINKS.includes(link as TaskLink)) {
+    if (link && this.chainLinks.includes(link as TaskLink)) {
       if (commitFailure) {
         // Skip self-evaluation entirely: the link's deliverable is broken
         // because the commit did not land. Force a feedback decision
@@ -592,6 +610,9 @@ export class WorkerWatcher {
           env: {
             CO_WORKER_NAME: this.opts.worker_name,
             CO_WORKER_ID: this.opts.instance_id,
+            CO_WORKER_ROLE: this.opts.worker_role,
+            CO_LEADER_ID: this.opts.leader_id,
+            CO_MESSAGE_ID: (msg.id as never) ?? "",
             CO_TASK_ID: realTaskId,
             CO_LINK: (link as TaskLink) ?? "",
             CO_CHAIN_ID: (msg.chain_id as ChainId) ?? "",
@@ -673,7 +694,7 @@ export class WorkerWatcher {
         return { plan, execute, verify, review: "", accept: "" };
       case "accept":
         return { plan, execute, verify, review, accept: "" };
-      // v0.7 NEW — explore reads every upstream link's result.md so
+      // explore reads every upstream link's result.md so
       // the Explorer can decide spawn vs close with full context.
       case "explore":
         return { plan, execute, verify, review, accept };

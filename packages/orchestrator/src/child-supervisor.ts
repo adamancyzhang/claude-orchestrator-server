@@ -23,6 +23,12 @@ export interface ChildSupervisorOptions {
    * config merge — Worker doesn't reload config independently.
    */
   hooks: readonly HookCommand[];
+  /**
+   * Whether the cluster was started with `--magic`. Propagated to each
+   * Worker so its CHAIN_LINKS / SelfEvaluator gate the `explore` link
+   * appropriately.
+   */
+  magic_mode: boolean;
   logger: ILogger;
 }
 
@@ -75,6 +81,7 @@ export class ChildSupervisor implements IChildSupervisor {
       debug: this.opts.debug,
       git_remote: this.opts.git_remote,
       hooks: this.opts.hooks,
+      magic_mode: this.opts.magic_mode,
     };
     const child = fork(this.opts.child_module_path, [JSON.stringify(env)], {
       stdio: "inherit",

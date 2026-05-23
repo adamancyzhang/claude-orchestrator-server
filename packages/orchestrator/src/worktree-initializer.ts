@@ -38,7 +38,7 @@ export const ROLE_PRIORITY: InstanceRole[] = [
   "accepter",
 ];
 
-// v0.7 NEW — magic-mode role fill order. The 6th worker is the
+// magic-mode role fill order. The 6th worker is the
 // explorer (run.ts enforces N >= 6); 7+ workers default to executor
 // (FR-32: only one explorer per cluster).
 export const MAGIC_ROLE_PRIORITY: InstanceRole[] = [
@@ -166,7 +166,7 @@ export interface InitializeWorktreesOptions {
    * tests that purposefully inspect post-shutdown worktree state.
    */
   reset_on_reuse?: boolean;
-  // v0.7 NEW — when true the 6th worker is assigned role=explorer
+  // when true the 6th worker is assigned role=explorer
   // instead of the default executor.
   magic_mode?: boolean;
 }

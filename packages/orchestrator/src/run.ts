@@ -69,10 +69,10 @@ export interface RunInput {
   name?: string;
   debug?: boolean;
   y_flag?: boolean;
-  // v0.7 NEW — `--magic` (autonomous loop). Enables the explore link
+  // `--magic` (autonomous loop). Enables the explore link
   // and spawn_chain decisions across the cluster.
   magic?: boolean;
-  // v0.7 NEW — hard cap on chain_forest depth. `null` (default) is
+  // hard cap on chain_forest depth. `null` (default) is
   // unlimited. Env `CO_MAGIC_MAX_CHAINS` overrides this argument when
   // present and parseable.
   magic_max_chains?: number | null;
@@ -157,7 +157,7 @@ export async function runOrchestrator(
   });
 
   // Phase 2: worktrees
-  // v0.7 NEW — resolve magic-mode + depth cap. Env overrides CLI.
+  // resolve magic-mode + depth cap. Env overrides CLI.
   const magicMode = input.magic === true;
   const envMaxChainsRaw = process.env.CO_MAGIC_MAX_CHAINS;
   const envMaxChains =
@@ -198,7 +198,7 @@ export async function runOrchestrator(
         pid: process.pid,
         host: os.hostname(),
         started_at: new Date().toISOString(),
-        // v0.7 NEW — broadcast magic flags so workers know whether
+        // broadcast magic flags so workers know whether
         // spawn_chain decisions and explore links are in play.
         magic_mode: magicMode,
         magic_max_chains: magicMaxChains,
@@ -249,6 +249,11 @@ export async function runOrchestrator(
     leader_instance_id: leaderInstance.id,
   };
 
+  const chainAudit = new ChainAudit({
+    cache_paths: cachePaths,
+    logger: logger.child("chain-audit"),
+  });
+
   const mergeValidator = new MergeValidator({
     project_root: projectRoot,
     runner,
@@ -256,15 +261,18 @@ export async function runOrchestrator(
     template_name: "worker-merge-decision.md",
     bus,
     hooks: hookEngine,
+    chain_audit: chainAudit,
     logger: logger.child("merge"),
-    log_path_for: (key) => path.join(coRoot, "merges", `${key}.log`),
+    log_path_for: ({ chain_id, link, ts, kind }) => {
+      const dir = chain_id
+        ? path.join(coRoot, "merges", `chain-${chain_id}`)
+        : path.join(coRoot, "merges", "misc");
+      if (kind === "final") return path.join(dir, `final-${ts}.log`);
+      const linkPart = link ?? "unknown";
+      return path.join(dir, `merge-${linkPart}-${ts}.log`);
+    },
     merge_target_branch: resolved.git.merge_target_branch,
     remote: resolved.git.remote,
-  });
-
-  const chainAudit = new ChainAudit({
-    cache_paths: cachePaths,
-    logger: logger.child("chain-audit"),
   });
 
   // Memory bootstrap is constructed before ChainRouter so we can hand
@@ -311,7 +319,7 @@ export async function runOrchestrator(
     magic_max_chains: magicMaxChains,
   });
 
-  // v0.7 NEW — seed LeaderState so the TUI [MAGIC] badge renders on
+  // seed LeaderState so the TUI [MAGIC] badge renders on
   // first frame instead of waiting for the next chain event. The
   // event must be emitted AFTER the bus is wired to state.apply.
   bus.emit({
@@ -332,10 +340,16 @@ export async function runOrchestrator(
   const monitor = new WorkerMonitor(registry, bus);
   await monitor.start();
 
-  const taskOrch = new TaskOrchestrator(taskQueue, bus);
+  const taskOrch = new TaskOrchestrator(taskQueue, bus, chainAudit);
   await taskOrch.start();
 
-  const recovery = new TaskRecovery(taskQueue, registry, bus, logger.child("recovery"));
+  const recovery = new TaskRecovery(
+    taskQueue,
+    registry,
+    bus,
+    logger.child("recovery"),
+    chainAudit,
+  );
   recovery.start();
   await recovery.scanOrphans();
 
@@ -365,6 +379,7 @@ export async function runOrchestrator(
     debug: input.debug ?? false,
     git_remote: resolved.git.remote,
     hooks: resolved.hooks,
+    magic_mode: magicMode,
     logger: logger.child("supervisor"),
   };
   const supervisor: IChildSupervisor = deps.supervisor_factory

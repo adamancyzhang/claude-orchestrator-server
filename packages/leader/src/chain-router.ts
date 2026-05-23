@@ -41,6 +41,7 @@ import type { MemoryBootstrap } from "./memory-bootstrap.js";
 export interface IMergeValidator {
   validate(
     commit: CommitInfo,
+    chain_id: ChainId | null,
     mode?: "close" | "spawn",
   ): Promise<MergeDecision>;
 }
@@ -61,7 +62,7 @@ export interface MergeFailure {
   category: MergeFailureCategory;
 }
 
-// v0.7 NEW — accept→explore is enabled only when magic_mode=true on the
+// accept→explore is enabled only when magic_mode=true on the
 // chain manifest. ChainRouter.handleCompletionReport explicitly checks
 // magic_mode for the accept-link `activate_next` branch.
 const NEXT_LINKS: Record<TaskLink, TaskLink | null> = {
@@ -93,7 +94,7 @@ const LINK_TO_ROLE: Record<TaskLink | "decompose", string> = {
 };
 
 /**
- * v0.7 NEW — link × decision legality matrix (DD 02 §5.2).
+ * link × decision legality matrix (DD 02 §5.2).
  * `spawn_chain` is legal only at explore with magic_mode=true.
  * `activate_next` on accept is legal only with magic_mode=true (else
  * close_chain is expected at accept).
@@ -167,7 +168,7 @@ export interface ChainRouterOptions {
    */
   memory_bootstrap?: MemoryBootstrap;
   /**
-   * v0.7 NEW — when true, ChainRouter enables the magic loop:
+   * when true, ChainRouter enables the magic loop:
    *   - decompose template is rendered with magic_mode=true
    *   - new ChainDefs MUST include an `explore` task
    *   - accept-link `activate_next` is legal (→ explore)
@@ -176,7 +177,7 @@ export interface ChainRouterOptions {
    */
   magic_mode?: boolean;
   /**
-   * v0.7 NEW — hard cap on chain_forest depth. When set, spawn_chain
+   * hard cap on chain_forest depth. When set, spawn_chain
    * decisions whose `chain_depth + 1 >= magic_max_chains` are demoted
    * to close_chain (with audit `magic_depth_exhausted`). null /
    * undefined disables the cap. Sourced from `--magic-max-chains M`
@@ -442,7 +443,7 @@ export class ChainRouter {
         work_dir: process.cwd(),
         time: new Date().toISOString(),
         content: msg.content,
-        // v0.7 NEW — magic-mode awareness for the decompose template:
+        // magic-mode awareness for the decompose template:
         // when "true" the template must also emit an `explore` task.
         magic_mode: this.opts.magic_mode ? "true" : "false",
         magic_max_chains:
@@ -518,7 +519,7 @@ export class ChainRouter {
       "explore",
     ];
 
-    // v0.7 NEW — magic_mode ⊕ explore presence: ChainRouter rejects
+    // magic_mode ⊕ explore presence: ChainRouter rejects
     // requirements whose ChainDef does not match the leader's mode.
     // The decompose template is responsible for emitting an `explore`
     // task iff magic_mode=true.
@@ -572,7 +573,7 @@ export class ChainRouter {
       originalRequirement ?? msg.content,
       "utf-8",
     );
-    // v0.7 NEW — derive forest position from msg.spawned_from. Root
+    // derive forest position from msg.spawned_from. Root
     // chains (typed at the TUI) carry no spawned_from. Spawn-derived
     // chains read the parent manifest to compute chain_depth+1 and
     // inherit magic_mode (always true for spawned chains).
@@ -628,7 +629,7 @@ export class ChainRouter {
         payload: { requirement_path: requirementPath },
       });
 
-      // v0.7 NEW — wire up the chain forest: link the new chain to its
+      // wire up the chain forest: link the new chain to its
       // parent in both directions and emit the spawn audit pair.
       if (parentChainId) {
         await this.opts.chain_audit.appendChildChain(
@@ -817,7 +818,7 @@ export class ChainRouter {
 
     const requirementPath = await this.resolveRequirementPath(msg.chain_id ?? null);
 
-    // v0.7 NEW — defensive legality check. The Worker's SelfEvaluator
+    // defensive legality check. The Worker's SelfEvaluator
     // is the primary gate; ChainRouter records `invalid_decision` and
     // aborts the chain if anything slips through (e.g. spawn_chain on
     // the accept link, or activate_next on explore).
@@ -968,7 +969,7 @@ export class ChainRouter {
         }
         break;
       }
-      // v0.7 NEW — spawn_chain: Explorer requests parent close + child
+      // spawn_chain: Explorer requests parent close + child
       // chain bootstrap with `next_requirement` as the new requirement.
       case "spawn_chain": {
         if (msg.chain_id) {
@@ -999,7 +1000,7 @@ export class ChainRouter {
    *   - records the failures, closes as `merge_failed`, and pushes
    *     merge-retry tasks (returns {merged: false}).
    *
-   * v0.7 NEW — the `mode` argument is forwarded to
+   * the `mode` argument is forwarded to
    * `IMergeValidator.validate` so the audit trail distinguishes a
    * close-driven merge from a spawn-driven one.
    */
@@ -1058,7 +1059,7 @@ export class ChainRouter {
   }
 
   /**
-   * v0.7 NEW — handle the spawn_chain Explorer decision. Steps:
+   * handle the spawn_chain Explorer decision. Steps:
    *   1. Read parent manifest; reject if magic_mode mismatches the
    *      decision (defense-in-depth, after isDecisionLegalForLink).
    *   2. Enforce --magic-max-chains. When the new depth would meet or
@@ -1181,7 +1182,7 @@ export class ChainRouter {
             message: `chain ${chainId} accept`,
             task_title: `[${chainId}] accept`,
             task_link: "accept",
-          }, mode);
+          }, chainId, mode);
           return failures;
         } catch (err) {
           failures.push({
@@ -1256,7 +1257,7 @@ export class ChainRouter {
     if (!commits || commits.length === 0) return failures;
     for (const commit of commits) {
       try {
-        await this.opts.merge_validator.validate(commit, mode);
+        await this.opts.merge_validator.validate(commit, chainId, mode);
       } catch (err) {
         this.opts.logger.warn("merge validation failed", {
           chain_id: chainId,

@@ -50,7 +50,7 @@ export const EvalDecisionSchema = z.discriminatedUnion("decision", [
     reason: z.string(),
     commits: commitsField,
   }),
-  // v0.7 NEW — spawn_chain: only legal at the `explore` link when
+  // spawn_chain: only legal at the `explore` link when
   // magic_mode=true. Carries the next requirement that bootstraps the
   // child chain.
   z.object({

@@ -1,5 +1,6 @@
 import {
   OrphanRetryExhaustedError,
+  type ChainId,
   type ClaimRecord,
   type IEventBus,
   type IInstanceRegistry,
@@ -7,6 +8,7 @@ import {
   type ILogger,
   type LeaderEvent,
 } from "@co/contracts";
+import type { ChainAudit } from "./chain-audit.js";
 
 const MAX_RETRIES = 3;
 
@@ -16,6 +18,7 @@ export class TaskRecovery {
     private readonly registry: IInstanceRegistry,
     private readonly bus: IEventBus<LeaderEvent>,
     private readonly logger: ILogger,
+    private readonly chain_audit?: ChainAudit,
   ) {}
 
   start(): void {
@@ -46,7 +49,24 @@ export class TaskRecovery {
 
   private async recoverOrphan(record: ClaimRecord): Promise<void> {
     const snapshot = record.task_snapshot;
+    const chainId = (snapshot?.chain_id ?? null) as ChainId | null;
+    const link = snapshot?.link ?? null;
     const retryCount = (snapshot?.retry_count ?? 0) + 1;
+    // FR-23 — the previously-claiming worker has gone offline; record
+    // `worker_left` in the affected chain's audit so the trail explains
+    // why we re-queued / failed the task. Bus emits worker_left elsewhere
+    // (WorkerMonitor) for TUI; this audit is the per-chain record.
+    if (chainId && this.chain_audit) {
+      void this.chain_audit
+        .record(chainId, {
+          event: "worker_left",
+          link,
+          task_id: record.task_id,
+          worker_id: record.instance_id,
+          payload: { phase: "orphan_recovery" },
+        })
+        .catch(() => undefined);
+    }
     if (retryCount > MAX_RETRIES) {
       this.logger.warn("orphan retry exhausted", {
         task_id: record.task_id,
@@ -68,6 +88,17 @@ export class TaskRecovery {
         task_id: record.task_id,
         reason: "max retries exceeded",
       });
+      if (chainId && this.chain_audit) {
+        void this.chain_audit
+          .record(chainId, {
+            event: "task_failed",
+            link,
+            task_id: record.task_id,
+            worker_id: record.instance_id,
+            payload: { reason: "max retries exceeded", retry_count: retryCount },
+          })
+          .catch(() => undefined);
+      }
       throw new OrphanRetryExhaustedError(record.task_id, MAX_RETRIES);
     }
     try {
@@ -77,6 +108,17 @@ export class TaskRecovery {
         task_id: newTask.id,
         retry_count: retryCount,
       });
+      if (chainId && this.chain_audit) {
+        void this.chain_audit
+          .record(chainId, {
+            event: "task_recovered",
+            link,
+            task_id: newTask.id,
+            worker_id: record.instance_id,
+            payload: { retry_count: retryCount },
+          })
+          .catch(() => undefined);
+      }
     } catch (err) {
       this.logger.error("orphan retry failed", {
         task_id: record.task_id,

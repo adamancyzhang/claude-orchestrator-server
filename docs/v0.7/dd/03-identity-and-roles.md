@@ -192,7 +192,6 @@ function buildIdentityPrompt(spec: {
   role: WorkerRole;
   worktreePath: string;
   worktreeBranch: string;
-  instanceId: InstanceId;
 }): string {
   const part1 = renderTemplate('worker-identity.md', spec);
   const part2 = renderTemplate(`templates/claude-memory/personal-claude-${spec.role}.md`, spec);
@@ -200,6 +199,8 @@ function buildIdentityPrompt(spec: {
   return [part1, part2, part3].join('\n\n---\n\n');
 }
 ```
+
+> 身份卡只携带 Worker 进程生命周期内**不变**的字段，避免动态参数破坏 claude-cli 的 system prompt cache 命中（`instance_id` 这类一次性 UUID 不进身份卡，需要时通过 hook env 或日志元数据传出）。
 
 ### 4.2 worker-identity.md（第 1 段，PRD 02 §6.1）
 
@@ -210,10 +211,9 @@ You are **{{name}}**, a **{{role}}** in the multi-agent orchestration system.
 - Role: {{role}}
 - Worktree: {{worktreePath}}
 - Branch: {{worktreeBranch}}
-- Instance: {{instanceId}}
 ```
 
-5 个占位符在 `renderTemplate` 内做 `{{key}}` → `value` 严格替换。
+4 个占位符在 `renderTemplate` 内做 `{{key}}` → `value` 严格替换。
 
 ### 4.3 第 2 段：角色 memory
 
