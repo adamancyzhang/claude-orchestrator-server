@@ -19,6 +19,7 @@
 | # | 文档 | 场景 | 类型 | 自动化 |
 |---|------|------|------|--------|
 | 01 | [`01-startup-worker-6.md`](./01-startup-worker-6.md) | `./bin/claude-orchestrator run --worker 6` | 纸面静态推导 + e2e 自动验证 | [`packages/orchestrator/tests/core/e2e/startup-worker-6.test.ts`](../../packages/orchestrator/tests/core/e2e/startup-worker-6.test.ts) |
+| 02 | [`02-leader-worker-communication.md`](./02-leader-worker-communication.md) | 用户在 TUI 键入需求 → 完整 `plan → execute → verify → review → accept` 责任链 | 纸面静态推导（消息流 / Hook / 双轨 commit / 上下文承接 / 责任链 audit） | 待补 |
 
 ## 写作规范
 
