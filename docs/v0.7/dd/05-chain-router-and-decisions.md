@@ -222,7 +222,7 @@ handleFeedback(chainId, link, decision, manifest):
   if target == null:                                            // FR-19
     ChainAudit.appendAudit('feedback_unresolved', { chain_id, detail: { link, reason: decision.reason } })
     emit LeaderEventBus 'debug_info' { message: `feedback for chain ${chainId}/${link} dropped: no resolvable target` }
-    // 链状态保持 active；不 push 任何 task；操作员可看到 debug_info
+    // 链状态保持 running；不 push 任何 task；操作员可看到 debug_info
     return
 
   // 3. 派 retry task
@@ -357,10 +357,10 @@ handleSpawnChain(chainId, decision, manifest):
 
 ```mermaid
 stateDiagram-v2
-  [*] --> active: openChain
-  active --> completed: handleCloseChain 全部 merge 成功
-  active --> aborted: handleReject / retry_ceiling_exceeded / invalid_decision / SelfEvaluator 三连 fallback reject
-  active --> merge_failed: handleCloseChain 或 handleSpawnChain merge 失败
+  [*] --> running: openChain
+  running --> completed: handleCloseChain 全部 merge 成功
+  running --> aborted: handleReject / retry_ceiling_exceeded / invalid_decision / SelfEvaluator 三连 fallback reject
+  running --> merge_failed: handleCloseChain 或 handleSpawnChain merge 失败
   merge_failed --> completed: Executor merge retry → activate_next → handleCloseChain 重跑成功
   merge_failed --> merge_failed: Executor merge retry → activate_next → handleCloseChain 仍失败
   merge_failed --> aborted: Executor merge retry → reject

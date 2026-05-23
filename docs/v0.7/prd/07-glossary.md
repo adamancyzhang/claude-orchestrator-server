@@ -51,7 +51,7 @@
 | **`completion_report`** | Worker 完成任务后回报 Leader 的消息类型，内容为 EvalDecision JSON（含 commit 信息） |
 | **`user_input`** | TUI 输入框写入的用户需求消息类型 |
 | **`memory_refresh`** | Worker commit 后通知 Leader 增量刷新 workspace memory 的消息类型 |
-| **`upstream_commits`** | Task / Message 字段；`Partial<{plan?, build?, verify?, review?: string}>` 形式的上游 link worktree SHA 映射；下游 link dispatch 前由 `ChainAudit.collectUpstreamCommits` 注入；Worker 用它做 pre-task rebase |
+| **`upstream_commits`** | Task / Message 字段；`Partial<{plan?, execute?, verify?, review?, accept?: string}>` 形式的上游 link worktree SHA 映射；下游 link dispatch 前由 `ChainAudit.collectUpstreamCommits` 注入；Worker 用它做 pre-task rebase（`accept` 字段仅在 `--magic` 模式下被 explore link 使用） |
 | **`LinkCommitRecord`** | manifest.link_commits[link] 的记录类型；`{ worktree: string\|null, docs: string\|null, branch: string }`；Worker 完成 link 任务时通过 completion_report 回传，ChainRouter 调 `ChainAudit.recordLinkCommit` 落盘 |
 | **`link_commits`** | chain manifest 字段；`Partial<Record<TaskLink, LinkCommitRecord>>`；feedback 决策时调 `clearLinkCommitsFrom` 擦除 fromLink 及其下游 |
 | **Pre-task rebase** | Worker 在收到 task_dispatch 后、调起 claude-cli 前执行 `git rebase <upstream_sha>` 把自己分支线性接到上游 link 上；冲突时抛 `RebaseConflictError` 触发强制 feedback；plan link 或 `upstream_commits={}` 时跳过 |

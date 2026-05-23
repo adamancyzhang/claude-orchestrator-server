@@ -16,6 +16,7 @@ import {
   type EvalDecision,
   type IClaudeRunner,
   type IEventBus,
+  type IHookEngine,
   type IInstanceRegistry,
   type ILogger,
   type IMessageRouter,
@@ -125,6 +126,12 @@ export interface ChainRouterOptions {
   bus: IEventBus<LeaderEvent>;
   runner: IClaudeRunner;
   template_engine: ITemplateEngine;
+  /**
+   * Optional lifecycle-hook engine. When provided, ChainRouter fires
+   * `leader_message_start` / `leader_message_end` around the decompose
+   * claude-cli run and `chain_activated` once a new ChainDef opens.
+   */
+  hooks?: IHookEngine;
   logger: ILogger;
   leader_id: InstanceId;
   leader_name: string;
@@ -443,7 +450,30 @@ export class ChainRouter {
             ? "unlimited"
             : String(this.opts.magic_max_chains),
       });
-      await this.opts.runner.run({ prompt, log_path: logPath });
+      if (this.opts.hooks) {
+        await this.opts.hooks.fire({
+          type: "leader_message_start",
+          env: {
+            CO_LEADER_ID: this.opts.leader_id,
+            CO_MESSAGE_ID: msg.id as never,
+            CO_LINK: "",
+            CO_LOG_PATH: logPath,
+          },
+        });
+      }
+      const runResult = await this.opts.runner.run({ prompt, log_path: logPath });
+      if (this.opts.hooks) {
+        await this.opts.hooks.fire({
+          type: "leader_message_end",
+          env: {
+            CO_LEADER_ID: this.opts.leader_id,
+            CO_MESSAGE_ID: msg.id as never,
+            CO_LINK: "",
+            CO_LOG_PATH: logPath,
+            exit_code: runResult.exit_code,
+          },
+        });
+      }
       const resultContent = await fs.promises.readFile(resultPath, "utf-8");
       const cleaned = extractJson(resultContent);
       await this.handleTaskDefinitions(
@@ -670,6 +700,12 @@ export class ChainRouter {
     }
 
     this.opts.bus.emit({ type: "chain_activated", chain_id: chainDef.chain_id });
+    if (this.opts.hooks) {
+      void this.opts.hooks.fire({
+        type: "chain_activated",
+        env: { CO_CHAIN_ID: chainDef.chain_id },
+      });
+    }
 
     if (firstLink && firstTaskId && firstDef) {
       if (firstWorker) {

@@ -73,7 +73,7 @@ The Leader is a TUI with an event-driven architecture and keyboard input:
 
 ```
 ZK watches (instances, tasks, messages)
-  → LeaderEventBus (typed EventEmitter, 17 event types)
+  → LeaderEventBus (typed EventEmitter, 22 event types)
     → LeaderState (centralized state, .apply() reduces each event)
       → TuiController + renderer (ANSI escape-code rendering, re-renders on every event)
 ```
@@ -316,7 +316,7 @@ See [`docs/v0.7/dd/10-magic-loop.md`](docs/v0.7/dd/10-magic-loop.md) for end-to-
 | `packages/infra/src/utils/output.ts` | JSON output helper for CLI commands |
 | `packages/infra/src/utils/console-capture.ts` | Console redirect to file (for TUI display) |
 | `templates/agents/` | 20 agent prompt templates: 6 role system prompts `worker-{role}.md` (planner/executor/verifier/reviewer/accepter/explorer) + 6 per-task user-message wrappers `worker-{role}-task.md` + `worker-identity.md` + `worker-decompose.md` + `worker-evaluate.md` + `worker-evaluate-format-hint.md` + `worker-commit-message.md` + `worker-merge-decision.md` + `worker-memorize-dir.md` + `worker-memorize-file.md` |
-| `templates/claude-memory/` | 7 memory templates: 1 `team-claude.md` (seeded to `<worktree>/CLAUDE.md`) + 6 `personal-claude-{role}.md` (currently not seeded — see [docs/evals/01-startup-worker-6.md](docs/evals/01-startup-worker-6.md) §6 D14) |
+| `templates/claude-memory/` | 7 memory templates: 1 `team-claude.md` (seeded to `<worktree>/CLAUDE.md`) + 6 `personal-claude-{role}.md` (seeded to `<worktree>/.claude-orchestrator/agents/`; loaded as identity-card part 2 by `child-boot.ts`) |
 | `skills/` | 10 Claude Code skills: 6 chain skills (`task-planning`, `task-execution`, `task-verification`, `task-review`, `task-acceptance`, `task-exploration`) + `task-traceability` + `test-driven-development` + `claude-orchestrator` (CLI ref) + `claude-code-developer` (dev ref) |
 
 ## Testing

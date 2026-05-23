@@ -10,6 +10,7 @@ import {
   WorktreeLockedError,
   type IClaudeRunner,
   type IEventBus,
+  type IHookEngine,
   type ILogger,
   type ITemplateEngine,
   type LeaderEvent,
@@ -30,6 +31,12 @@ export interface MergeValidatorOptions {
   template_engine: ITemplateEngine;
   template_name: string;
   bus: IEventBus<LeaderEvent>;
+  /**
+   * Optional lifecycle-hook engine. When provided, MergeValidator fires
+   * `merge_decision_made` after each MergeDecision is parsed so operators
+   * can subscribe to merge outcomes via global config `hooks.*`.
+   */
+  hooks?: IHookEngine;
   logger: ILogger;
   log_path_for: (key: string) => string;
   /**
@@ -79,6 +86,17 @@ export class MergeValidator {
     }
 
     const decision = await this.askDecision(commit, mainBranch);
+
+    if (this.opts.hooks) {
+      void this.opts.hooks.fire({
+        type: "merge_decision_made",
+        env: {
+          CO_DECISION: decision.decision,
+          CO_BRANCH: commit.branch,
+          CO_REASON: decision.reason,
+        },
+      });
+    }
 
     if (decision.decision === "merge") {
       const currentBranch = this.execGit([

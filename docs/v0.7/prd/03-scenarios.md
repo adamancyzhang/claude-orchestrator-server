@@ -75,14 +75,14 @@ chain_activated chain-001
 task_dispatch  plan    task-0000000001 → Tom        (upstream_commits={})
 worker_message_received Tom  (plan started; no rebase — plan 是链起点)
 task_completed task-0000000001 (Tom, plan; link_commit_record recorded)
-task_dispatch  build   task-0000000002 → Jerry      (upstream_commits={plan: <SHA>})
+task_dispatch  execute task-0000000002 → Jerry      (upstream_commits={plan: <SHA>})
 worker_message_received Jerry  (pre-task rebase onto Tom's plan SHA, ok)
-... (build 完成；双轨 commit：项目仓代码 + CO root docs)
-task_dispatch  verify  task-0000000003 → Lucy       (upstream_commits={plan, build})
+... (execute 完成；双轨 commit：项目仓代码 + CO root docs)
+task_dispatch  verify  task-0000000003 → Lucy       (upstream_commits={plan, execute})
 ... (verify 完成)
-task_dispatch  review  task-0000000004 → Thomas     (upstream_commits={plan, build, verify})
+task_dispatch  review  task-0000000004 → Thomas     (upstream_commits={plan, execute, verify})
 ... (review 完成)
-task_dispatch  accept  task-0000000005 → Jack       (upstream_commits={plan, build, verify, review})
+task_dispatch  accept  task-0000000005 → Jack       (upstream_commits={plan, execute, verify, review})
 worker_message_received Jack  (pre-task rebase onto Thomas's review SHA → accept 分支线性聚合整条链)
 ... (accept 完成)
 debug_info     Merge: merge — Merged Jack's accept branch into main (single --no-ff commit)
@@ -93,13 +93,13 @@ chain_closed   chain-001  (completed)
 
 1. TUI 把输入写入 `/messages/{leader_id}/msg-NNNNN`（type=`user_input`）
 2. LeaderWatcher 捕获 → ChainRouter.handleRequirement
-3. ChainRouter 调用 decompose 模板（若已加载则 Leader 自处理；否则转发 Planner Worker）→ ChainDef JSON `{ plan, build, verify, review, accept }`（`--magic` 启用时追加 `explore`）
+3. ChainRouter 调用 decompose 模板（若已加载则 Leader 自处理；否则转发 Planner Worker）→ ChainDef JSON `{ plan, execute, verify, review, accept }`（`--magic` 启用时追加 `explore`）
 4. ChainAudit `openChain(chain-001)` → 写入 `manifest.json`（status=`running`）+ `requirement.md`；`link_commits={}`、`upstream_commits={}`
 5. push 5 个 task 到 `/tasks/pending/`；plan task 的 `upstream_commits={}`，下游 link 由 dispatch 时 `collectUpstreamCommits` 注入
 6. Tom 的 ZK Watch 触发 → 认领 plan task → **pre-task rebase 跳过**（无上游）→ 渲染 `worker-plan.md` → `claude -p` 执行 → CommitChecker 双轨 commit（worktree + docs）→ 自评估 → completion_report(decision=activate_next, commits={worktree, docs, branch})
-7. Leader 收到完成报告 → ChainRouter 调 `ChainAudit.recordLinkCommit(chain-001, plan, {…})` → activate_next → 调 `collectUpstreamCommits(chain-001)` 得 `{plan: <Tom 的 worktree SHA>}` → 派发 build task 给 Jerry，注入 task.upstream_commits + message.upstream_commits
-8. Jerry 收到 build task → **pre-task rebase**：`git merge-base --is-ancestor <plan SHA> HEAD` → 不在 → `git rebase <plan SHA>` 把自己分支线性接到 plan 上 → 渲染 `worker-build.md` → 执行 → 双轨 commit → completion_report
-9. 重复至 Jack(accepter) 输出 `close_chain`；Jack 的 accept 分支已通过 pre-task rebase 串联 plan ← build ← verify ← review ← accept
+7. Leader 收到完成报告 → ChainRouter 调 `ChainAudit.recordLinkCommit(chain-001, plan, {…})` → activate_next → 调 `collectUpstreamCommits(chain-001)` 得 `{plan: <Tom 的 worktree SHA>}` → 派发 execute task 给 Jerry，注入 task.upstream_commits + message.upstream_commits
+8. Jerry 收到 execute task → **pre-task rebase**：`git merge-base --is-ancestor <plan SHA> HEAD` → 不在 → `git rebase <plan SHA>` 把自己分支线性接到 plan 上 → 渲染 `worker-executor-task.md` → 执行 → 双轨 commit → completion_report
+9. 重复至 Jack(accepter) 输出 `close_chain`；Jack 的 accept 分支已通过 pre-task rebase 串联 plan ← execute ← verify ← review ← accept
 10. ChainRouter 触发 `runCloseChainMerge`：读 `manifest.link_commits.accept.{worktree, branch}` → **单次** `MergeValidator.validate(accept-link)` → `isCommitMerged` 判断 → claude-cli 给出 `decision='merge'` → `git checkout main && git merge --no-ff <accept.branch>` → 成功
 11. ChainAudit `closeChain(chain-001, "completed")` → 发射 `chain_closed`
 
@@ -306,7 +306,7 @@ plan link Worker 输出 EvalDecision `decision=feedback` 但未提供 `feedback_
 [debug] feedback for chain chain-001/plan dropped: no resolvable target
 ```
 
-不再有新 task_dispatch 发出。chain 状态保持 `active` 不变。
+不再有新 task_dispatch 发出。chain 状态保持 `running` 不变。
 
 **系统行为**
 

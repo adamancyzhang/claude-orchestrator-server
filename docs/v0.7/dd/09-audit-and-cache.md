@@ -74,7 +74,7 @@ export interface ChainAudit {
   ): Promise<UpstreamCommits>;
   // ↑ ChainRouter dispatchNextLink 前调用，构造仅含 worktree SHA 的 UpstreamCommits
   //   注入到 task_dispatch.upstream_commits + Task.upstream_commits。
-  //   遍历顺序固定 plan → build → verify → review（accept 不参与 — accept 是合并目标，无下游）。
+  //   遍历顺序固定 plan → execute → verify → review → accept（accept 仅在 `--magic` 模式下供 explore link 消费）。
   //   `worktree == null` 的 link 自动跳过（典型：plan/verify/review 不动代码）。
 
   clearLinkCommitsFrom(
@@ -82,7 +82,7 @@ export interface ChainAudit {
     fromLink: TaskLink,
   ): Promise<void>;
   // ↑ feedback 决策时由 ChainRouter 调用：擦除 fromLink 及其下游 link 的 link_commits 记录，
-  //   保证重试从干净的上游基线开始。顺序 plan → build → verify → review → accept。
+  //   保证重试从干净的上游基线开始。顺序 plan → execute → verify → review → accept。
   //   例：fromLink='verify' → 擦除 verify / review / accept 三条记录。
 
   // —— 审计事件
@@ -123,10 +123,10 @@ openChain(chainId, requirement, opts):
   ensureDir(<cache>/chains/<chainId>/)
   existing = readManifest(chainId)
   if existing != null:
-    if existing.status == 'active':
+    if existing.status == 'running':
       // 同 chain_id 复用（极少见，理论上 chain_id 由时间戳+随机串保证唯一）
       // 但 v0.7 仍保留对幂等 reopen 的拒绝
-      throw ChainConflictError(chainId, 'active')
+      throw ChainConflictError(chainId, 'running')
     if existing.status ∈ {completed, aborted, merge_failed, failed}:
       throw ChainConflictError(chainId, existing.status)   // FR-20
   manifest = {
@@ -134,7 +134,7 @@ openChain(chainId, requirement, opts):
     protocol_version: "0.7.0",
     created_at: now(),
     completed_at: null,
-    status: 'active',
+    status: 'running',
     abort_reason: null,
     merge_failures: [],
     link_tasks: {},
@@ -159,7 +159,7 @@ openChain(chainId, requirement, opts):
 
 ```text
 closeChain(chainId, status, extra):
-  manifest = readManifest(chainId)  // 必须存在且 status='active'
+  manifest = readManifest(chainId)  // 必须存在且 status='running'
   manifest.status = status
   manifest.completed_at = now()
   if status == 'aborted':

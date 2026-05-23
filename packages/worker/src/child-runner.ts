@@ -1,4 +1,4 @@
-import type { InstanceId } from "@co/contracts";
+import type { HookCommand, InstanceId } from "@co/contracts";
 
 export interface ChildConfig {
   worktree_path: string;
@@ -17,6 +17,13 @@ export interface ChildConfig {
    * `.git` with the project repo already provides the upstream sha).
    */
   git_remote: string | null;
+  /**
+   * Lifecycle-hook commands resolved by the Leader's 5-layer config
+   * merge and forwarded to each Worker child. Worker fires hook events
+   * (worker_message_start / worker_message_end / task_claimed /
+   * task_completed) against this list. Empty means no hooks configured.
+   */
+  hooks: readonly HookCommand[];
 }
 
 /**
