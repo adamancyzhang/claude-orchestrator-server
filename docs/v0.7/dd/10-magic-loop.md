@@ -251,12 +251,12 @@ graph TD
 | 触发 | 来源 | 行为 | 父链状态 | 子链 |
 |---|---|---|---|---|
 | Explorer 输出 `close_chain` | SelfEvaluator | runMergeValidation + closeChain('completed') | completed | 不创建 |
-| 操作员 Ctrl+C | TUI SIGINT | 立即停止；In-flight 任务 EPHEMERAL 回收 | 保持 `active`（不会被改写）；下次 Leader 启动 Recovery 处理 | 不创建 |
+| 操作员 Ctrl+C | TUI SIGINT | 立即停止；In-flight 任务 EPHEMERAL 回收 | 保持 `running`（不会被改写）；下次 Leader 启动 Recovery 处理 | 不创建 |
 | `--magic-max-chains M` 达到 | ChainRouter.handleSpawnChain | 降级为 close_chain；audit `magic_depth_exhausted` | completed | 不创建 |
 | 单链 `max_total_retries` 超 | ChainRouter.handleFeedback | closeChain('aborted', reason='retry_ceiling_exceeded') | aborted | 不创建 |
 | `merge_failed` 后 Executor retry 失败 / reject | ChainRouter merge retry 特例 | 链保持 merge_failed | merge_failed | 不创建 |
 | Explorer 输出 `reject` | SelfEvaluator | closeChain('aborted') | aborted | 不创建 |
-| Explorer 输出 `feedback` | SelfEvaluator | retry → 派回 accepter（PREV_LINKS.explore=accept） | active | — |
+| Explorer 输出 `feedback` | SelfEvaluator | retry → 派回 accepter（PREV_LINKS.explore=accept） | running | — |
 | Explorer SelfEvaluator 三连失败 | SelfEvaluator fallback | 强制 reject → closeChain('aborted') | aborted | 不创建 |
 
 > 综合：自主循环不会"永远跑下去"，至少由以下闸阀保护：
@@ -290,7 +290,7 @@ PRD §7（协议版本升级）明示：**v0.7 与 v0.6 不兼容；升级需停
 不支持 rolling upgrade。建议：
 
 ```
-1. 在 v0.6 状态下等所有 active chain 跑到 completed / aborted
+1. 在 v0.6 状态下等所有 in-flight chain 跑到 completed / aborted
 2. 关停整个集群
 3. git pull v0.7
 4. 重启 (claude-orchestrator run --worker N [--magic])

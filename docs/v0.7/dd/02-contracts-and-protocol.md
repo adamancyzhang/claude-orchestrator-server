@@ -235,7 +235,7 @@ export type LinkCommitRecord = z.infer<typeof LinkCommitRecordSchema>;
 
 ```ts
 export const ChainStatusSchema = z.enum([
-  'active',
+  'running',
   'completed',
   'aborted',
   'merge_failed',
@@ -280,7 +280,7 @@ export const ChainManifestSchema = z.object({
   // —— 需求文本指针
   requirement_path:   z.string(),  // 形如 "<cache_dir>/chains/<chain_id>/requirement.md"
 
-  // —— ��链森林 ——
+  // —— ��链森林 ——
   parent_chain_id:    ChainIdSchema.nullable(),       // 顶层链为 null
   child_chain_ids:    z.array(ChainIdSchema).default([]), // spawn_chain 派生
   chain_depth:        z.number().int().nonnegative().default(0), // 顶层=0
@@ -405,10 +405,11 @@ export type Message = z.infer<typeof MessageSchema>;
 
 // 上游 link 的 worktree SHA 映射（只携带 worktree，不携带 docs / branch — pre-task rebase 只需 sha）
 export const UpstreamCommitsSchema = z.object({
-  plan:   z.string().nullable().optional(),
-  build:  z.string().nullable().optional(),
-  verify: z.string().nullable().optional(),
-  review: z.string().nullable().optional(),
+  plan:    z.string().nullable().optional(),
+  execute: z.string().nullable().optional(),
+  verify:  z.string().nullable().optional(),
+  review:  z.string().nullable().optional(),
+  accept:  z.string().nullable().optional(),  // explore link 的 pre-task rebase 目标
 });
 export type UpstreamCommits = z.infer<typeof UpstreamCommitsSchema>;
 ```
@@ -418,7 +419,7 @@ export type UpstreamCommits = z.infer<typeof UpstreamCommitsSchema>;
 > **upstream_commits 注入与消费**：
 > - **注入**：ChainRouter 在 dispatchNextLink 前调用 `ChainAudit.collectUpstreamCommits(chain_id)`，将含 worktree SHA 的 `UpstreamCommits` 写入 `task_dispatch.upstream_commits`（详见 `09-audit-and-cache.md` §1.2 与 `06-tasks-and-workers.md` §3.7）。
 > - **消费**：Worker 在执行任务前从 `msg.upstream_commits` 取出上一个 link 的 worktree SHA，执行 `git rebase <sha>`（详见 `06-tasks-and-workers.md` §3.5 pre-task rebase）。
-> - **不含 `accept`**：accept link 是 close_chain 的合并目标，没有下游 link 需要 rebase 到它，schema 故意只列 plan/build/verify/review 四个。
+> - **包含 `accept`**：`--magic` 模式下 explore link 的 pre-task rebase 目标是 accept link 的 worktree SHA，schema 因此列出 plan/execute/verify/review/accept 五个。默认模式（无 explore）下 `accept` 字段总为空，下游 link 不会读取。
 > - 同名字段 `Task.upstream_commits` 同步存在于 `TaskSchema`（§8），由 TaskQueue.push 写入 ZK 并由 Worker 读出后转交 ClaudeRunner 模板渲染。代码归属：`packages/contracts/src/schemas/task.ts:26`。
 
 ---

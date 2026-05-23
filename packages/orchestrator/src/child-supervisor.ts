@@ -1,5 +1,5 @@
 import { fork, type ChildProcess } from "node:child_process";
-import type { ILogger } from "@co/contracts";
+import type { HookCommand, ILogger } from "@co/contracts";
 import type { WorktreeConfig } from "./worktree-initializer.js";
 
 const MAX_RESTARTS = 3;
@@ -17,6 +17,12 @@ export interface ChildSupervisorOptions {
    * an optional `git fetch` before pre-task rebase. `null` disables.
    */
   git_remote: string | null;
+  /**
+   * Lifecycle-hook commands forwarded to each Worker child so the
+   * HookEngine inside the child can fire them. Resolved by the Leader's
+   * config merge — Worker doesn't reload config independently.
+   */
+  hooks: readonly HookCommand[];
   logger: ILogger;
 }
 
@@ -68,6 +74,7 @@ export class ChildSupervisor implements IChildSupervisor {
       leader_instance_id: this.opts.leader_instance_id,
       debug: this.opts.debug,
       git_remote: this.opts.git_remote,
+      hooks: this.opts.hooks,
     };
     const child = fork(this.opts.child_module_path, [JSON.stringify(env)], {
       stdio: "inherit",

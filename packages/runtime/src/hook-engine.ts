@@ -42,7 +42,7 @@ export class HookEngine implements IHookEngine {
 
     return new Promise<void>((resolve) => {
       const child = spawn("sh", ["-c", script], {
-        env: { ...process.env, CO_HOOK_EVENT: event.type, ...envFromEvent },
+        env: { ...process.env, CO_EVENT: event.type, ...envFromEvent },
         stdio: "ignore",
         detached: true,
       });

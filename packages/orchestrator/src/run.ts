@@ -243,7 +243,6 @@ export async function runOrchestrator(
     enabled: h.enabled,
   }));
   const hookEngine = new HookEngine(hookEntries, logger.child("hooks"));
-  void hookEngine;
 
   const cachePaths = {
     projects_root: resolved.projects_root,
@@ -256,6 +255,7 @@ export async function runOrchestrator(
     template_engine: templateEngine,
     template_name: "worker-merge-decision.md",
     bus,
+    hooks: hookEngine,
     logger: logger.child("merge"),
     log_path_for: (key) => path.join(coRoot, "merges", `${key}.log`),
     merge_target_branch: resolved.git.merge_target_branch,
@@ -298,6 +298,7 @@ export async function runOrchestrator(
     bus,
     runner,
     template_engine: templateEngine,
+    hooks: hookEngine,
     logger: logger.child("chain"),
     leader_id: leaderInstance.id,
     leader_name: leaderInstance.name,
@@ -363,6 +364,7 @@ export async function runOrchestrator(
     leader_instance_id: leaderInstance.id,
     debug: input.debug ?? false,
     git_remote: resolved.git.remote,
+    hooks: resolved.hooks,
     logger: logger.child("supervisor"),
   };
   const supervisor: IChildSupervisor = deps.supervisor_factory

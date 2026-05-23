@@ -135,7 +135,8 @@ sequenceDiagram
 ```text
 preTaskRebase(upstream: UpstreamCommits | undefined):
   targetSha = pickImmediatePredecessor(upstream, currentLink)
-              // 顺序 plan → build → verify → review；取最近的非 null 那个；accept link 取 review；
+              // 顺序 plan → execute → verify → review → accept；取最近的非 null 那个；
+              // explore link（仅 --magic）一路回溯到 accept；
               // 若 currentLink == plan 或 upstream 全 null → 直接返回（无 rebase）
   if targetSha == null:
     return
@@ -166,6 +167,7 @@ preTaskRebase(upstream: UpstreamCommits | undefined):
 
 **为什么不在 plan link rebase**：plan 是链的起点，没有上游 link；plan 直接基于 `<leader_head>` 工作。
 **为什么 accept 取 review**：accept link 把所有前序代码线性化为单一分支（close_chain 合并目标）；review 的 worktree SHA 是当前最新代码状态。
+**为什么 explore 取 accept**：`--magic` 模式下 explore 在 accept 之后运行，需要 rebase 到 accept 的 worktree SHA 以观察整条链最终代码状态。
 
 ### 3.6 git 错误五分类（任务执行期）
 
@@ -192,7 +194,7 @@ ChainRouter `dispatchNextLink(chain_id, next_link)` 必须在派发前注入 ups
 ```text
 dispatchNextLink(chain_id, next_link):
   upstream = await chainAudit.collectUpstreamCommits(chain_id)
-             // 返回 { plan?, build?, verify?, review? } —— accept 不参与
+             // 返回 { plan?, execute?, verify?, review?, accept? } —— `accept` 仅在 --magic 模式下被 explore 消费
   task = newTask({chain_id, link: next_link, upstream_commits: upstream, ...})
   taskQueue.push(task)
   message = newMessage({

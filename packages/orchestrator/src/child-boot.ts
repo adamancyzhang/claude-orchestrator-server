@@ -98,13 +98,23 @@ async function boot(config: ChildConfig): Promise<void> {
   const identityTpl = templateEngine.has("worker-identity.md")
     ? templateEngine.load("worker-identity.md")
     : "You are {{name}}, a {{role}}.";
+  const personalTplName = `personal-claude-${config.role}.md`;
+  const personalTpl = templateEngine.has(personalTplName)
+    ? templateEngine.render(personalTplName, {
+        name: config.name,
+        role: config.role,
+      })
+    : "";
   const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[config.role];
   const roleTpl =
     roleTplName && templateEngine.has(roleTplName)
       ? templateEngine.load(roleTplName)
       : "";
+  const identityParts = [identityTpl, personalTpl, roleTpl].filter(
+    (s) => s.length > 0,
+  );
   const identitySystemPrompt = ClaudeRunner.buildIdentityPrompt(
-    `${identityTpl}\n\n${roleTpl}`,
+    identityParts.join("\n\n---\n\n"),
     {
       name: config.name,
       role: config.role,
@@ -152,7 +162,14 @@ async function boot(config: ChildConfig): Promise<void> {
     logger: logger.child("docs-commit"),
   });
 
-  const hooks = new HookEngine([], logger.child("hooks"));
+  const hooks = new HookEngine(
+    (config.hooks ?? []).map((h) => ({
+      event: h.event,
+      command: h.command,
+      enabled: h.enabled,
+    })),
+    logger.child("hooks"),
+  );
 
   const watcher = new WorkerWatcher({
     instance_id: instance.id,

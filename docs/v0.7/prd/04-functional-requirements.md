@@ -18,8 +18,8 @@
 | 8. 恢复 | FR-23 ~ FR-25 |
 | 9. 审计与缓存 | FR-26 ~ FR-27 |
 | 10. Workspace memory | FR-28 ~ FR-30 |
-| **11. ��自主循环调度**| **FR-31 ~ FR-35** |
-| **12. ��rc1 worktree 工作流**| **FR-36 ~ FR-37** |
+| **11. ��自主循环调度**| **FR-31 ~ FR-35** |
+| **12. ��rc1 worktree 工作流**| **FR-36 ~ FR-37** |
 
 ---
 
@@ -149,7 +149,7 @@
 
 | 字段 | 内容 |
 |------|------|
-| 一句话 | 任务开始：Worker 用 `msg.upstream_commits` 中的上游 SHA 执行 `git rebase` 到上游 link，把链内 plan ← build ← verify ← review ← accept 线性串联；任务结束：**双轨 commit** —— 轨 A `CommitChecker.maybeCommit` 提交代码到项目仓 per-Worker 分支，轨 B `DocsCommitter.commitIfChanged` 提交 `docs/<worker_name>/` 到 CO root 仓（best-effort）；commit message 由 claude 按 `worker-commit-message.md` 生成（≤72 字符），失败 fallback `chore: auto-commit from {Name}` |
+| 一句话 | 任务开始：Worker 用 `msg.upstream_commits` 中的上游 SHA 执行 `git rebase` 到上游 link，把链内 plan ← execute ← verify ← review ← accept 线性串联；任务结束：**双轨 commit** —— 轨 A `CommitChecker.maybeCommit` 提交代码到项目仓 per-Worker 分支，轨 B `DocsCommitter.commitIfChanged` 提交 `docs/<worker_name>/` 到 CO root 仓（best-effort）；commit message 由 claude 按 `worker-commit-message.md` 生成（≤72 字符），失败 fallback `chore: auto-commit from {Name}` |
 | 用户价值 | Worker 产出无需操作员手 commit；accept-link 分支聚合整条链代码 → close_chain 单次合并即可（FR-15 配套优化） |
 | 完成判定 | (a) Execute 完成后 Worker worktree `git log -1` 有新 commit；(b) commit message 首行 ≤72 字符；(c) accept-link 完成后该 worker 分支 `git log --oneline` 含整条链所有 commits 线性排列；(d) CO root 仓 `docs/<worker_name>/` 出现 `result.md`，对应 commit 存在（best-effort，失败不阻断） |
 | 追溯 | A-16 |
@@ -287,7 +287,7 @@
 | 字段 | 内容 |
 |------|------|
 | 一句话 | 每条 chain 持久化 `~/.../chains/<chain_id>/{manifest.json, audit.jsonl, requirement.md}`；manifest 含 status / link_tasks / link_workers / total_retry_count / max_total_retries / requirement_path |
-| 用户价值 | 全链审计可追溯；status 终态枚举（active / completed / aborted / merge_failed / failed） |
+| 用户价值 | 全链审计可追溯；status 终态枚举（running / completed / aborted / merge_failed / failed） |
 | 完成判定 | (a) 跑完一链后 manifest.json 字段齐全；(b) audit.jsonl 至少含 `chain_opened` / `requirement_received` / `task_dispatch ×5` / `completion_report ×5` / `chain_closed`；(c) requirement.md 内容与用户原始输入一致 |
 | 追溯 | A-22 |
 
@@ -333,7 +333,7 @@
 
 ---
 
-## 11. ��自主循环调度
+## 11. ��自主循环调度
 
 本节是 v0.7 相对 v0.6 RC0 的增量需求。三条 FR 互相耦合：FR-31（Explorer 角色）+ FR-32（`--magic` 启动开关）+ FR-33（`spawn_chain` 决策）共同构成"链 → 链"循环。
 
@@ -419,8 +419,8 @@
 | FR-07 | A-07 | FR-22 | R-03 |
 | FR-08 | A-08 | FR-23 | A-19 |
 | FR-09 | A-02 | FR-24 | A-20 |
-| FR-10 | A-03 + ��spawn_chain） | FR-25 | A-21 |
-| FR-11 | A-04 + ��explore optional） | FR-26 | A-22 |
+| FR-10 | A-03 + ��spawn_chain） | FR-25 | A-21 |
+| FR-11 | A-04 + ��explore optional） | FR-26 | A-22 |
 | FR-12 | A-15 | FR-27 | A-23 |
 | FR-13 | A-16 | FR-28 | A-12 |
 | FR-14 | A-24 | FR-29 | A-13 |
@@ -430,4 +430,4 @@
 | **FR-33**| spawn_chain| **FR-36** | git 错误五分类 |
 |  |  | **FR-37** | LinkCommitRecord 双写 |
 
-合计：37 条 FR = 24 项 A 功能继承（含 FR-10/FR-11/FR-13/FR-15/FR-16/FR-17 在 v0.7 内修订）+ 6 项 R 修复（R-07 并入 FR-17 ChainStatus 表述）+ 7 项 ��FR-31 ~ FR-37）。
+合计：37 条 FR = 24 项 A 功能继承（含 FR-10/FR-11/FR-13/FR-15/FR-16/FR-17 在 v0.7 内修订）+ 6 项 R 修复（R-07 并入 FR-17 ChainStatus 表述）+ 7 项 ��FR-31 ~ FR-37）。

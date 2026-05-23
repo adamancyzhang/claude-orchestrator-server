@@ -24,10 +24,10 @@ export interface WorktreeConfig {
 }
 
 export const BUILTIN_NAMES = [
-  "Tom", "Jerry", "Lucy", "Thomas", "Jack", "Lisa",
-  "Alice", "Bob", "Charlie", "Diana", "Edward", "Fiona",
-  "George", "Helen", "Ivan", "Julia", "Kevin", "Linda",
-  "Mike", "Nancy",
+  "Tom", "Jerry", "Lucy", "Thomas", "Jack",
+  "Lisa", "Mike", "Anna", "Bob", "Mia",
+  "Leo", "Emma", "Sam", "Olivia", "Noah",
+  "Ava", "Lucas", "Sophia", "Ethan", "Isla",
 ];
 
 export const ROLE_PRIORITY: InstanceRole[] = [
@@ -109,13 +109,14 @@ export function generateFallbackNames(
   count: number,
   used: string[],
 ): string[] {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  // Per DD 03 §1: when the 20-name pool is exhausted, reuse the pool
+  // with a numeric suffix (`Tom2`, `Tom3`, …). The 21st worker becomes
+  // `Tom2`, the 41st `Tom3`, and so on.
   const result: string[] = [];
-  for (const letter of alphabet) {
-    if (result.length >= count) break;
-    for (const suffix of ["", "ay", "ee", "ie"]) {
+  for (let suffix = 2; result.length < count; suffix++) {
+    for (const base of BUILTIN_NAMES) {
       if (result.length >= count) break;
-      const candidate = `${letter}${suffix}`;
+      const candidate = `${base}${suffix}`;
       if (!used.includes(candidate)) {
         result.push(candidate);
         used.push(candidate);
@@ -301,6 +302,21 @@ function seedWorktreeAssets(
       const dst = path.join(agentsDst, file);
       if (!fs.existsSync(dst)) fs.copyFileSync(src, dst);
     }
+  }
+
+  // Seed the second-segment identity-card template into the same dir so
+  // TemplateEngine.primary_dir can locate `personal-claude-<role>.md`
+  // alongside the worker-* templates. Only the current Worker's role is
+  // seeded — other roles' personal memories are irrelevant here.
+  const personalSrc = path.join(
+    templateDir,
+    "claude-memory",
+    `personal-claude-${role}.md`,
+  );
+  if (fs.existsSync(personalSrc)) {
+    fs.mkdirSync(agentsDst, { recursive: true });
+    const personalDst = path.join(agentsDst, `personal-claude-${role}.md`);
+    if (!fs.existsSync(personalDst)) fs.copyFileSync(personalSrc, personalDst);
   }
 
   if (fs.existsSync(skillsDir)) {
