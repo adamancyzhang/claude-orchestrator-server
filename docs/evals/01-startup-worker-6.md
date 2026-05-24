@@ -324,13 +324,18 @@ state.events.slice(1).every(e => e.type === "worker_joined")
 
 ### 7.2 为了让测试可注入而做的最小重构
 
-`packages/orchestrator/src/run.ts` 接受了第 3 个可选参数 `OrchestratorDeps`：
+`packages/orchestrator/src/run.ts` 接受了第 3 个可选参数 `OrchestratorDeps`；`packages/worker/src/docs-committer.ts` 在 eval 02 e2e 中加了一项跨 Worker 互斥旋钮。生产路径调用方均不传 → 行为不变。
 
-| 字段 | 作用 |
-|------|------|
-| `zk_factory?` | 替换 `new ZkClient(opts)`；测试用 `InMemoryZkClient`。默认行为不变 |
-| `supervisor_factory?` | 替换 `new ChildSupervisor(opts)`；测试用 `FakeChildSupervisor`。默认行为不变 |
-| `headless?` | 跳过 `captureConsoleToFile` + `tui.start()`，避免 hijack stdout / stdin |
-| `shutdown_signal?` | 与 SIGINT 同等的可触发关闭信号，让测试能让 `runOrchestrator` 干净返回 |
+| 字段 | 入口 | 作用 |
+|------|------|------|
+| R1 `zk_factory?` | `OrchestratorDeps.zk_factory` | 替换 `new ZkClient(opts)`；测试用 `InMemoryZkClient` |
+| R2 `supervisor_factory?` | `OrchestratorDeps.supervisor_factory` | 替换 `new ChildSupervisor(opts)`；测试用 `FakeChildSupervisor` / `InProcessWorkerSupervisor` |
+| R3 `headless?` | `OrchestratorDeps.headless` | 跳过 `captureConsoleToFile` + `tui.start()`，避免 hijack stdout / stdin |
+| R4 `shutdown_signal?` | `OrchestratorDeps.shutdown_signal` | 与 SIGINT 同等的可触发关闭信号，让测试能让 `runOrchestrator` 干净返回 |
+| R5 `IChildSupervisor` 接口 | `packages/orchestrator/src/child-supervisor.ts` | 暴露 `start` + `shutdown` 接口供测试替换；生产 `ChildSupervisor` 实现照旧 |
+| R6 `claude_runner_factory?` | `OrchestratorDeps.claude_runner_factory` | 替换 `new ClaudeRunner(cli_command, logger)`；测试用 `FakeClaudeRunner` 按模板 marker stub 所有 `claude -p` 调用（Leader decompose + 每个 Worker） |
+| R7 `on_leader_bus?` | `OrchestratorDeps.on_leader_bus` | LeaderEventBus 构造完后立即触发的钩子，测试可挂 recorder / tap 在所有子系统启动前 |
+| R8 `recovery_enabled?` | `OrchestratorDeps.recovery_enabled` | 默认 true；测试可 false 阻止 `TaskRecovery.start()`，避免其轮询把测试中故意悬挂的 claimed task 重派 |
+| R9 `docs_commit_mutex?` | `WorkerDocsCommitter` 构造选项 | 跨 Worker 串行化 `git add → commit → rev-parse` 临界区；生产传 undefined（fork 间靠 `.git/index.lock`），in-process e2e 传 async mutex 避免共享 Node 事件循环时的 `index.lock` 撞车 |
 
-同时 `packages/orchestrator/src/child-supervisor.ts` 暴露了 `IChildSupervisor` 接口（`start` + `shutdown`），生产实现照旧。
+R6-R9 由 PR #34（`docs/evals/02-leader-worker-communication.md`）的 e2e 套件引入，复用 eval 01 §3 / §4 的同款验证基线。

@@ -115,7 +115,7 @@ Standalone execution primitives reused by Leader and Worker:
 |------|------|
 | `template.ts` | `TemplateEngine` — loads templates from `primary_dir` first (a Worker's `<worktree>/.claude-orchestrator/agents/`), falls back to `fallback_dir` (project root `templates/agents/`); renders with identity card + variable substitution |
 | `runner.ts` | `ClaudeRunner` — `claude -p` execution wrapper; manages log/output/result paths via `cachePaths` |
-| `hook-engine.ts` | Fires shell scripts for lifecycle events (`worker_message_start`, `worker_message_end`, etc.). Environment variables (`CO_EVENT`, `CO_WORKER_NAME`, `CO_TASK_ID`, …) are set on the spawned process. |
+| `hook-engine.ts` | Fires shell scripts for 8 lifecycle events: `leader_message_{start,end}` / `worker_message_{start,end}` / `task_{claimed,completed}` / `chain_activated` / `merge_decision_made` (see `docs/v0.7/dd/09-audit-and-cache.md` §6). Environment variables (`CO_EVENT`, `CO_WORKER_NAME`, `CO_WORKER_ROLE`, `CO_TASK_ID`, …) are set on the spawned process. |
 
 ### Orchestrator (`packages/orchestrator/src/`)
 
@@ -303,7 +303,7 @@ See [`docs/v0.7/dd/10-magic-loop.md`](docs/v0.7/dd/10-magic-loop.md) for end-to-
 | `packages/worker/src/docs-committer.ts` | Commits `<co_root>/docs/{worker_name}/` writes after each task |
 | `packages/runtime/src/template.ts` | `TemplateEngine` — primary_dir + fallback_dir loading, identity card, variable rendering |
 | `packages/runtime/src/runner.ts` | `ClaudeRunner` — CLI execution wrapper |
-| `packages/runtime/src/hook-engine.ts` | Pre/post lifecycle hooks with `CO_*` env vars |
+| `packages/runtime/src/hook-engine.ts` | 8 lifecycle hook events with `CO_*` env vars (see DD 09 §6) |
 | `packages/infra/src/zk/client.ts` | ZooKeeper client — all ZK operations + watch methods |
 | `packages/contracts/src/paths/zkPaths.ts` | ZK path constants and `allEnsurePaths()` |
 | `packages/contracts/src/paths/cachePaths.ts` | Cache path helpers under CO root (`taskDir`, `merges`, …) |
