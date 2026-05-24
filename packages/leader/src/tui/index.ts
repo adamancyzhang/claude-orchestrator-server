@@ -1,7 +1,9 @@
 export {
   TuiController,
+  type TuiControllerOptions,
+} from "./controller.js";
+export {
   StdoutSink,
   StdinKeyboardSource,
   type TuiSink,
-  type TuiControllerOptions,
-} from "./controller.js";
+} from "./stubs.js";

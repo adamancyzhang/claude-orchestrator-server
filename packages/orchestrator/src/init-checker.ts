@@ -136,9 +136,23 @@ export function createGlobalConfigStep(logger: ILogger): InitStep {
     level: "Caution",
     scope: "global",
     async check() {
-      return fs.existsSync(file)
-        ? { needs_confirm: true, message: "Merging missing fields" }
-        : { needs_confirm: true, message: "Create new global config" };
+      const defaults = {
+        projects_root: "~/.claude-orchestrator/projects",
+        commands: {
+          claude_cli: "claude --dangerously-skip-permissions --permission-mode dontAsk",
+          git: "git",
+        },
+        zookeeper: { hosts: "127.0.0.1:2181", session_timeout_ms: 30000 },
+      };
+      if (!fs.existsSync(file)) {
+        return { needs_confirm: true, message: "Create new global config" };
+      }
+      const existing = JSON.parse(fs.readFileSync(file, "utf-8"));
+      const merged = { ...defaults, ...existing };
+      if (JSON.stringify(merged) === JSON.stringify(existing)) {
+        return { needs_confirm: false, message: "Already up to date" };
+      }
+      return { needs_confirm: true, message: "Merging missing fields" };
     },
     async execute() {
       fs.mkdirSync(dir, { recursive: true });
@@ -257,6 +271,19 @@ export function createSkillsStep(
       const available = CHAIN_SKILLS.filter(
         (s) => fs.existsSync(path.join(skillsDir, s, "SKILL.md")),
       );
+      if (available.length === 0) {
+        return { needs_confirm: false, message: "No chain skills available" };
+      }
+      let allMatch = true;
+      for (const skill of available) {
+        const src = path.join(skillsDir, skill, "SKILL.md");
+        const dst = path.join(destBase, skill, "SKILL.md");
+        if (!fs.existsSync(dst)) { allMatch = false; break; }
+        if (fs.readFileSync(src, "utf-8") !== fs.readFileSync(dst, "utf-8")) { allMatch = false; break; }
+      }
+      if (allMatch) {
+        return { needs_confirm: false, message: "All skills already up to date" };
+      }
       return {
         needs_confirm: true,
         message: `${available.length} chain skills available; overwrite existing?`,

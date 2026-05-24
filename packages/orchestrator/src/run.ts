@@ -45,7 +45,6 @@ import {
   StdoutSink,
   TaskOrchestrator,
   TaskRecovery,
-  TuiController,
   WorkerMonitor,
 } from "@co/leader";
 import {
@@ -207,7 +206,7 @@ export async function runOrchestrator(
       ? envMaxChains
       : input.magic_max_chains ?? null;
 
-  const leaderId = asInstanceId(randomUUID().replace(/-/g, ""));
+  const leaderId = resolved.instance_id ?? asInstanceId(randomUUID().replace(/-/g, ""));
   const coRoot = path.join(resolved.projects_root, leaderId);
 
   const worktreeConfigs = await initializeWorktrees({
@@ -405,17 +404,22 @@ export async function runOrchestrator(
     await recovery.scanOrphans();
   }
 
-  const tui = new TuiController({
-    state,
-    bus,
-    message_router: messageRouter,
-    keyboard: new StdinKeyboardSource(),
-    sink: new StdoutSink(),
-    logger: logger.child("tui"),
-    leader_id: leaderInstance.id,
-    leader_name: leaderInstance.name,
-  });
-  if (!deps.headless) tui.start();
+  let tui: null | { stop: () => Promise<void> } = null;
+  if (!deps.headless) {
+    const { TuiController } = await import("@co/leader/tui");
+    const instance = new TuiController({
+      state,
+      bus,
+      message_router: messageRouter,
+      keyboard: new StdinKeyboardSource(),
+      sink: new StdoutSink(),
+      logger: logger.child("tui"),
+      leader_id: leaderInstance.id,
+      leader_name: leaderInstance.name,
+    });
+    await instance.start();
+    tui = instance;
+  }
 
   // Phase 4: start workers
   const cachePathOpts = {
@@ -464,7 +468,7 @@ export async function runOrchestrator(
       leaderWatcher.stop();
       monitor.stop();
       taskOrch.stop();
-      if (!deps.headless) tui.stop();
+      if (tui) await tui.stop();
       restoreConsole();
       await registry.unregister(leaderInstance.id).catch(() => undefined);
       await zk.close();

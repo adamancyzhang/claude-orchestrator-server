@@ -32,4 +32,4 @@ export {
   type MemoryBootstrapOptions,
   type StaleEntry,
 } from "./memory-bootstrap.js";
-export * from "./tui/index.js";
+export { StdoutSink, StdinKeyboardSource, type TuiSink } from "./tui/stubs.js";

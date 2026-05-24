@@ -7,7 +7,7 @@ const WHITELIST = {
   "@co/infra": { deps: ["node-zookeeper-client", "zod"], peerDeps: ["@co/contracts"] },
   "@co/runtime": { deps: ["zod"], peerDeps: ["@co/contracts", "@co/infra"] },
   "@co/coordination": { deps: ["zod"], peerDeps: ["@co/contracts", "@co/infra"] },
-  "@co/leader": { deps: ["zod"], peerDeps: ["@co/contracts", "@co/runtime", "@co/coordination"] },
+  "@co/leader": { deps: ["ink", "react", "zod"], peerDeps: ["@co/contracts", "@co/runtime", "@co/coordination"] },
   "@co/worker": { deps: ["zod"], peerDeps: ["@co/contracts", "@co/runtime", "@co/coordination"] },
   "@co/orchestrator": {
     deps: ["zod"],
