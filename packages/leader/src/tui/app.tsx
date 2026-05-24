@@ -13,7 +13,7 @@ import InputLine from "./panels/input-line.js";
 import Footer from "./panels/footer.js";
 
 const MIN_COLS = 80;
-const MIN_ROWS = 45;
+const MIN_ROWS = 35;
 const SENT_INDICATOR_MS = 2000;
 
 // Proportions of content area allocated to each panel
@@ -77,7 +77,7 @@ export default function App({
 
   // Auto-scroll team panel to keep selected worker visible
   useEffect(() => {
-    const contentRows = Math.max(4, rows - 16);
+    const contentRows = Math.max(4, rows - 6);
     const minTotal = 11 + 5 + 6 + 7;
     const extra = Math.max(0, contentRows - minTotal);
     const teamH = 11 + Math.round(extra * PROPS.team);
@@ -173,7 +173,7 @@ export default function App({
     // [ / ] : team panel page navigation
     if (input === "[" || input === "]") {
       if (snapshot.workers.length > 0) {
-        const contentRows = Math.max(4, rows - 16);
+        const contentRows = Math.max(4, rows - 6);
         const minTotal = 11 + 5 + 6 + 7;
         const extra = Math.max(0, contentRows - minTotal);
         const teamH = 11 + Math.round(extra * PROPS.team);
@@ -212,13 +212,9 @@ export default function App({
     );
   }
 
-  // Fixed overhead:
-  //   outer padding: 2
-  //   5 borders (top+bottom each): 10
-  //   input: 3
-  //   footer: 1
-  //   Total fixed: 16
-  const FIXED_OVERHEAD = 16;
+  // Fixed overhead: rows consumed by chrome (not the 4 proportional panels).
+  // Border rows are inside panel heights (teamH/tasksH/msgsH/logH), not here.
+  const FIXED_OVERHEAD = 6; // outer padding(2) + input(3) + footer(1)
   const contentRows = Math.max(4, rows - FIXED_OVERHEAD);
 
   // Minimum heights per panel. borderStyle="round" eats 2 rows (top + bottom).
