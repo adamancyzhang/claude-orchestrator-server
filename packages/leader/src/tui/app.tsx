@@ -13,7 +13,7 @@ import InputLine from "./panels/input-line.js";
 import Footer from "./panels/footer.js";
 
 const MIN_COLS = 80;
-const MIN_ROWS = 36;
+const MIN_ROWS = 45;
 const SENT_INDICATOR_MS = 2000;
 
 // Proportions of content area allocated to each panel
@@ -78,7 +78,7 @@ export default function App({
   // Auto-scroll team panel to keep selected worker visible
   useEffect(() => {
     const contentRows = Math.max(4, rows - 16);
-    const minTotal = 11 + 3 + 3 + 3;
+    const minTotal = 11 + 5 + 6 + 7;
     const extra = Math.max(0, contentRows - minTotal);
     const teamH = 11 + Math.round(extra * PROPS.team);
     const pageSize = Math.max(6, teamH - 5);
@@ -174,7 +174,7 @@ export default function App({
     if (input === "[" || input === "]") {
       if (snapshot.workers.length > 0) {
         const contentRows = Math.max(4, rows - 16);
-        const minTotal = 11 + 3 + 3 + 3;
+        const minTotal = 11 + 5 + 6 + 7;
         const extra = Math.max(0, contentRows - minTotal);
         const teamH = 11 + Math.round(extra * PROPS.team);
         const ps = Math.max(6, teamH - 5);
@@ -224,9 +224,9 @@ export default function App({
   // Minimum heights per panel. borderStyle="round" eats 2 rows (top + bottom).
   // MIN_TEAM=11 gives 9 content rows: title + separator + header + 6 workers.
   const MIN_TEAM = 11;
-  const MIN_TASKS = 3;
-  const MIN_MSGS = 3;
-  const MIN_LOG = 3;
+  const MIN_TASKS = 5;
+  const MIN_MSGS = 6;
+  const MIN_LOG = 7;
 
   // Allocate minimums first, then distribute the remainder proportionally.
   const minTotal = MIN_TEAM + MIN_TASKS + MIN_MSGS + MIN_LOG;
@@ -238,9 +238,9 @@ export default function App({
   // Log gets whatever is left so the total always equals contentRows
   const logH = Math.max(MIN_LOG, contentRows - teamH - tasksH - msgsH);
 
-  // Items that fit in each panel (subtract header + separator rows)
-  const pendingMax = Math.max(1, tasksH - 3);
-  const inProgressMax = Math.max(1, tasksH - 3);
+  // Items that fit in each panel (height - 2 border - 2 header rows)
+  const pendingMax = Math.max(1, tasksH - 4);
+  const inProgressMax = Math.max(1, tasksH - 4);
 
   return (
     <Box flexDirection="column" padding={1} height={rows} overflow="hidden">
@@ -289,7 +289,7 @@ export default function App({
         <EventLog
           events={snapshot.events}
           scrollOffset={logOffset}
-          maxVisible={Math.max(1, logH - 3)}
+          maxVisible={Math.max(1, logH - 4)}
         />
       </Box>
 
