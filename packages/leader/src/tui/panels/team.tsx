@@ -5,6 +5,7 @@ interface Props {
   workers: ILeaderStateView["workers"];
   selectedIndex: number;
   maxWorkers: number;
+  scrollOffset: number;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -12,7 +13,12 @@ const STATUS_COLOR: Record<string, string> = {
   busy: "yellow",
 };
 
-export default function TeamPanel({ workers, selectedIndex, maxWorkers }: Props) {
+export default function TeamPanel({ workers, selectedIndex, maxWorkers, scrollOffset }: Props) {
+  const pageSize = Math.max(1, maxWorkers);
+  const totalPages = Math.max(1, Math.ceil(workers.length / pageSize));
+  const start = scrollOffset * pageSize;
+  const pageWorkers = workers.slice(start, start + pageSize);
+
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <InkText bold>TEAM</InkText>
@@ -29,10 +35,11 @@ export default function TeamPanel({ workers, selectedIndex, maxWorkers }: Props)
             {"PID".padEnd(7)}
             {"Status".padEnd(8)}
           </InkText>
-          {workers.slice(0, maxWorkers).map((w, i) => {
-            const sel = i === selectedIndex;
+          {pageWorkers.map((w, i) => {
+            const globalIdx = start + i;
+            const sel = globalIdx === selectedIndex;
             const marker = sel ? ">" : " ";
-            const name = (sel ? ` ${w.name}` : ` ${w.name}`).padEnd(8);
+            const name = ` ${w.name}`.padEnd(8);
             const role = w.current_role
               ? `${w.current_role}◀`.padEnd(8)
               : w.preset_role.padEnd(8);
@@ -60,6 +67,11 @@ export default function TeamPanel({ workers, selectedIndex, maxWorkers }: Props)
               </Box>
             );
           })}
+          {totalPages > 1 && (
+            <InkText dimColor>
+              Page {scrollOffset + 1}/{totalPages} ({workers.length} workers)
+            </InkText>
+          )}
         </>
       )}
     </Box>

@@ -13,7 +13,7 @@ import InputLine from "./panels/input-line.js";
 import Footer from "./panels/footer.js";
 
 const MIN_COLS = 80;
-const MIN_ROWS = 20;
+const MIN_ROWS = 36;
 const SENT_INDICATOR_MS = 2000;
 
 // Proportions of content area allocated to each panel
@@ -48,6 +48,7 @@ export default function App({
   const [sentAt, setSentAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
   const [logOffset, setLogOffset] = useState(0);
+  const [teamScrollOffset, setTeamScrollOffset] = useState(0);
 
   // 1-second tick for clearing sent indicator and timestamp refresh
   useEffect(() => {
@@ -73,6 +74,17 @@ export default function App({
     }
     prevEventCount.current = snapshot.events.length;
   }, [snapshot.events.length]);
+
+  // Auto-scroll team panel to keep selected worker visible
+  useEffect(() => {
+    const contentRows = Math.max(4, rows - 16);
+    const minTotal = 11 + 3 + 3 + 3;
+    const extra = Math.max(0, contentRows - minTotal);
+    const teamH = 11 + Math.round(extra * PROPS.team);
+    const pageSize = Math.max(6, teamH - 5);
+    const currentPage = Math.floor(snapshot.selected_worker_index / pageSize);
+    setTeamScrollOffset(currentPage);
+  }, [snapshot.selected_worker_index, rows]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -158,6 +170,25 @@ export default function App({
       return;
     }
 
+    // [ / ] : team panel page navigation
+    if (input === "[" || input === "]") {
+      if (snapshot.workers.length > 0) {
+        const contentRows = Math.max(4, rows - 16);
+        const minTotal = 11 + 3 + 3 + 3;
+        const extra = Math.max(0, contentRows - minTotal);
+        const teamH = 11 + Math.round(extra * PROPS.team);
+        const ps = Math.max(6, teamH - 5);
+        const totalPages = Math.max(1, Math.ceil(snapshot.workers.length / ps));
+        const delta = input === "[" ? -1 : 1;
+        const newOffset = Math.max(0, Math.min(totalPages - 1, teamScrollOffset + delta));
+        if (newOffset !== teamScrollOffset) {
+          setTeamScrollOffset(newOffset);
+          leaderState.setSelectedWorkerIndex(newOffset * ps);
+        }
+      }
+      return;
+    }
+
     // Regular character input
     if (input.length === 1 && !key.ctrl && !key.meta) {
       setInputBuffer((b) => b + input);
@@ -190,9 +221,9 @@ export default function App({
   const FIXED_OVERHEAD = 16;
   const contentRows = Math.max(4, rows - FIXED_OVERHEAD);
 
-  // Minimum heights that keep at least the title visible in each panel.
-  // borderStyle="round" eats 2 rows (top + bottom), so height=3 → 1 content row.
-  const MIN_TEAM = 3;
+  // Minimum heights per panel. borderStyle="round" eats 2 rows (top + bottom).
+  // MIN_TEAM=11 gives 9 content rows: title + separator + header + 6 workers.
+  const MIN_TEAM = 11;
   const MIN_TASKS = 3;
   const MIN_MSGS = 3;
   const MIN_LOG = 3;
@@ -218,7 +249,8 @@ export default function App({
         <TeamPanel
           workers={snapshot.workers}
           selectedIndex={snapshot.selected_worker_index}
-          maxWorkers={Math.max(1, teamH - 3)}
+          maxWorkers={Math.max(6, teamH - 5)}
+          scrollOffset={teamScrollOffset}
         />
       </Box>
 

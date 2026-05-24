@@ -23,7 +23,7 @@ export default function Footer({
           </InkText>
         </InkText>
       ) : null}
-      <InkText dimColor> | Tab=next worker | 1-9 jump | Ctrl+C quit</InkText>
+      <InkText dimColor> | Tab=next worker | [/]=page | 1-9 jump | Ctrl+C quit</InkText>
     </Box>
   );
 }
