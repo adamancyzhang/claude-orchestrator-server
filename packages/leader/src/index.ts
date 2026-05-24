@@ -8,6 +8,8 @@ export {
 export { TaskRecovery } from "./recovery.js";
 export {
   MergeValidator,
+  classifyGitError,
+  extractStderr,
   type CommitInfo,
   type MergeValidatorOptions,
 } from "./merge-validator.js";

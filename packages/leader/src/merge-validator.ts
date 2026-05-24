@@ -145,16 +145,17 @@ export class MergeValidator {
           message: `merged: ${commit.branch} -> ${mainBranch} (mode=${mode})`,
         });
       } catch (err) {
-        // Abort and classify. Conflict path produces MergeConflictError
-        // which chain-router routes to pushMergeConflictRetries. Other
-        // classes (lock / permission / network) skip retry and go to
-        // chain-audit's merge_failed_other path.
+        // Capture conflicts BEFORE `merge --abort` runs — abort clears the
+        // index, so detecting unmerged paths after abort always yields an
+        // empty list and any real conflict is silently misclassified as a
+        // generic merge failure (which chain-router routes to operator
+        // alert instead of retry).
+        const conflicts = this.detectConflicts();
         try {
           this.execGit(["merge", "--abort"]);
         } catch {
           // ignore abort failure — the merge state may already be clean
         }
-        const conflicts = this.detectConflicts();
         try {
           this.execGit(["checkout", currentBranch]);
         } catch {
@@ -252,12 +253,20 @@ export class MergeValidator {
     }
   }
 
+  /**
+   * Lists unmerged files. `git diff --diff-filter=U` always returns exit 0
+   * regardless of whether unmerged paths exist (empty output is the
+   * "no conflicts" signal). Any non-zero exit is a real failure — repo
+   * broken, permission denied, missing index — and must surface; treating
+   * it as "no conflicts" would let a broken validate() call masquerade as
+   * a clean merge.
+   */
   private detectConflicts(): string[] {
     try {
       const out = this.execGit(["diff", "--name-only", "--diff-filter=U"]);
       return out.split("\n").filter(Boolean);
-    } catch {
-      return [];
+    } catch (err) {
+      throw classifyGitError(err, "git diff --diff-filter=U failed");
     }
   }
 
@@ -275,7 +284,7 @@ export class MergeValidator {
  * chain-router can branch on type (conflict → retry, lock → wait,
  * permission/network → halt with operator alert).
  */
-function classifyGitError(err: unknown, fallback: string): Error {
+export function classifyGitError(err: unknown, fallback: string): Error {
   const stderr = extractStderr(err);
   const lower = stderr.toLowerCase();
   if (/cannot lock ref|index\.lock|unable to create.*\.lock/.test(lower)) {
@@ -298,7 +307,7 @@ function classifyGitError(err: unknown, fallback: string): Error {
   return wrapped;
 }
 
-function extractStderr(err: unknown): string {
+export function extractStderr(err: unknown): string {
   if (err && typeof err === "object" && "stderr" in err) {
     const e = err as { stderr?: Buffer | string };
     if (Buffer.isBuffer(e.stderr)) return e.stderr.toString("utf-8");
