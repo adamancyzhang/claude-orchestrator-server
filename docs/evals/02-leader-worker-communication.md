@@ -185,7 +185,7 @@ sequenceDiagram
 | 5 | `task_claimed` | `watcher.ts:239-248` | Worker（`task_queue.claimById` 成功后） | 否 |
 | 6 | `task_completed` | `watcher.ts:590-600` | Worker（`task_queue.complete` 之后） | 否 |
 | 7 | `chain_activated` | `chain-router.ts:702-707` | Leader（openChain + push tasks 之后） | 否 |
-| 8 | `merge_decision_made` | （声明但未触发） | — | — |
+| 8 | `merge_decision_made` | `packages/leader/src/merge-validator.ts:122-130` | MergeValidator（决策落定后，merge 执行前） | 否 |
 
 **HookEngine 执行机制**（`packages/runtime/src/hook-engine.ts:38-75`）：
 
@@ -203,12 +203,12 @@ sequenceDiagram
 |------|---------|
 | `leader_message_start` | `CO_LEADER_ID, CO_MESSAGE_ID, CO_LINK, CO_LOG_PATH` |
 | `leader_message_end` | 上 + `exit_code: number` |
-| `worker_message_start` | `CO_WORKER_NAME, CO_WORKER_ID, CO_TASK_ID, CO_LINK, CO_CHAIN_ID, CO_LOG_PATH, CO_RESULT_PATH` |
+| `worker_message_start` | `CO_WORKER_NAME, CO_WORKER_ID, CO_WORKER_ROLE, CO_LEADER_ID, CO_MESSAGE_ID, CO_TASK_ID, CO_LINK, CO_CHAIN_ID, CO_LOG_PATH, CO_RESULT_PATH` |
 | `worker_message_end` | 上 + `exit_code: number` |
-| `task_claimed` | `CO_WORKER_NAME, CO_WORKER_ID, CO_TASK_ID, CO_LINK, CO_CHAIN_ID` |
+| `task_claimed` | `CO_WORKER_NAME, CO_WORKER_ID, CO_WORKER_ROLE, CO_LEADER_ID, CO_MESSAGE_ID, CO_TASK_ID, CO_LINK, CO_CHAIN_ID` |
 | `task_completed` | 上 + `duration_seconds: number \| null` |
 | `chain_activated` | `CO_CHAIN_ID`（仅一个） |
-| `merge_decision_made` | `CO_DECISION, CO_BRANCH, CO_REASON`（声明，未触发） |
+| `merge_decision_made` | `CO_DECISION, CO_BRANCH, CO_REASON` |
 
 > `flattenEnv`（`hook-engine.ts:78-85`）把 env 字典里的 null/undefined 转换为空字符串后再合并到 `process.env`，所以 shell 脚本里读到的总是 string。
 
@@ -371,12 +371,15 @@ sequenceDiagram
 
 ### 7.2 audit.jsonl 实际事件类型
 
-**实际**（`chain-audit.ts:75-91`）— 共 **14** 个 + record 落盘格式（`:356-377`）：
+**实际**（`chain-audit.ts:75-97`）— 共 **22** 个 + record 落盘格式（`:356-377`）：
 
 ```
-requirement_received, chain_opened, task_dispatch, completion_report,
-feedback_sent, feedback_unresolved, chain_id_conflict, merge_failure,
-retry_ceiling_exceeded, chain_closed, validation_failure, invalid_decision,
+requirement_received, chain_opened,
+task_dispatch, task_claimed, task_completed, task_recovered, task_failed, worker_left,
+completion_report,
+feedback_sent, feedback_unresolved, chain_id_conflict, retry_ceiling_exceeded,
+merge_validation_started, merge_validation_completed, merge_failure,
+chain_closed, validation_failure, invalid_decision,
 chain_spawned, chain_spawned_from, magic_depth_exhausted
 ```
 
@@ -386,11 +389,11 @@ chain_spawned, chain_spawned_from, magic_depth_exhausted
 
 | 文件 | 写入者 | 操作 | 容错 |
 |------|--------|------|------|
-| `<co_root>/chains/{chain_id}/manifest.json` | ChainAudit | **整文件覆写**（`writeFile`，非原子 rename） | 并发写来自单 Leader 进程，串行执行 |
+| `<co_root>/chains/{chain_id}/manifest.json` | ChainAudit | **原子写**：`writeManifestAtomic` = `writeFile(<path>.tmp); rename(<path>.tmp, <path>)`（`chain-audit.ts:133-151`） | 跨进程互斥来自单 Leader 进程串行 + POSIX 原子 rename |
 | `<co_root>/chains/{chain_id}/audit.jsonl` | ChainAudit.record | **append** | 失败仅 log warn |
 | `<co_root>/chains/{chain_id}/requirement.md` | ChainAudit.openChain | 一次性写入 | — |
 
-> **manifest 写入不是原子 rename**（仅 `fs.writeFile`，见 `chain-audit.ts:168-172, :263-267, :315-319, :349-353`）。DD §1.4 提到 `writeManifestAtomic = writeFile(*.tmp) + rename(*.tmp, *)`，但代码没有 .tmp + rename。详见 §8.6。
+> manifest 写入走 `writeManifestAtomic`（D6 已修复），崩在 `.tmp` 写入即抛错且原 manifest.json 保留。验证测试：`packages/orchestrator/tests/core/e2e/leader-worker-communication.slow.test.ts > "partial writeFile leaves prior manifest valid"`。
 
 ---
 
@@ -403,46 +406,43 @@ chain_spawned, chain_spawned_from, magic_depth_exhausted
 | 项 | 预期（DD `09-audit-and-cache.md` §6.1） | 实际（`packages/contracts/src/hooks.ts:62-71`） |
 |----|--------------------------------------|------|
 | 事件总数 | 6（worker_message_start/end、task_claimed、task_completed、内置 `task_recovered`、`task_failed`） | **8**（leader_message_start/end、worker_message_start/end、task_claimed、task_completed、chain_activated、merge_decision_made） |
-| 多出来的 | — | `leader_message_start/end`、`chain_activated`、`merge_decision_made` |
-| 少掉的 | — | `task_recovered`、`task_failed`（被改为 LeaderEventBus 内存事件，不进 hook） |
-| 实际未触发的 | — | `merge_decision_made`（声明在 HookEventType 但 `grep -n "merge_decision_made" packages/leader/src/` 无 hits） |
+| 多出来的 | — | `leader_message_start/end`、`chain_activated`、`merge_decision_made`（R2 已接通 ChainRouter + MergeValidator 的 hook fire 站点） |
+| 少掉的 | — | `task_recovered`、`task_failed`（被改为 LeaderEventBus 内存事件 + ChainAudit 事件，不进 hook） |
 
-**判定**：以**代码为准**。v0.7 把 task/worker 生命周期事件从 hook 拆分到了 LeaderEventBus（供 TUI 渲染），并新增了 leader 侧 hook 与 chain 维度 hook。
+**判定**：以**代码为准**。v0.7 把 task/worker 生命周期事件从 hook 拆分到了 LeaderEventBus（供 TUI 渲染）+ ChainAudit（供持久化审计），并新增了 leader 侧 hook 与 chain 维度 hook。
 
-**修复方案**：
-- 改 `docs/v0.7/dd/09-audit-and-cache.md` §6.1 的事件表为 8 行实际事件，删除 `task_recovered/task_failed`。
-- §6.1 把 `merge_decision_made` 标注 "声明但 v0.7 未触发；预留供 MergeValidator 改造时启用"。
-- 同步 `CLAUDE.md` 的 HookEngine 段落（当前文案 `Pre/post lifecycle hooks with CO_* env vars`，可补一句 "8 个 hook 事件，详见 docs/v0.7/dd/09-audit-and-cache.md §6.1"）。
+**代码侧已 ALIGNED**（R2 收尾）：R2-A2 把 hook env 缺的字段补齐；R2 在 MergeValidator 真正 fire `merge_decision_made`（`packages/leader/src/merge-validator.ts:122-130`）。剩余 doc-fix → DD 09 §6.1 事件表 6 → 8 行（R3-B 收尾）。
 
 ### 8.2 `CO_*` env 变量命名 drift
 
-| 项 | 预期（DD §6.3） | 实际（`packages/contracts/src/hooks.ts:9-58`） |
+| 项 | 预期（DD §6.3） | 实际（`packages/contracts/src/hooks.ts:9-58`，R2 后） |
 |----|---------------|------|
 | Worker 实例 ID | `CO_INSTANCE_ID` | **`CO_WORKER_ID`** |
-| Worker role | `CO_WORKER_ROLE`（所有事件） | **未注入** |
-| 协议号 | `CO_PROTOCOL_VERSION`（所有事件） | **未注入** |
-| Message ID | `CO_MESSAGE_ID`（所有事件） | **仅 `leader_message_*`** |
+| Worker role | `CO_WORKER_ROLE`（所有事件） | **R2 后已注入** worker_message_*、task_claimed/completed |
+| 协议号 | `CO_PROTOCOL_VERSION`（所有事件） | **未注入**（v0.7 已弃用强制校验；R3-F 与 R2-A5 一致） |
+| Message ID | `CO_MESSAGE_ID`（所有事件） | **R2 后已注入** worker_message_* / task_claimed / task_completed（leader_message_* 早已有） |
+| Leader ID | DD 未列 | **R2 后已注入** worker_message_*、task_claimed/completed |
 | 日志 / 结果路径 | DD 未列 | `CO_LOG_PATH`（leader_/worker_message_*）、`CO_RESULT_PATH`（worker_message_*） |
-| 任务耗时 | `task_completed` 中 `CO_DECISION` | **`duration_seconds`**（数字 \| null），无 CO_DECISION |
+| 任务耗时 | `task_completed` 中 `CO_DECISION` | **`duration_seconds`**（数字 \| null），无 CO_DECISION；CO_DECISION 仅 `merge_decision_made` 用 |
 | 通用 | `CO_EVENT`（所有事件） | ✅ 与 DD 一致（`hook-engine.ts:45`） |
 
 **判定**：以**代码为准**。`CO_WORKER_ID` 等是稳定名；DD §6.3 落后于 v0.7 hook 拆分。
 
-**修复方案**：改 `docs/v0.7/dd/09-audit-and-cache.md` §6.3 为"按事件类型分组"，复刻 §4.2 表（本文 §4.2）。删除 `CO_INSTANCE_ID / CO_WORKER_ROLE / CO_PROTOCOL_VERSION` 行，新增 `CO_LOG_PATH / CO_RESULT_PATH / duration_seconds` 行。
+**代码侧已 ALIGNED**（R2 收尾）：R2-A2 已把 `CO_WORKER_ROLE / CO_LEADER_ID / CO_MESSAGE_ID` 注入 Worker 端 4 个 hook fire 站点。剩余 doc-fix → DD 09 §6.3 按事件类型重排表（R3-C 收尾）。
 
 ### 8.3 audit.jsonl 事件类型 drift
 
-| 项 | 预期（DD §4.2 / §4.3） | 实际（`chain-audit.ts:75-91`） |
+| 项 | 预期（DD §4.2 / §4.3） | 实际（`chain-audit.ts:75-97`，R2 后） |
 |----|---|---|
-| 失败 merge 事件名 | `chain_merge_failed` | **`merge_failure`** |
-| task 生命周期事件 | `task_claimed / task_recovered / task_failed` | **未落 audit**（这些事件落 LeaderEventBus，由 §8.1 同因引发） |
-| merge 流程事件 | `merge_validation_started / merge_validation_completed` | **未落 audit**（用 `merge_failure` + `chain_closed` 即可） |
-| worker 监控事件 | `worker_left` | **未落 audit**（落 LeaderEventBus） |
-| v0.7 新增 | `chain_spawned / chain_spawned_from / magic_depth_exhausted / invalid_decision / validation_failure` | ✅ 已实现（DD §4.3 部分覆盖） |
+| 失败 merge 事件名 | `chain_merge_failed` | **`merge_failure`**（R2-B2 已把 DD 02 §13 重命名一致） |
+| task 生命周期事件 | `task_claimed / task_completed / task_recovered / task_failed` | **R2 后已落 audit**（R2-A4 加入 ChainAuditEventType union；TaskOrchestrator / TaskRecovery 调 `ChainAudit.record`） |
+| merge 流程事件 | `merge_validation_started / merge_validation_completed` | **R2 后已落 audit**（R2-A4 MergeValidator.validate 入口 / 决策落定两点调 `ChainAudit.record`） |
+| worker 监控事件 | `worker_left` | **R2 后已落 audit**（R2-A4 TaskRecovery.recoverOrphan 调 `ChainAudit.record` per 持有 claimed task 的 chain） |
+| v0.7 新增 | `chain_spawned / chain_spawned_from / magic_depth_exhausted / invalid_decision / validation_failure` | ✅ 已实现（DD §4.2 已包含；§4.3 在 R2-B2 已并入 §4.2） |
 
-**判定**：以**代码为准**。audit.jsonl 是 chain 维度的"持久化日志"，task / worker 维度事件按设计应该走 LeaderEventBus + TUI，不污染 chain audit。
+**判定**：以**代码为准**。audit.jsonl 是 chain 维度的"持久化日志"，task / worker 维度事件按设计在 v0.7 同时进 ChainAudit（chain 上下文）和 LeaderEventBus（TUI 渲染）。
 
-**修复方案**：改 `docs/v0.7/dd/09-audit-and-cache.md` §4.2 事件表为代码里的 14 个事件；§4.3 内容并入 §4.2；`chain_merge_failed → merge_failure` 重命名。补一行 NOTE "task lifecycle / worker_left 事件在 LeaderEventBus 内存事件流，不进 audit.jsonl"。
+**代码侧已 ALIGNED**（R2 收尾）：R2-A4 + R2-B2 已完成。本节作为"历史 drift 已闭环"保留。
 
 ### 8.4 ChainManifest 字段 drift
 
