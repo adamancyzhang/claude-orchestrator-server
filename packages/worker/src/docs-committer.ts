@@ -11,6 +11,18 @@ import {
   type TaskLink,
 } from "@co/contracts";
 
+/**
+ * Mutex contract for serializing the git add → commit → rev-parse
+ * critical section across concurrent Worker processes that share the
+ * CO root. Production passes nothing (single-machine fork uses
+ * `.git/index.lock` for cross-process exclusion); the in-process e2e
+ * harness passes an async mutex to avoid `.git/index.lock` collisions
+ * when 6 workers share one Node event loop and one git index.
+ */
+export interface DocsCommitMutex {
+  acquire(): Promise<() => void>;
+}
+
 export interface WorkerDocsCommitterOptions {
   co_root: string;
   worker_name: string;
@@ -18,6 +30,11 @@ export interface WorkerDocsCommitterOptions {
   template_engine: ITemplateEngine;
   cache_paths: cachePaths.CachePathOptions;
   logger: ILogger;
+  /**
+   * Optional cross-worker serialization for the git add → commit →
+   * rev-parse window. See {@link DocsCommitMutex}.
+   */
+  docs_commit_mutex?: DocsCommitMutex;
 }
 
 export interface DocsCommitContext {
@@ -87,40 +104,48 @@ export class WorkerDocsCommitter {
     await fs.promises.mkdir(path.dirname(msgFile), { recursive: true });
     await fs.promises.writeFile(msgFile, message, "utf-8");
 
+    const release = this.opts.docs_commit_mutex
+      ? await this.opts.docs_commit_mutex.acquire()
+      : null;
+    let sha: string;
     try {
-      execFileSync("git", ["add", "--", ...paths], {
-        cwd: this.opts.co_root,
-        stdio: "pipe",
-      });
-      // --only commits ONLY the listed paths, ignoring anything else
-      // staged in the index. Combined with the scoped git-add above,
-      // this keeps concurrent Worker commits free of cross-contamination
-      // even though they share .git.
-      execFileSync(
-        "git",
-        ["commit", "--only", "-F", msgFile, "--", ...paths],
-        {
+      try {
+        execFileSync("git", ["add", "--", ...paths], {
           cwd: this.opts.co_root,
           stdio: "pipe",
-        },
-      );
-    } catch (err) {
-      // Docs commit is best-effort: a failure here must NOT break the
-      // worktree commit + completion report path. Log loudly and return
-      // null so the caller treats it as "no docs commit produced".
-      this.opts.logger.error("docs commit failed", {
-        error: String(err),
-        stderr: extractStderr(err),
-        scope,
-      });
-      return null;
-    }
+        });
+        // --only commits ONLY the listed paths, ignoring anything else
+        // staged in the index. Combined with the scoped git-add above,
+        // this keeps concurrent Worker commits free of cross-contamination
+        // even though they share .git.
+        execFileSync(
+          "git",
+          ["commit", "--only", "-F", msgFile, "--", ...paths],
+          {
+            cwd: this.opts.co_root,
+            stdio: "pipe",
+          },
+        );
+      } catch (err) {
+        // Docs commit is best-effort: a failure here must NOT break the
+        // worktree commit + completion report path. Log loudly and return
+        // null so the caller treats it as "no docs commit produced".
+        this.opts.logger.error("docs commit failed", {
+          error: String(err),
+          stderr: extractStderr(err),
+          scope,
+        });
+        return null;
+      }
 
-    const sha = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: this.opts.co_root,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
+      sha = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: this.opts.co_root,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+    } finally {
+      release?.();
+    }
     this.opts.logger.info("docs commit recorded", {
       sha: sha.slice(0, 8),
       scope,

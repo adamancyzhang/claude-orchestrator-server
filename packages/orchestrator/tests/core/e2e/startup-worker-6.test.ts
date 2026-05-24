@@ -178,11 +178,14 @@ describe("eval 01: startup --worker 6", () => {
       ["Jack", "Jerry", "Lisa", "Lucy", "Thomas", "Tom"], // sorted
     );
 
-    // 2. Each worktree has CLAUDE.md + .claude/skills (10) + .claude-orchestrator/agents (20)
+    // 2. Each worktree has CLAUDE.md + .claude/skills (10) + .claude-orchestrator/agents
+    //    (= 20 from templates/agents + 1 personal-claude-<role>.md seeded from
+    //     templates/claude-memory; see worktree-initializer.ts:311-320).
     const expectedAgentCount = fs.readdirSync(REAL_TEMPLATES + "/agents")
       .filter((f) => f.endsWith(".md")).length;
     const expectedSkillCount = fs.readdirSync(REAL_SKILLS)
       .filter((d) => d !== "CLAUDE.md" && fs.existsSync(path.join(REAL_SKILLS, d, "SKILL.md"))).length;
+    const expectedWorktreeAgentCount = expectedAgentCount + 1; // +1 personal-claude-<role>
 
     expect(expectedAgentCount, "expect 20 agent templates").toBe(20);
     expect(expectedSkillCount, "expect 10 skills").toBe(10);
@@ -197,9 +200,9 @@ describe("eval 01: startup --worker 6", () => {
       expect(fs.readFileSync(claudeMdDst, "utf-8"))
         .toBe(fs.readFileSync(claudeMdSrc, "utf-8"));
 
-      // .claude-orchestrator/agents/*.md
+      // .claude-orchestrator/agents/*.md (20 from templates/agents + 1 personal-claude-<role>)
       const agentsNode = findNode(tree, `.claude-orchestrator/worktree/${name}/.claude-orchestrator/agents`);
-      expect(childNames(agentsNode).length, `${name}: agents count`).toBe(expectedAgentCount);
+      expect(childNames(agentsNode).length, `${name}: agents count`).toBe(expectedWorktreeAgentCount);
 
       // .claude/skills/<each>/SKILL.md
       const skillsNode = findNode(tree, `.claude-orchestrator/worktree/${name}/.claude/skills`);

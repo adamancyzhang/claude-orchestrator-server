@@ -152,6 +152,31 @@ function extractStderr(err: unknown): string {
   return "";
 }
 
+/**
+ * Paths that `worktree-initializer.ts:seedWorktreeAssets` writes into
+ * every worker's worktree as **untracked** stateless references
+ * (agent templates, skills, team CLAUDE.md, personal-claude-<role>.md).
+ * They're re-seeded on every orchestrator run, so committing them would
+ * (1) pollute downstream merges, and (2) break `WorkerWatcher.preTaskRebase`
+ * for the next link — its `git rebase <upstream_sha>` would abort with
+ * "untracked working tree files would be overwritten by checkout" because
+ * each worker's worktree has its own untracked copies of the same paths
+ * that the upstream commit already tracks. See
+ * `docs/evals/02-leader-worker-communication.md` §6.2 (D7).
+ */
+const SEEDED_STATE_PATH_PREFIXES: readonly string[] = [
+  ".claude-orchestrator/agents/",
+  ".claude/skills/",
+];
+const SEEDED_STATE_EXACT_PATHS: readonly string[] = [
+  "CLAUDE.md",
+];
+
+function isSeededOrchestratorState(p: string): boolean {
+  if (SEEDED_STATE_EXACT_PATHS.includes(p)) return true;
+  return SEEDED_STATE_PATH_PREFIXES.some((prefix) => p.startsWith(prefix));
+}
+
 function parseStatus(status: string): {
   changed: string[];
   untracked: string[];
@@ -171,6 +196,7 @@ function parseStatus(status: string): {
     const code = line.slice(0, 2);
     const rest = line.slice(3);
     if (code === "??") {
+      if (isSeededOrchestratorState(rest)) continue;
       untracked.push(rest);
       paths.push(rest);
       continue;
@@ -179,10 +205,12 @@ function parseStatus(status: string): {
     if (rest.includes(" -> ")) {
       // Rename or copy: "old -> new"; add both for index completeness
       const [src, dst] = rest.split(" -> ");
-      if (src) paths.push(src.trim());
-      if (dst) paths.push(dst.trim());
+      const srcPath = src?.trim();
+      const dstPath = dst?.trim();
+      if (srcPath && !isSeededOrchestratorState(srcPath)) paths.push(srcPath);
+      if (dstPath && !isSeededOrchestratorState(dstPath)) paths.push(dstPath);
     } else {
-      paths.push(rest);
+      if (!isSeededOrchestratorState(rest)) paths.push(rest);
     }
   }
   return { changed, untracked, paths };

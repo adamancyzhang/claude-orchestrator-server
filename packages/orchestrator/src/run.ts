@@ -7,6 +7,7 @@ import {
   asInstanceId,
   PROTOCOL_VERSION,
   zkPaths,
+  type IClaudeRunner,
   type ILogger,
   type InstanceId,
   type IZkClient,
@@ -102,6 +103,24 @@ export interface OrchestratorDeps {
    * worker registration without forking real processes.
    */
   supervisor_factory?: (opts: ChildSupervisorOptions) => IChildSupervisor;
+  /**
+   * Factory for the leader's IClaudeRunner (used by ChainRouter's
+   * `decompose` and MergeValidator's merge-decision render). Defaults
+   * to `new ClaudeRunner(...)`. Tests inject a fake that returns canned
+   * responses keyed on the prompt template.
+   */
+  claude_runner_factory?: (cli_command: string, logger: ILogger) => IClaudeRunner;
+  /**
+   * Test hook fired immediately after the LeaderEventBus is constructed
+   * (before any subsystem starts), so tests can attach a recorder/tap.
+   */
+  on_leader_bus?: (bus: LeaderEventBus) => void;
+  /**
+   * When `false`, skip starting TaskRecovery (the orphan-task scanner).
+   * Tests disable it so its polling can't re-dispatch a claimed task
+   * mid-test and pollute the observable state.
+   */
+  recovery_enabled?: boolean;
   /**
    * When true, skip console capture and TUI startup. Used by tests so
    * they don't have their stdout hijacked or stdin raw-moded.
@@ -230,13 +249,16 @@ export async function runOrchestrator(
   const taskQueue = new TaskQueue({ zk });
 
   const bus = new LeaderEventBus();
+  deps.on_leader_bus?.(bus);
   const state = new LeaderState();
   bus.onAny((event) => state.apply(event));
 
   const templateEngine = new TemplateEngine({
     primary_dir: path.join(paths.template_dir, "agents"),
   });
-  const runner = new ClaudeRunner(resolved.commands.claude_cli, logger.child("runner"));
+  const runner: IClaudeRunner = deps.claude_runner_factory
+    ? deps.claude_runner_factory(resolved.commands.claude_cli, logger.child("runner"))
+    : new ClaudeRunner(resolved.commands.claude_cli, logger.child("runner"));
   const hookEntries = resolved.hooks.map((h) => ({
     event: h.event,
     command: h.command,
@@ -350,8 +372,11 @@ export async function runOrchestrator(
     logger.child("recovery"),
     chainAudit,
   );
-  recovery.start();
-  await recovery.scanOrphans();
+  const recoveryEnabled = deps.recovery_enabled !== false;
+  if (recoveryEnabled) {
+    recovery.start();
+    await recovery.scanOrphans();
+  }
 
   const tailer = new StreamTailer();
   void tailer;

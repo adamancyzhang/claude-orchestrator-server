@@ -65,6 +65,22 @@ export class MessageRouter implements IMessageRouter {
       task_criteria: input.task_criteria ?? null,
       result_path: input.result_path ?? null,
       original_requirement_path: input.original_requirement_path ?? null,
+      // Optional v0.7 fields — must be forwarded for downstream
+      // consumers (Worker `preTaskRebase` / `collectChainArtifacts` /
+      // task-template rendering, ChainRouter spawn_chain dispatch) to
+      // function. Dropping them here silently breaks
+      // `docs/evals/02-leader-worker-communication.md` §3.4 (the
+      // task_dispatch upstream_commits column) and §6.1 (worker
+      // pre-task rebase).
+      ...(input.upstream_commits !== undefined
+        ? { upstream_commits: input.upstream_commits }
+        : {}),
+      ...(input.spawned_from !== undefined
+        ? { spawned_from: input.spawned_from }
+        : {}),
+      ...(input.next_requirement !== undefined
+        ? { next_requirement: input.next_requirement }
+        : {}),
       reply_to: input.reply_to ?? null,
       read: false,
       created_at: utcNow(),
