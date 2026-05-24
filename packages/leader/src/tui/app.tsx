@@ -13,7 +13,7 @@ import InputLine from "./panels/input-line.js";
 import Footer from "./panels/footer.js";
 
 const MIN_COLS = 80;
-const MIN_ROWS = 37;
+const MIN_ROWS = 41;
 const SENT_INDICATOR_MS = 2000;
 
 interface Props {
@@ -198,13 +198,13 @@ export default function App({
   // Fixed-height layout. Only the worker messages panel grows with the terminal.
   // borderStyle="round" eats 2 rows per panel; content rows = height - 2.
   //
-  //   overhead(6) + team(11) + tasks(7) + log(7) + msgs(min 6) = 37 = MIN_ROWS
+  //   overhead(6) + team(11) + tasks(7) + log(11) + msgs(min 6) = 41 = MIN_ROWS
   const FIXED_OVERHEAD = 6; // outer padding(2) + input(3) + footer(1)
   const contentRows = Math.max(4, rows - FIXED_OVERHEAD);
 
   const teamH = 11;   // border(2) + title(1) + sep(1) + header(1) + workers(6)
   const tasksH = 7;   // border(2) + title(1) + sep(1) + items(3)
-  const logH = 7;     // border(2) + title(1) + sep(1) + events(3)
+  const logH = 11;    // border(2) + title(1) + sep(1) + events(7)
   const MIN_MSGS = 6; // border(2) + title(1) + sep(1) + status(1) + history(1)
   const msgsH = Math.max(MIN_MSGS, contentRows - teamH - tasksH - logH);
 
