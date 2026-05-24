@@ -6,6 +6,7 @@ export {
   execAndCapture,
   type ExecStreamingOptions,
   type ExecStreamingResult,
+  type ExecCaptureResult,
 } from "./utils/exec.js";
 export { extractJson } from "./utils/json.js";
 export { output } from "./utils/output.js";

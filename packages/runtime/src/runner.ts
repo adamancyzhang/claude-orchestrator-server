@@ -48,7 +48,7 @@ export class ClaudeRunner implements IClaudeRunner {
       fork: opts.fork_session ?? false,
     });
 
-    const { exit_code, session_id } = await execWithStreaming({
+    const { exit_code, session_id, spawn_error } = await execWithStreaming({
       command: this.command,
       prompt: opts.prompt,
       log_path: opts.log_path,
@@ -69,9 +69,15 @@ export class ClaudeRunner implements IClaudeRunner {
       this.logger.warn("ClaudeRunner.run non-zero exit", {
         exit_code,
         log_path: opts.log_path,
+        spawn_error: spawn_error ?? null,
       });
     }
 
+    if (spawn_error) {
+      throw new ClaudeRunnerError(
+        `Failed to spawn claude-cli: ${spawn_error}`,
+      );
+    }
     if (exit_code < 0) {
       throw new ClaudeRunnerError(
         `Failed to spawn claude-cli (exit ${exit_code})`,
