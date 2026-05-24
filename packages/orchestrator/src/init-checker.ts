@@ -4,7 +4,9 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import {
   loadInitStatus,
+  loadProjectInitStatus,
   saveInitStatus,
+  saveProjectInitStatus,
 } from "@co/infra";
 import type { ILogger, InitStatusEntry, InitStatusLevel } from "@co/contracts";
 
@@ -19,6 +21,7 @@ interface InitStep {
   title: string;
   description: string;
   level: InitStatusLevel;
+  scope: "global" | "project";
   check(): Promise<StepDetails>;
   execute(): Promise<void>;
 }
@@ -42,16 +45,24 @@ export interface InitCheckerOptions {
 }
 
 export class InitChecker {
-  private status: readonly InitStatusEntry[] = loadInitStatus();
-  private readonly entries: InitStatusEntry[] = [...this.status];
+  private readonly globalEntries: InitStatusEntry[];
+  private readonly projectEntries: InitStatusEntry[];
+  private readonly status: readonly InitStatusEntry[];
 
-  constructor(private readonly opts: InitCheckerOptions) {}
+  constructor(private readonly opts: InitCheckerOptions) {
+    const global = loadInitStatus();
+    const project = loadProjectInitStatus();
+    this.globalEntries = [...global];
+    this.projectEntries = [...project];
+    this.status = [...global, ...project];
+  }
 
   async runAll(steps: readonly InitStep[]): Promise<void> {
     for (let i = 0; i < steps.length; i++) {
       await this.runStep(steps[i], i + 1, steps.length);
     }
-    saveInitStatus(this.entries);
+    saveInitStatus(this.globalEntries);
+    saveProjectInitStatus(this.projectEntries);
   }
 
   private async runStep(step: InitStep, num: number, total: number): Promise<void> {
@@ -86,9 +97,10 @@ export class InitChecker {
       decided_at: new Date().toISOString(),
       decision,
     };
-    const idx = this.entries.findIndex((e) => e.step_id === step.id);
-    if (idx >= 0) this.entries[idx] = entry;
-    else this.entries.push(entry);
+    const target = step.scope === "global" ? this.globalEntries : this.projectEntries;
+    const idx = target.findIndex((e) => e.step_id === step.id);
+    if (idx >= 0) target[idx] = entry;
+    else target.push(entry);
   }
 
   private previouslySkipped(stepId: string): boolean {
@@ -122,6 +134,7 @@ export function createGlobalConfigStep(logger: ILogger): InitStep {
     title: "Global Config",
     description: `Ensure ${file} exists with required fields`,
     level: "Caution",
+    scope: "global",
     async check() {
       return fs.existsSync(file)
         ? { needs_confirm: true, message: "Merging missing fields" }
@@ -155,6 +168,7 @@ export function createUserClaudeMdStep(templateDir: string, logger: ILogger): In
     title: "User Global CLAUDE.md",
     description: `Copy ${src} → ${dest}`,
     level: "Danger",
+    scope: "global",
     async check() {
       if (!fs.existsSync(src)) {
         return { needs_confirm: false, message: "Source missing — skip" };
@@ -190,6 +204,7 @@ export function createTeamClaudeMdStep(
     title: "Team CLAUDE.md",
     description: `Copy ${src} → ${dest}`,
     level: "Danger",
+    scope: "project",
     async check() {
       if (!fs.existsSync(src)) {
         return { needs_confirm: false, message: "Source missing — skip" };
@@ -213,6 +228,16 @@ export function createTeamClaudeMdStep(
   };
 }
 
+export const CHAIN_SKILLS = [
+  "task-planning",
+  "task-execution",
+  "task-verification",
+  "task-review",
+  "task-acceptance",
+  "task-exploration",
+  "task-traceability",
+];
+
 export function createSkillsStep(
   skillsDir: string,
   projectRoot: string,
@@ -224,20 +249,21 @@ export function createSkillsStep(
     title: "Skills",
     description: `Copy skills from ${skillsDir} to ${destBase}/`,
     level: "Danger",
+    scope: "project",
     async check() {
       if (!fs.existsSync(skillsDir)) {
         return { needs_confirm: false, message: "Skills source missing" };
       }
-      const skills = fs
-        .readdirSync(skillsDir)
-        .filter((d) => fs.existsSync(path.join(skillsDir, d, "SKILL.md")));
+      const available = CHAIN_SKILLS.filter(
+        (s) => fs.existsSync(path.join(skillsDir, s, "SKILL.md")),
+      );
       return {
         needs_confirm: true,
-        message: `${skills.length} skills available; overwrite existing?`,
+        message: `${available.length} chain skills available; overwrite existing?`,
       };
     },
     async execute() {
-      for (const skill of fs.readdirSync(skillsDir)) {
+      for (const skill of CHAIN_SKILLS) {
         const srcSkill = path.join(skillsDir, skill, "SKILL.md");
         if (!fs.existsSync(srcSkill)) continue;
         const dstDir = path.join(destBase, skill);
@@ -247,7 +273,7 @@ export function createSkillsStep(
         fs.mkdirSync(dstDir, { recursive: true });
         fs.copyFileSync(srcSkill, path.join(dstDir, "SKILL.md"));
       }
-      logger.info("skills installed");
+      logger.info(`${CHAIN_SKILLS.length} chain skills installed`);
     },
   };
 }

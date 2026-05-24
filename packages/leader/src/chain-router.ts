@@ -462,7 +462,17 @@ export class ChainRouter {
           },
         });
       }
-      const runResult = await this.opts.runner.run({ prompt, log_path: logPath });
+      const runResult = await this.opts.runner.run({
+        prompt,
+        log_path: logPath,
+        on_chunk: (chunk) => {
+          this.opts.bus.emit({
+            type: "stream_chunk",
+            instance_id: this.opts.leader_id,
+            chunk: chunk.raw,
+          });
+        },
+      });
       if (this.opts.hooks) {
         await this.opts.hooks.fire({
           type: "leader_message_end",

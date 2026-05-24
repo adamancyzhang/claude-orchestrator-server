@@ -193,8 +193,19 @@ export class LeaderState implements ILeaderStateView {
       case "chain_spawned":
       case "magic_depth_exhausted":
       case "debug_info":
-      case "stream_chunk":
         break;
+      case "stream_chunk": {
+        const sw = this._workers.find((w) => w.id === event.instance_id);
+        if (sw) {
+          if (sw.current_message) {
+            sw.current_message += "\n" + event.chunk;
+          } else {
+            sw.current_message = event.chunk;
+          }
+          sw.current_message_time = new Date().toISOString();
+        }
+        break;
+      }
       default:
         assertNever(event);
     }

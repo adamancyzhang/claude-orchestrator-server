@@ -4,8 +4,24 @@ import {
   type IMessageRouter,
   type InstanceId,
   type LeaderEvent,
+  type TaskLink,
 } from "@co/contracts";
 import type { ChainRouter } from "./chain-router.js";
+
+function formatWorkerMessageContent(content: string): string {
+  try {
+    const obj = JSON.parse(content);
+    if (obj && typeof obj === "object" && "decision" in obj) {
+      const decision = String(obj.decision);
+      const reason = obj.reason ? `: ${String(obj.reason)}` : "";
+      const nextLink = obj.next_link ? ` → ${String(obj.next_link)}` : "";
+      return `[${decision}]${reason}${nextLink}`;
+    }
+  } catch {
+    // not JSON, display raw content
+  }
+  return content;
+}
 
 export class LeaderWatcher {
   private stopped = false;
@@ -58,6 +74,17 @@ export class LeaderWatcher {
       message_id: msg.id as never,
       content: msg.content,
     });
+
+    if (msg.from_instance !== this.leader_id) {
+      this.bus.emit({
+        type: "worker_message_received",
+        instance_id: msg.from_instance,
+        message_id: msg.id as never,
+        content: formatWorkerMessageContent(msg.content),
+        link: (msg.link as TaskLink | null) ?? null,
+        timestamp: msg.created_at,
+      });
+    }
 
     try {
       // The chain router accepts the message envelope directly.

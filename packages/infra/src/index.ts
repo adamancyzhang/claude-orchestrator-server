@@ -1,4 +1,5 @@
 export { ZkClient, type ZkClientOptions } from "./zk/client.js";
+export { InMemoryZkClient, type ZkTreeNode } from "./zk/in-memory-client.js";
 export { Logger, type LoggerOptions } from "./logger.js";
 export {
   execWithStreaming,
@@ -22,6 +23,8 @@ export {
   saveInstanceId,
   saveInitStatus,
   loadInitStatus,
+  saveProjectInitStatus,
+  loadProjectInitStatus,
   loadProjectWorktreeConfig,
   saveProjectWorktreeConfig,
   type WorktreeEntry,

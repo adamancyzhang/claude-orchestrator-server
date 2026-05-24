@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
@@ -14,6 +15,7 @@ import {
   type ZkPath,
 } from "@co/contracts";
 import {
+  InMemoryZkClient,
   Logger,
   ZkClient,
   captureConsoleToFile,
@@ -41,7 +43,6 @@ import {
   MergeValidator,
   StdinKeyboardSource,
   StdoutSink,
-  StreamTailer,
   TaskOrchestrator,
   TaskRecovery,
   TuiController,
@@ -52,6 +53,7 @@ import {
   type ChildSupervisorOptions,
   type IChildSupervisor,
 } from "./child-supervisor.js";
+import { InProcessSupervisor } from "./in-process-supervisor.js";
 import {
   InitChecker,
   createGlobalConfigStep,
@@ -77,6 +79,9 @@ export interface RunInput {
   // unlimited. Env `CO_MAGIC_MAX_CHAINS` overrides this argument when
   // present and parseable.
   magic_max_chains?: number | null;
+  // When true, use real ZooKeeper for message routing. Default (false)
+  // uses an in-memory client shared between Leader and Workers.
+  enabled_zookeeper?: boolean;
 }
 
 export interface OrchestratorPaths {
@@ -156,7 +161,11 @@ export async function runOrchestrator(
 
   // Phase 1: env / init
   const projectRoot = process.cwd();
-  ensureCleanWorkspace(projectRoot);
+
+  // Ensure a git repository with at least one commit exists before
+  // anything else (git worktree add requires a valid repo + HEAD).
+  ensureGitRepo(projectRoot, logger);
+
   const initChecker = new InitChecker({ y_flag: input.y_flag ?? false, logger });
   await initChecker.runAll([
     createGlobalConfigStep(logger),
@@ -164,6 +173,11 @@ export async function runOrchestrator(
     createTeamClaudeMdStep(paths.template_dir, projectRoot, logger),
     createSkillsStep(paths.skills_dir, projectRoot, logger),
   ]);
+
+  // Ensure .gitignore exists and covers orchestrator runtime directories
+  // so they stay out of the project's git history.
+  ensureGitignore(projectRoot, logger);
+
   // Phase 3 used to live further down; we need ResolvedConfig BEFORE
   // commitInitFiles so the auto_commit_init_files toggle is honored.
   const resolved = loadConfig({
@@ -174,6 +188,11 @@ export async function runOrchestrator(
     enabled: resolved.git.auto_commit_init_files,
     branch: resolved.git.auto_commit_init_files_branch,
   });
+
+  // Verify the workspace is clean AFTER init files have been committed.
+  // This catches uncommitted user changes that would be invisible to
+  // the per-worker worktrees (they only see committed state).
+  ensureCleanWorkspace(projectRoot);
 
   // Phase 2: worktrees
   // resolve magic-mode + depth cap. Env overrides CLI.
@@ -198,14 +217,18 @@ export async function runOrchestrator(
   });
   const leaderId = asInstanceId(randomUUID().replace(/-/g, ""));
 
+  const zkEnsurePaths = zkPaths.allEnsurePaths();
   const zkOpts = {
     hosts: resolved.zk.hosts,
     session_timeout_ms: resolved.zk.session_timeout_ms,
-    ensure_paths: zkPaths.allEnsurePaths(),
+    ensure_paths: zkEnsurePaths,
   };
+  const useRealZk = input.enabled_zookeeper === true;
   const zk: IZkClient = deps.zk_factory
     ? deps.zk_factory(zkOpts)
-    : new ZkClient(zkOpts);
+    : useRealZk
+      ? new ZkClient(zkOpts)
+      : new InMemoryZkClient({ ensure_paths: zkEnsurePaths });
   await zk.connect();
 
   await zk.createEphemeral(
@@ -378,9 +401,6 @@ export async function runOrchestrator(
     await recovery.scanOrphans();
   }
 
-  const tailer = new StreamTailer();
-  void tailer;
-
   const tui = new TuiController({
     state,
     bus,
@@ -390,12 +410,15 @@ export async function runOrchestrator(
     logger: logger.child("tui"),
     leader_id: leaderInstance.id,
     leader_name: leaderInstance.name,
-    projects_root: resolved.projects_root,
   });
   if (!deps.headless) tui.start();
 
-  // Phase 4: fork workers
-  const supervisorOpts: ChildSupervisorOptions = {
+  // Phase 4: start workers
+  const cachePathOpts = {
+    projects_root: resolved.projects_root,
+    leader_instance_id: leaderInstance.id,
+  };
+  const forkSupervisorOpts: ChildSupervisorOptions = {
     child_module_path: paths.child_module,
     zk_hosts: resolved.zk.hosts,
     cli_command: resolved.commands.claude_cli,
@@ -408,8 +431,19 @@ export async function runOrchestrator(
     logger: logger.child("supervisor"),
   };
   const supervisor: IChildSupervisor = deps.supervisor_factory
-    ? deps.supervisor_factory(supervisorOpts)
-    : new ChildSupervisor(supervisorOpts);
+    ? deps.supervisor_factory(forkSupervisorOpts)
+    : useRealZk
+      ? new ChildSupervisor(forkSupervisorOpts)
+      : new InProcessSupervisor(zk, {
+          cli_command: resolved.commands.claude_cli,
+          template_dir: paths.template_dir,
+          cache_paths: cachePathOpts,
+          leader_instance_id: leaderInstance.id,
+          hooks: resolved.hooks,
+          git_remote: resolved.git.remote,
+          magic_mode: magicMode,
+          logger: logger.child("inproc"),
+        });
   const workerConfigsForSupervisor = worktreeConfigs.map((c) => ({
     ...c,
     instance_id: c.instance_id,
@@ -440,6 +474,60 @@ export async function runOrchestrator(
   });
 }
 
+function ensureGitRepo(projectRoot: string, logger: ILogger): void {
+  let isRepo = false;
+  try {
+    execSync("git rev-parse --git-dir", {
+      cwd: projectRoot,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    isRepo = true;
+  } catch {
+    // not a git repo
+  }
+
+  if (!isRepo) {
+    logger.info("initializing git repository...");
+    execSync("git init", { cwd: projectRoot });
+    // Create an empty initial commit so git worktree add has a HEAD to
+    // branch from. Use --allow-empty because there may be no files yet.
+    execSync('git commit --allow-empty -m "chore: init orchestrator workspace"', {
+      cwd: projectRoot,
+    });
+    logger.info("git repository initialized");
+    return;
+  }
+
+  // Repo exists — verify it has at least one commit (git worktree add
+  // requires a reachable HEAD). An unborn HEAD happens when the user ran
+  // `git init` by hand but never committed.
+  let hasCommit = false;
+  try {
+    execSync("git rev-parse HEAD", {
+      cwd: projectRoot,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    hasCommit = true;
+  } catch {
+    // unborn HEAD
+  }
+
+  if (!hasCommit) {
+    logger.info("creating initial commit (unborn HEAD)...");
+    try {
+      execSync("git add -A", { cwd: projectRoot });
+    } catch {
+      // ignore — may have no files
+    }
+    execSync('git commit --allow-empty -m "chore: init orchestrator workspace"', {
+      cwd: projectRoot,
+    });
+    logger.info("initial commit created");
+  }
+}
+
 function ensureCleanWorkspace(projectRoot: string): void {
   let status = "";
   try {
@@ -448,17 +536,53 @@ function ensureCleanWorkspace(projectRoot: string): void {
       encoding: "utf-8",
     }).trim();
   } catch {
-    return; // not a git repo — allow
+    return; // not a git repo — allow (shouldn't happen after ensureGitRepo)
   }
   if (status.length > 0) {
-    throw new Error("Workspace has uncommitted changes");
+    throw new Error(
+      "Workspace has uncommitted changes. Please commit or stash them before starting the orchestrator.",
+    );
   }
+}
+
+function ensureGitignore(projectRoot: string, logger: ILogger): void {
+  const gitignorePath = path.join(projectRoot, ".gitignore");
+  const entries = [".claude-orchestrator/", ".claude/"];
+
+  let content = "";
+  if (fs.existsSync(gitignorePath)) {
+    content = fs.readFileSync(gitignorePath, "utf-8");
+  }
+
+  const lines = content.split("\n").map((l) => l.trim());
+  const toAdd = entries.filter(
+    (e) => !lines.some((l) => l === e || l === e.replace(/\/$/, "")),
+  );
+
+  if (toAdd.length === 0) return;
+
+  const base = content
+    ? content.endsWith("\n")
+      ? content
+      : `${content}\n`
+    : "";
+
+  fs.writeFileSync(gitignorePath, `${base}${toAdd.join("\n")}\n`);
+  logger.info(`added ${toAdd.join(", ")} to .gitignore`);
 }
 
 interface CommitInitFilesOptions {
   enabled: boolean;
   branch: string | null;
 }
+
+// Paths that the init checker may create inside the project. We only
+// stage these specific paths (not `git add -A`) so we never accidentally
+// commit unrelated user changes with the init-chore message.
+const INIT_PATHS = [
+  "CLAUDE.md",
+  ".gitignore",
+];
 
 function commitInitFiles(
   projectRoot: string,
@@ -479,13 +603,30 @@ function commitInitFiles(
     return;
   }
   if (!status) return;
+
+  // Only add init-managed paths so we don't sweep up unrelated user
+  // changes into the init commit. git add fails gracefully when the path
+  // doesn't exist, so we just try each path and ignore errors.
   try {
     if (opts.branch) {
-      // Redirect init commits to a dedicated branch so the user's
-      // working branch is not polluted by orchestrator boilerplate.
       execSync(`git checkout -B ${opts.branch}`, { cwd: projectRoot });
     }
-    execSync("git add -A", { cwd: projectRoot });
+    for (const p of INIT_PATHS) {
+      try {
+        execSync(`git add "${p}"`, {
+          cwd: projectRoot,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch {
+        // path doesn't exist or isn't tracked — skip
+      }
+    }
+    // Only commit if there's something staged
+    const diff = execSync("git diff --cached --name-only", {
+      cwd: projectRoot,
+      encoding: "utf-8",
+    }).trim();
+    if (!diff) return;
     execSync('git commit -m "chore: init orchestrator workspace files"', {
       cwd: projectRoot,
     });

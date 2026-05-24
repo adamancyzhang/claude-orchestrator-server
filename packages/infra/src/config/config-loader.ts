@@ -143,6 +143,17 @@ export function loadInitStatus(): readonly InitStatusEntry[] {
   return global.init_status ?? [];
 }
 
+export function saveProjectInitStatus(entries: readonly InitStatusEntry[]): void {
+  const filePath = projectConfigFile();
+  const existing = readJson<RawConfig>(filePath) ?? {};
+  writeJsonAtomic(filePath, { ...existing, init_status: entries });
+}
+
+export function loadProjectInitStatus(): readonly InitStatusEntry[] {
+  const project = readJson<RawConfig>(projectConfigFile()) ?? {};
+  return project.init_status ?? [];
+}
+
 export interface WorktreeEntry {
   name: string;
   role: InstanceRole;

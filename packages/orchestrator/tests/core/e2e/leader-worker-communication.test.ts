@@ -43,7 +43,11 @@ process.env.GIT_AUTHOR_EMAIL = process.env.GIT_AUTHOR_EMAIL ?? "co-test@example.
 process.env.GIT_COMMITTER_NAME = process.env.GIT_COMMITTER_NAME ?? "co-test";
 process.env.GIT_COMMITTER_EMAIL = process.env.GIT_COMMITTER_EMAIL ?? "co-test@example.invalid";
 
-import { Logger } from "@co/infra";
+import {
+  InMemoryZkClient,
+  Logger,
+  type ZkTreeNode,
+} from "@co/infra";
 import {
   asInstanceId,
   cachePaths,
@@ -57,8 +61,6 @@ import {
   runOrchestrator,
   type OrchestratorPaths,
 } from "../../../src/index.js";
-
-import { InMemoryZkClient, type ZkTreeNode } from "../../helpers/in-memory-zk-client.js";
 import { createTempProject, type TempProject } from "../../helpers/tmp-project.js";
 import { withTempHome, type IsolatedHome } from "../../helpers/home-isolation.js";
 import {

@@ -29,12 +29,15 @@ import {
   runOrchestrator,
   type OrchestratorPaths,
 } from "../../../src/index.js";
-import { InMemoryZkClient } from "../../helpers/in-memory-zk-client.js";
+import {
+  InMemoryZkClient,
+  Logger,
+  type ZkTreeNode,
+} from "@co/infra";
 import { FakeChildSupervisor } from "../../helpers/fake-child-supervisor.js";
 import { createTempProject, type TempProject } from "../../helpers/tmp-project.js";
 import { dumpDir, findNode, childNames } from "../../helpers/tree-snapshot.js";
 import { withTempHome, type IsolatedHome } from "../../helpers/home-isolation.js";
-import { Logger } from "@co/infra";
 
 // Resolve the real templates/ and skills/ directories at the repo root
 // so the temp project is seeded from production content.
@@ -42,8 +45,6 @@ const PKG_ROOT = path.resolve(__dirname, "..", "..", "..");
 const REPO_ROOT = path.resolve(PKG_ROOT, "..", "..");
 const REAL_TEMPLATES = path.join(REPO_ROOT, "templates");
 const REAL_SKILLS = path.join(REPO_ROOT, "skills");
-
-import type { ZkTreeNode } from "../../helpers/in-memory-zk-client.js";
 
 interface RunArtifacts {
   /** ZK tree captured *before* shutdown (so ephemeral nodes are still present). */

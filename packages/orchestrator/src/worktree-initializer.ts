@@ -13,6 +13,7 @@ import {
   type InstanceId,
   type InstanceRole,
 } from "@co/contracts";
+import { CHAIN_SKILLS } from "./init-checker.js";
 
 export interface WorktreeConfig {
   name: string;
@@ -85,26 +86,6 @@ function execGitArgs(args: string[], cwd: string): string {
   }).trim();
 }
 
-async function scanExistingNames(projectRoot: string): Promise<Set<string>> {
-  const used = new Set<string>();
-  const wtDir = path.join(projectRoot, ".claude-orchestrator", "worktree");
-
-  if (fs.existsSync(wtDir)) {
-    for (const entry of await fs.promises.readdir(wtDir)) used.add(entry);
-  }
-  try {
-    const branches = execGit("branch -a", projectRoot);
-    for (const line of branches.split("\n")) {
-      const m = line.trim().match(/claude-orchestrator\/(.+)-workspace/);
-      if (m) used.add(m[1]);
-    }
-  } catch {
-    // not a git repo or empty; skip
-  }
-  for (const name of Object.keys(loadProjectWorktreeConfig())) used.add(name);
-  return used;
-}
-
 export function generateFallbackNames(
   count: number,
   used: string[],
@@ -174,18 +155,59 @@ export interface InitializeWorktreesOptions {
 export async function initializeWorktrees(
   opts: InitializeWorktreesOptions,
 ): Promise<WorktreeConfig[]> {
-  const usedNames = await scanExistingNames(opts.project_root);
-  const assignments = generateWorkerNames(
-    opts.worker_count,
-    usedNames,
-    opts.magic_mode === true,
-  );
   const existingConfig = loadProjectWorktreeConfig();
   const worktreeRoot = path.join(
     opts.project_root,
     ".claude-orchestrator",
     "worktree",
   );
+
+  // Phase 1: identify reusable existing workers (config entry + live worktree dir)
+  const reusable: Array<{ name: string; role: InstanceRole }> = [];
+  const usedNames = new Set<string>();
+  for (const [name, entry] of Object.entries(existingConfig)) {
+    const wtPath = path.join(worktreeRoot, name);
+    if (fs.existsSync(wtPath)) {
+      reusable.push({ name, role: entry.role });
+      usedNames.add(name);
+    }
+  }
+
+  // Phase 1b: reserve names from orphan worktree dirs and git branches
+  // so generateWorkerNames doesn't collide with them
+  if (fs.existsSync(worktreeRoot)) {
+    for (const entry of fs.readdirSync(worktreeRoot)) {
+      if (!usedNames.has(entry)) usedNames.add(entry);
+    }
+  }
+  try {
+    const branches = execGitArgs(["branch", "-a"], opts.project_root);
+    for (const line of branches.split("\n")) {
+      const m = line.trim().match(/claude-orchestrator\/(.+)-workspace/);
+      if (m && !usedNames.has(m[1])) usedNames.add(m[1]);
+    }
+  } catch {
+    // not a git repo or empty; skip
+  }
+
+  // Phase 2: generate new workers for remaining slots
+  const newCount = Math.max(0, opts.worker_count - reusable.length);
+  let newAssignments: Array<{ name: string; role: InstanceRole }> = [];
+  if (newCount > 0) {
+    // generateWorkerNames picks unused names; its built-in roles are
+    // computed for <newCount> workers, which doesn't match the full
+    // role list — override with the tail of assignRoles(worker_count).
+    const nameAssignments = generateWorkerNames(newCount, usedNames, opts.magic_mode === true);
+    const allRoles = assignRoles(opts.worker_count, opts.magic_mode === true);
+    const newRoles = allRoles.slice(reusable.length);
+    newAssignments = nameAssignments.map((a, i) => ({
+      name: a.name,
+      role: newRoles[i] ?? "executor",
+    }));
+  }
+
+  // Phase 3: combine reusable workers first, then new workers
+  const assignments = [...reusable, ...newAssignments];
 
   const configs: WorktreeConfig[] = [];
   const resetOnReuse = opts.reset_on_reuse ?? true;
@@ -321,7 +343,7 @@ function seedWorktreeAssets(
 
   if (fs.existsSync(skillsDir)) {
     const skillsDst = path.join(worktreePath, ".claude", "skills");
-    for (const skill of fs.readdirSync(skillsDir)) {
+    for (const skill of CHAIN_SKILLS) {
       const srcSkill = path.join(skillsDir, skill, "SKILL.md");
       const dstDir = path.join(skillsDst, skill);
       const dstSkill = path.join(dstDir, "SKILL.md");

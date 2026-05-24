@@ -45,12 +45,17 @@ program
     },
   )
   .option("-y, --yes", "Skip interactive prompts, auto-approve based on history")
+  .option(
+    "--enabled-zookeeper",
+    "Use real ZooKeeper for message routing (default: in-memory)",
+  )
   .action(async function (this: Command) {
     const opts = this.opts() as {
       worker: number;
       yes?: boolean;
       magic?: boolean;
       magicMaxChains?: number;
+      enabledZookeeper?: boolean;
     };
     const debug = Boolean(this.optsWithGlobals().debug);
     const zk = (this.optsWithGlobals().zookeeper as string | undefined);
@@ -61,6 +66,7 @@ program
       y_flag: Boolean(opts.yes),
       magic: Boolean(opts.magic),
       magic_max_chains: opts.magicMaxChains ?? null,
+      enabled_zookeeper: Boolean(opts.enabledZookeeper),
     });
   });
 
