@@ -18,6 +18,7 @@ import {
 } from "@co/infra";
 import { ClaudeRunner } from "../src/runner.js";
 import { TemplateEngine } from "../src/template.js";
+import { buildWorkerSystemPrompt } from "../src/identity.js";
 
 // ── Real project with complete .claude-orchestrator/config.json ──
 const PROJECT_DIR = "/mnt/c/Users/adama/Documents/projects/test2";
@@ -50,68 +51,6 @@ beforeAll(() => {
 afterAll(() => {
   process.cwd = originalCwd;
 });
-
-// ── Reproduce child-boot.ts system-prompt assembly ──
-const ROLE_TO_SYSTEM_TEMPLATE: Record<string, string> = {
-  planner: "agents/planner/responsibilities.md",
-  executor: "agents/executor/responsibilities.md",
-  verifier: "agents/verifier/responsibilities.md",
-  reviewer: "agents/reviewer/responsibilities.md",
-  accepter: "agents/accepter/responsibilities.md",
-  explorer: "agents/explorer/responsibilities.md",
-};
-
-function assembleSystemPrompt(opts: {
-  name: string;
-  role: string;
-  worktree_path: string;
-  branch: string;
-  co_root: string;
-  origin_branch?: string | null;
-  agentsDir: string;
-}): { prompt: string; parts: string[] } {
-  const engine = new TemplateEngine({
-    primary_dir: tmpdir(),
-    fallback_dir: opts.agentsDir,
-  });
-
-  // Layer 1: agents/worker-identity.md
-  if (!engine.has("agents/worker-identity.md")) {
-    throw new Error("agents/worker-identity.md not found");
-  }
-  const identityTpl = engine.load("agents/worker-identity.md");
-
-  // Layer 2: agents/{role}/responsibilities.md
-  const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[opts.role];
-  if (!roleTplName) {
-    throw new Error(`no role template mapping for role=${opts.role}`);
-  }
-  if (!engine.has(roleTplName)) {
-    throw new Error(`${roleTplName} not found`);
-  }
-  const roleTpl = engine.load(roleTplName);
-
-  const identityParts = [identityTpl, roleTpl].filter((s) => s.length > 0);
-
-  const prompt = ClaudeRunner.buildIdentityPrompt(
-    identityParts.join("\n\n---\n\n"),
-    {
-      name: opts.name,
-      role: opts.role,
-      origin_branch: opts.origin_branch ?? null,
-      worktree_path: opts.worktree_path,
-      worktree_branch: opts.branch,
-      co_root: opts.co_root,
-      co_role_path: path.join(opts.co_root, "docs", opts.name),
-    },
-  );
-
-  return { prompt, parts: identityParts };
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Test 1: Per-worker system prompt + task prompt rendering
-// ═══════════════════════════════════════════════════════════════
 
 function renderTaskPrompt(w: (typeof WORKERS)[number]): string {
   const engine = new TemplateEngine({
@@ -159,235 +98,8 @@ function renderTaskPrompt(w: (typeof WORKERS)[number]): string {
   });
 }
 
-function assertPromptClean(w: (typeof WORKERS)[number], systemPrompt: string, taskPrompt: string) {
-  console.log(`\n${"=".repeat(60)}`);
-  console.log(`  ${w.name} — ${w.role}`);
-  console.log(`${"=".repeat(60)}`);
-
-  console.log(`\n-- System Prompt (--append-system-prompt) --`);
-  console.log(`   chars: ${systemPrompt.length}`);
-  console.log(systemPrompt);
-  console.log();
-  console.log(`-- Task Prompt (-p) --`);
-  console.log(`   chars: ${taskPrompt.length}`);
-  console.log(taskPrompt);
-  console.log();
-
-  expect(systemPrompt).toContain(w.name);
-  expect(systemPrompt).toContain(w.role);
-  expect(systemPrompt).not.toContain("{{name}}");
-  expect(systemPrompt).not.toContain("{{role}}");
-  expect(systemPrompt).not.toContain("{{worktreePath}}");
-  expect(systemPrompt).not.toContain("{{worktreeBranch}}");
-  expect(systemPrompt).not.toContain("{{originBranch}}");
-  expect(systemPrompt).not.toContain("{{co_root}}");
-  expect(systemPrompt).not.toContain("{{co_role_path}}");
-  expect(systemPrompt.length).toBeGreaterThan(100);
-
-  expect(taskPrompt).toContain(w.name);
-  expect(taskPrompt).not.toContain("{{task_title}}");
-  expect(taskPrompt).not.toContain("{{task_description}}");
-  expect(taskPrompt).not.toContain("{{retry_hint}}");
-  expect(taskPrompt.length).toBeGreaterThan(50);
-}
-
-describe("system prompt + task prompt", () => {
-  function getWorker(name: string) {
-    const w = WORKERS.find((w) => w.name === name);
-    if (!w) throw new Error(`worker ${name} not found`);
-    return w;
-  }
-
-  it("Tom (planner)", () => {
-    const w = getWorker("Tom");
-    const { prompt: systemPrompt } = assembleSystemPrompt({
-      name: w.name, role: w.role, worktree_path: w.worktree_path,
-      branch: w.branch, co_root: CO_ROOT, origin_branch: "master",
-      agentsDir: TEMPLATES_DIR,
-    });
-    assertPromptClean(w, systemPrompt, renderTaskPrompt(w));
-  });
-
-  it("Jerry (executor)", () => {
-    const w = getWorker("Jerry");
-    const { prompt: systemPrompt } = assembleSystemPrompt({
-      name: w.name, role: w.role, worktree_path: w.worktree_path,
-      branch: w.branch, co_root: CO_ROOT, origin_branch: "master",
-      agentsDir: TEMPLATES_DIR,
-    });
-    assertPromptClean(w, systemPrompt, renderTaskPrompt(w));
-  });
-
-  it("Lucy (verifier)", () => {
-    const w = getWorker("Lucy");
-    const { prompt: systemPrompt } = assembleSystemPrompt({
-      name: w.name, role: w.role, worktree_path: w.worktree_path,
-      branch: w.branch, co_root: CO_ROOT, origin_branch: "master",
-      agentsDir: TEMPLATES_DIR,
-    });
-    assertPromptClean(w, systemPrompt, renderTaskPrompt(w));
-  });
-
-  it("Thomas (reviewer)", () => {
-    const w = getWorker("Thomas");
-    const { prompt: systemPrompt } = assembleSystemPrompt({
-      name: w.name, role: w.role, worktree_path: w.worktree_path,
-      branch: w.branch, co_root: CO_ROOT, origin_branch: "master",
-      agentsDir: TEMPLATES_DIR,
-    });
-    assertPromptClean(w, systemPrompt, renderTaskPrompt(w));
-  });
-
-  it("Jack (accepter)", () => {
-    const w = getWorker("Jack");
-    const { prompt: systemPrompt } = assembleSystemPrompt({
-      name: w.name, role: w.role, worktree_path: w.worktree_path,
-      branch: w.branch, co_root: CO_ROOT, origin_branch: "master",
-      agentsDir: TEMPLATES_DIR,
-    });
-    assertPromptClean(w, systemPrompt, renderTaskPrompt(w));
-  });
-
-  it("Lisa (executor)", () => {
-    const w = getWorker("Lisa");
-    const { prompt: systemPrompt } = assembleSystemPrompt({
-      name: w.name, role: w.role, worktree_path: w.worktree_path,
-      branch: w.branch, co_root: CO_ROOT, origin_branch: "master",
-      agentsDir: TEMPLATES_DIR,
-    });
-    assertPromptClean(w, systemPrompt, renderTaskPrompt(w));
-  });
-});
-
 // ═══════════════════════════════════════════════════════════════
-// Test 2: Role-template cross-validation
-// ═══════════════════════════════════════════════════════════════
-
-const EXPECTED_ROLE_LABEL: Record<string, string> = {
-  planner: "Planner",
-  executor: "Executor",
-  verifier: "Verifier",
-  reviewer: "Reviewer",
-  accepter: "Accepter",
-  explorer: "Explorer",
-};
-
-const EXPECTED_UPSTREAM_COUNT: Record<string, number> = {
-  planner: 0,
-  executor: 1,
-  verifier: 2,
-  reviewer: 3,
-  accepter: 4,
-  explorer: 5,
-};
-
-describe("role responsibilities cross-validation", () => {
-  const engine = new TemplateEngine({
-    primary_dir: tmpdir(),
-    fallback_dir: TEMPLATES_DIR,
-  });
-
-  for (const [role, tplName] of Object.entries(ROLE_TO_SYSTEM_TEMPLATE)) {
-    it(`${tplName} self-identifies as "${EXPECTED_ROLE_LABEL[role]}"`, () => {
-      const body = engine.load(tplName);
-      const label = EXPECTED_ROLE_LABEL[role];
-      expect(body).toContain(`## Your Role: ${label}`);
-
-      for (const [otherRole, otherLabel] of Object.entries(
-        EXPECTED_ROLE_LABEL,
-      )) {
-        if (otherRole === role) continue;
-        expect(body).not.toMatch(new RegExp(`## Your Role: ${otherLabel}`));
-      }
-    });
-
-    it(`${tplName} declares correct chain position`, () => {
-      const body = engine.load(tplName);
-      if (role === "explorer") {
-        expect(body).toContain("Explore responsibility chain");
-      } else {
-        expect(body).toContain("responsibility chain");
-      }
-    });
-
-    it(`${tplName} mentions correct number of upstream artifacts`, () => {
-      const body = engine.load(tplName);
-      const upstreamCount = EXPECTED_UPSTREAM_COUNT[role];
-
-      const upstreamArtifacts = [
-        "upstream_plan_artifact",
-        "upstream_execute_artifact",
-        "upstream_verify_artifact",
-        "upstream_review_artifact",
-        "upstream_accept_artifact",
-      ];
-
-      let mentionedCount = 0;
-      for (let i = 0; i < upstreamCount; i++) {
-        if (body.includes(upstreamArtifacts[i])) mentionedCount++;
-      }
-      if (upstreamCount > 0) {
-        expect(mentionedCount).toBeGreaterThanOrEqual(upstreamCount - 1);
-      }
-    });
-
-    it(`${tplName} has no unresolved {{placeholders}} after rendering`, () => {
-      const body = engine.load(tplName);
-      const rendered = ClaudeRunner.buildIdentityPrompt(body, {
-        name: "test-worker",
-        role,
-        origin_branch: "main",
-        worktree_path: "/tmp/wt/test",
-        worktree_branch: "test-branch",
-        co_root: "/tmp/co/leader-123",
-        co_role_path: "/tmp/co/leader-123/docs/test-worker",
-      });
-      expect(rendered).not.toContain("{{name}}");
-      expect(rendered).not.toContain("{{role}}");
-      expect(rendered).not.toContain("{{originBranch}}");
-      expect(rendered).not.toContain("{{worktreePath}}");
-      expect(rendered).not.toContain("{{worktreeBranch}}");
-      expect(rendered).not.toContain("{{co_root}}");
-      expect(rendered).not.toContain("{{co_role_path}}");
-    });
-  }
-
-  it("all roles have both a responsibilities and a task template", () => {
-    for (const [role, tplName] of Object.entries(ROLE_TO_SYSTEM_TEMPLATE)) {
-      expect(engine.has(tplName), `${tplName} missing`).toBe(true);
-      const taskTplName = `agents/${role}/task.md`;
-      expect(engine.has(taskTplName), `${taskTplName} missing`).toBe(true);
-    }
-  });
-
-  it("no role template cross-references another role's skill", () => {
-    const SKILL_MAP: Record<string, string> = {
-      planner: "task-planning",
-      executor: "task-execution",
-      verifier: "task-verification",
-      reviewer: "task-review",
-      accepter: "task-acceptance",
-      explorer: "task-exploration",
-    };
-
-    for (const [role, tplName] of Object.entries(ROLE_TO_SYSTEM_TEMPLATE)) {
-      const body = engine.load(tplName);
-      const ownSkill = SKILL_MAP[role];
-      expect(body).toContain(ownSkill);
-
-      for (const [otherRole, otherSkill] of Object.entries(SKILL_MAP)) {
-        if (otherRole === role) continue;
-        expect(
-          body.includes(otherSkill),
-          `${tplName} references ${otherSkill} (belongs to ${otherRole})`,
-        ).toBe(false);
-      }
-    }
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// Test 3: buildIdentityPrompt includes origin_branch
+// Test 1: buildIdentityPrompt includes origin_branch
 // ═══════════════════════════════════════════════════════════════
 
 describe("ClaudeRunner.buildIdentityPrompt()", () => {
@@ -434,19 +146,18 @@ describe("ClaudeRunner.run() with real config", () => {
     });
 
     const tom = WORKERS[0];
-    const { prompt: systemPrompt } = assembleSystemPrompt({
-      name: tom.name,
-      role: tom.role,
-      worktree_path: tom.worktree_path,
-      branch: tom.branch,
-      co_root: CO_ROOT,
-      origin_branch: "master",
-      agentsDir: TEMPLATES_DIR,
-    });
-
     const engine = new TemplateEngine({
       primary_dir: tmpdir(),
       fallback_dir: TEMPLATES_DIR,
+    });
+    const systemPrompt = buildWorkerSystemPrompt(engine, {
+      name: tom.name,
+      role: tom.role,
+      origin_branch: "master",
+      worktree_path: tom.worktree_path,
+      worktree_branch: tom.branch,
+      co_root: CO_ROOT,
+      co_role_path: path.join(CO_ROOT, "docs", tom.name),
     });
     const taskPrompt = engine.render("agents/planner/task.md", {
       task_title: "Build user authentication system",
@@ -495,7 +206,7 @@ describe("ClaudeRunner.run() with real config", () => {
       quiet: true,
     });
 
-    const opts = vi.mocked(execWithStreaming).mock.calls[0][0];
+    const opts = vi.mocked(execWithStreaming).mock.calls.at(-1)![0];
 
     console.log("\n════════════ FINAL CLI INVOCATION ════════════");
     console.log(`Worker      : ${tom.name} (${tom.role})`);

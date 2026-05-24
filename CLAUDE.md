@@ -13,7 +13,7 @@ pnpm pkgcheck                    # per-package dependency whitelist enforcement
 pnpm test                        # vitest run (all packages, --workspace-concurrency=1)
 pnpm --filter @co/contracts test # Single package
 pnpm --filter @co/leader test:watch # Watch mode for one package
-pnpm --filter @co/runtime test -- -t "Tom"  # Run a single test by name pattern
+pnpm --filter @co/runtime test -t "Tom"   # Run a single test by name pattern (no -- separator: vitest needs -t as a flag)
 ```
 
 Start the orchestrator: `node bin/claude-orchestrator run --worker 6` (requires `pnpm -r build` first). The in-memory message protocol is the default — no external services needed.

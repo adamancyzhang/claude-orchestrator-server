@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { extractJson } from "@co/runtime";
+import { extractJson, renderDecomposePrompt } from "@co/runtime";
 import {
   ChainConflictError,
   ChainDefSchema,
@@ -33,6 +33,7 @@ import {
   asTaskId,
   cachePaths,
   asChainId,
+  TemplateNotFoundError,
 } from "@co/contracts";
 import type { CommitInfo } from "./merge-validator.js";
 import type { ChainAudit, LinkCommitRecord } from "./chain-audit.js";
@@ -425,91 +426,74 @@ export class ChainRouter {
       if (handled) return;
     }
 
-    if (this.opts.template_engine.has("workflow/decompose.md")) {
-      const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
-      const resultPath = cachePaths.decomposeResultPath(
-        this.opts.cache_paths,
-        msg.id,
-      );
-      await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
+    if (!this.opts.template_engine.has("workflow/decompose.md")) {
+      throw new TemplateNotFoundError("workflow/decompose.md");
+    }
 
-      const prompt = this.opts.template_engine.render("workflow/decompose.md", {
-        name: this.opts.leader_name,
-        role: "leader",
-        task_title: msg.task_title ?? "",
-        task_description: msg.task_description ?? msg.content,
-        task_criteria: msg.task_criteria ?? "",
-        result_path: resultPath,
-        work_dir: process.cwd(),
-        time: new Date().toISOString(),
-        content: msg.content,
-        co_root: cachePaths.coRootDir(this.opts.cache_paths),
-        // magic-mode awareness for the decompose template:
-        // when "true" the template must also emit an `explore` task.
-        magic_mode: this.opts.magic_mode ? "true" : "false",
-        magic_max_chains:
-          this.opts.magic_max_chains == null
-            ? "unlimited"
-            : String(this.opts.magic_max_chains),
-      });
-      if (this.opts.hooks) {
-        await this.opts.hooks.fire({
-          type: "leader_message_start",
-          env: {
-            CO_LEADER_ID: this.opts.leader_id,
-            CO_MESSAGE_ID: msg.id as never,
-            CO_LINK: "",
-            CO_LOG_PATH: logPath,
-          },
-        });
-      }
-      const runResult = await this.opts.runner.run({
-        prompt,
-        log_path: logPath,
-        on_chunk: (chunk) => {
-          this.opts.bus.emit({
-            type: "stream_chunk",
-            instance_id: this.opts.leader_id,
-            chunk: chunk.text ?? chunk.raw,
-          });
+    const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
+    const resultPath = cachePaths.decomposeResultPath(
+      this.opts.cache_paths,
+      msg.id,
+    );
+    await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
+
+    const prompt = renderDecomposePrompt(this.opts.template_engine, {
+      name: this.opts.leader_name,
+      role: "leader",
+      task_title: msg.task_title ?? "",
+      task_description: msg.task_description ?? msg.content,
+      task_criteria: msg.task_criteria ?? "",
+      result_path: resultPath,
+      work_dir: process.cwd(),
+      time: new Date().toISOString(),
+      content: msg.content,
+      co_root: cachePaths.coRootDir(this.opts.cache_paths),
+      magic_mode: this.opts.magic_mode ? "true" : "false",
+      magic_max_chains:
+        this.opts.magic_max_chains == null
+          ? "unlimited"
+          : String(this.opts.magic_max_chains),
+    });
+    if (this.opts.hooks) {
+      await this.opts.hooks.fire({
+        type: "leader_message_start",
+        env: {
+          CO_LEADER_ID: this.opts.leader_id,
+          CO_MESSAGE_ID: msg.id as never,
+          CO_LINK: "",
+          CO_LOG_PATH: logPath,
         },
       });
-      if (this.opts.hooks) {
-        await this.opts.hooks.fire({
-          type: "leader_message_end",
-          env: {
-            CO_LEADER_ID: this.opts.leader_id,
-            CO_MESSAGE_ID: msg.id as never,
-            CO_LINK: "",
-            CO_LOG_PATH: logPath,
-            exit_code: runResult.exit_code,
-          },
+    }
+    const runResult = await this.opts.runner.run({
+      prompt,
+      log_path: logPath,
+      on_chunk: (chunk) => {
+        this.opts.bus.emit({
+          type: "stream_chunk",
+          instance_id: this.opts.leader_id,
+          chunk: chunk.text ?? chunk.raw,
         });
-      }
-      const resultContent = await fs.promises.readFile(resultPath, "utf-8");
-      const cleaned = extractJson(resultContent);
-      await this.handleTaskDefinitions(
-        { ...msg, content: cleaned },
-        originalRequirement,
-      );
-      return;
-    }
-
-    const planner = await this.findIdleWorkerByRole("planner");
-    if (!planner) {
-      this.opts.logger.warn("no planner available — requirement dropped");
-      return;
-    }
-    await this.opts.message_router.send({
-      type: "task_dispatch",
-      from_instance: this.opts.leader_id,
-      from_name: this.opts.leader_name,
-      from_role: "leader",
-      to_instance: planner.id,
-      content: msg.content,
-      link: "plan",
-      task_description: msg.content,
+      },
     });
+    if (this.opts.hooks) {
+      await this.opts.hooks.fire({
+        type: "leader_message_end",
+        env: {
+          CO_LEADER_ID: this.opts.leader_id,
+          CO_MESSAGE_ID: msg.id as never,
+          CO_LINK: "",
+          CO_LOG_PATH: logPath,
+          exit_code: runResult.exit_code,
+        },
+      });
+    }
+    const resultContent = await fs.promises.readFile(resultPath, "utf-8");
+    const cleaned = extractJson(resultContent);
+    await this.handleTaskDefinitions(
+      { ...msg, content: cleaned },
+      originalRequirement,
+    );
   }
 
   private async handleTaskDefinitions(

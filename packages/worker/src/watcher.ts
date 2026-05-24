@@ -19,6 +19,7 @@ import {
   type TaskId,
   type TaskLink,
   type UpstreamCommits,
+  TemplateNotFoundError,
 } from "@co/contracts";
 import { ClaudeRunner } from "@co/runtime";
 import type { SelfEvaluator } from "./evaluator.js";
@@ -353,7 +354,9 @@ export class WorkerWatcher {
     const renderPrompt = (retryHint: string): string => {
       if (!link) return msg.content;
       const tplName = LINK_TO_TASK_TEMPLATE[link];
-      if (!this.opts.template_engine.has(tplName)) return msg.content;
+      if (!this.opts.template_engine.has(tplName)) {
+        throw new TemplateNotFoundError(tplName);
+      }
       const upstreamCommits = msg.upstream_commits ?? {};
       return this.opts.template_engine.render(tplName, {
         name: this.opts.worker_name,

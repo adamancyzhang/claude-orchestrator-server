@@ -9,6 +9,7 @@ import {
   type SessionId,
   type TaskId,
   type TaskLink,
+  TemplateNotFoundError,
 } from "@co/contracts";
 
 export interface CommitResult {
@@ -112,9 +113,8 @@ export class CommitChecker {
     untracked: string[],
     resumeSessionId?: SessionId,
   ): Promise<string> {
-    const fallback = `chore: auto-commit from ${this.opts.worker_name}`;
     if (!this.opts.template_engine.has("worker-commit-message.md")) {
-      return fallback;
+      throw new TemplateNotFoundError("worker-commit-message.md");
     }
     const prompt = this.opts.template_engine.render("worker-commit-message.md", {
       changed_files: changed.map((f) => `  ${f}`).join("\n"),
@@ -132,12 +132,12 @@ export class CommitChecker {
       });
       const output = await fs.promises.readFile(logPath, "utf-8");
       const firstLine = output.trim().split("\n")[0].slice(0, 72);
-      return firstLine || fallback;
+      return firstLine || `chore: auto-commit from ${this.opts.worker_name}`;
     } catch (err) {
       this.opts.logger.warn("commit message generation failed", {
         error: String(err),
       });
-      return fallback;
+      return `chore: auto-commit from ${this.opts.worker_name}`;
     }
   }
 }

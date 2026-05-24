@@ -281,6 +281,7 @@ export async function runOrchestrator(
 
   const templateEngine = new TemplateEngine({
     primary_dir: path.join(paths.template_dir, "agents"),
+    fallback_dir: paths.template_dir,
   });
   const runner: IClaudeRunner = deps.claude_runner_factory
     ? deps.claude_runner_factory(resolved.commands.claude_cli, logger.child("runner"))

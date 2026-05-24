@@ -7,7 +7,7 @@ import {
   type InstanceId,
   type IZkClient,
 } from "@co/contracts";
-import { ClaudeRunner, HookEngine, TemplateEngine } from "@co/runtime";
+import { buildWorkerSystemPrompt, ClaudeRunner, HookEngine, TemplateEngine } from "@co/runtime";
 import {
   InstanceRegistry,
   MessageRouter,
@@ -128,39 +128,16 @@ export class InProcessSupervisor implements IChildSupervisor {
 
     const runner = new ClaudeRunner(this.opts.cli_command, logger);
 
-    // Same identity-card assembly as child-boot.ts
-    const ROLE_TO_SYSTEM_TEMPLATE: Record<string, string> = {
-      planner: "agents/planner/responsibilities.md",
-      executor: "agents/executor/responsibilities.md",
-      verifier: "agents/verifier/responsibilities.md",
-      reviewer: "agents/reviewer/responsibilities.md",
-      accepter: "agents/accepter/responsibilities.md",
-      explorer: "agents/explorer/responsibilities.md",
-    };
-    const identityTpl = templateEngine.has("agents/worker-identity.md")
-      ? templateEngine.load("agents/worker-identity.md")
-      : "You are {{name}}, a {{role}}.";
     const coRoot = cachePaths.coRootDir(this.opts.cache_paths);
-    const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[cfg.role];
-    const roleTpl =
-      roleTplName && templateEngine.has(roleTplName)
-        ? templateEngine.load(roleTplName)
-        : "";
-    const identityParts = [identityTpl, roleTpl].filter(
-      (s) => s.length > 0,
-    );
-    const identitySystemPrompt = ClaudeRunner.buildIdentityPrompt(
-      identityParts.join("\n\n---\n\n"),
-      {
-        name: cfg.name,
-        role: cfg.role,
-        origin_branch: null,
-        worktree_path: cfg.worktree_path,
-        worktree_branch: cfg.branch,
-        co_root: coRoot,
-        co_role_path: path.join(coRoot, "docs", cfg.name),
-      },
-    );
+    const identitySystemPrompt = buildWorkerSystemPrompt(templateEngine, {
+      name: cfg.name,
+      role: cfg.role,
+      origin_branch: null,
+      worktree_path: cfg.worktree_path,
+      worktree_branch: cfg.branch,
+      co_root: coRoot,
+      co_role_path: path.join(coRoot, "docs", cfg.name),
+    });
 
     const evaluator = new SelfEvaluator({
       runner,

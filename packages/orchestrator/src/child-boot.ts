@@ -8,6 +8,7 @@ import {
 } from "@co/contracts";
 import { Logger, ZkClient } from "@co/infra";
 import {
+  buildWorkerSystemPrompt,
   ClaudeRunner,
   HookEngine,
   TemplateEngine,
@@ -79,41 +80,16 @@ async function boot(config: ChildConfig): Promise<void> {
 
   const runner = new ClaudeRunner(config.cli_command, logger);
 
-  // System prompt = identity card + (per-role) standing responsibility
-  // description. Both are fixed for this Worker's process lifetime so
-  // claude-cli prompt caching can keep them hot across tasks.
-  const ROLE_TO_SYSTEM_TEMPLATE: Record<string, string> = {
-    planner: "agents/planner/responsibilities.md",
-    executor: "agents/executor/responsibilities.md",
-    verifier: "agents/verifier/responsibilities.md",
-    reviewer: "agents/reviewer/responsibilities.md",
-    accepter: "agents/accepter/responsibilities.md",
-    explorer: "agents/explorer/responsibilities.md",
-  };
-  const identityTpl = templateEngine.has("agents/worker-identity.md")
-    ? templateEngine.load("agents/worker-identity.md")
-    : "You are {{name}}, a {{role}}.";
   const coRoot = path.join(config.projects_root, config.leader_instance_id);
-  const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[config.role];
-  const roleTpl =
-    roleTplName && templateEngine.has(roleTplName)
-      ? templateEngine.load(roleTplName)
-      : "";
-  const identityParts = [identityTpl, roleTpl].filter(
-    (s) => s.length > 0,
-  );
-  const identitySystemPrompt = ClaudeRunner.buildIdentityPrompt(
-    identityParts.join("\n\n---\n\n"),
-    {
-      name: config.name,
-      role: config.role,
-      origin_branch: config.origin_branch ?? null,
-      worktree_path: config.worktree_path,
-      worktree_branch: config.branch,
-      co_root: coRoot,
-      co_role_path: path.join(coRoot, "docs", config.name),
-    },
-  );
+  const identitySystemPrompt = buildWorkerSystemPrompt(templateEngine, {
+    name: config.name,
+    role: config.role,
+    origin_branch: config.origin_branch ?? null,
+    worktree_path: config.worktree_path,
+    worktree_branch: config.branch,
+    co_root: coRoot,
+    co_role_path: path.join(coRoot, "docs", config.name),
+  });
 
   const cachePathOpts = {
     projects_root: config.projects_root,
