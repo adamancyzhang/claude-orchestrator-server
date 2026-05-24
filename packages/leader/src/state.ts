@@ -43,6 +43,11 @@ export class LeaderState implements ILeaderStateView {
   private _selected = 0;
   private _magic_mode = false;
   private _magic_max_chains: number | null = null;
+  private _onChange: (() => void) | null = null;
+
+  onChange(fn: () => void): void {
+    this._onChange = fn;
+  }
 
   get workers(): readonly WorkerInfo[] {
     return this._workers as readonly WorkerInfo[];
@@ -71,7 +76,11 @@ export class LeaderState implements ILeaderStateView {
       this._selected = 0;
       return;
     }
-    this._selected = Math.max(0, Math.min(idx, this._workers.length - 1));
+    const next = Math.max(0, Math.min(idx, this._workers.length - 1));
+    if (next !== this._selected) {
+      this._selected = next;
+      this._onChange?.();
+    }
   }
 
   apply(event: LeaderEvent): void {

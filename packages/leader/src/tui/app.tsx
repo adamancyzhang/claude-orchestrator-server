@@ -190,17 +190,29 @@ export default function App({
   const FIXED_OVERHEAD = 16;
   const contentRows = Math.max(4, rows - FIXED_OVERHEAD);
 
-  const teamH = Math.max(3, Math.round(contentRows * PROPS.team));
-  const tasksH = Math.max(4, Math.round(contentRows * PROPS.tasks));
-  const msgsH = Math.max(4, Math.round(contentRows * PROPS.messages));
-  const logH = Math.max(3, contentRows - teamH - tasksH - msgsH);
+  // Minimum heights that keep at least the title visible in each panel.
+  // borderStyle="round" eats 2 rows (top + bottom), so height=3 → 1 content row.
+  const MIN_TEAM = 3;
+  const MIN_TASKS = 3;
+  const MIN_MSGS = 3;
+  const MIN_LOG = 3;
+
+  // Allocate minimums first, then distribute the remainder proportionally.
+  const minTotal = MIN_TEAM + MIN_TASKS + MIN_MSGS + MIN_LOG;
+  const extra = Math.max(0, contentRows - minTotal);
+
+  const teamH = MIN_TEAM + Math.round(extra * PROPS.team);
+  const tasksH = MIN_TASKS + Math.round(extra * PROPS.tasks);
+  const msgsH = MIN_MSGS + Math.round(extra * PROPS.messages);
+  // Log gets whatever is left so the total always equals contentRows
+  const logH = Math.max(MIN_LOG, contentRows - teamH - tasksH - msgsH);
 
   // Items that fit in each panel (subtract header + separator rows)
   const pendingMax = Math.max(1, tasksH - 3);
   const inProgressMax = Math.max(1, tasksH - 3);
 
   return (
-    <Box flexDirection="column" padding={1} height={rows}>
+    <Box flexDirection="column" padding={1} height={rows} overflow="hidden">
       {/* ── TEAM ── */}
       <Box borderStyle="round" height={teamH} overflow="hidden" flexShrink={0}>
         <TeamPanel

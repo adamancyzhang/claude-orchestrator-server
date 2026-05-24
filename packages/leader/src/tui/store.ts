@@ -38,10 +38,14 @@ export function createStateStore(
   let cachedSnapshot: StateSnapshot | null = null;
   const listeners = new Set<() => void>();
 
-  const unsub = bus.onAny(() => {
+  const notify = () => {
     version++;
     for (const fn of listeners) fn();
-  });
+  };
+
+  const unsub = bus.onAny(() => notify());
+
+  state.onChange(() => notify());
 
   return {
     subscribe(fn: () => void) {
