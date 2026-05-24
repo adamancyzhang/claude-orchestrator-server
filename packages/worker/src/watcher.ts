@@ -414,18 +414,28 @@ export class WorkerWatcher {
     };
     let retryHint = "";
     let failure: GenerationFailure | null = null;
+    let assistantResponse = "";
     const maxAttempts = isChainLink ? MAX_GENERATION_RETRIES : 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const prompt = renderPrompt(retryHint);
+      let attemptText = "";
       result = await this.opts.runner.run({
         prompt,
         log_path: logPath,
         system_prompt: this.opts.identity_system_prompt,
         cwd: this.opts.worktree_path,
         quiet: true,
+        on_chunk: (chunk) => {
+          if (chunk.text) {
+            attemptText += chunk.text;
+          }
+        },
       });
       failure = await validateOutput(result);
-      if (!failure) break;
+      if (!failure) {
+        assistantResponse = attemptText;
+        break;
+      }
       this.opts.logger.warn("worker output failed validation", {
         attempt,
         max: maxAttempts,
@@ -483,6 +493,23 @@ export class WorkerWatcher {
       }
       await this.opts.message_router.dismiss(this.opts.instance_id, msg.id);
       return;
+    }
+
+    // Send accumulated assistant response text to the leader so it
+    // appears in the TUI worker-messages panel before the completion
+    // report overwrites the current message.
+    if (assistantResponse) {
+      await this.opts.message_router.send({
+        type: "direct",
+        from_instance: this.opts.instance_id,
+        from_name: this.opts.worker_name,
+        from_role: this.opts.worker_role,
+        to_instance: this.opts.leader_id,
+        content: assistantResponse,
+        link: (link as TaskLink) ?? null,
+        chain_id: msg.chain_id ?? null,
+        task_id: taskId,
+      });
     }
 
     let commit: CommitResult | null = null;

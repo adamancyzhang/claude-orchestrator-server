@@ -469,7 +469,7 @@ export class ChainRouter {
           this.opts.bus.emit({
             type: "stream_chunk",
             instance_id: this.opts.leader_id,
-            chunk: chunk.raw,
+            chunk: chunk.text ?? chunk.raw,
           });
         },
       });
