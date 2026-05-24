@@ -339,3 +339,4 @@ function seedWorktreeAssets(
     fs.copyFileSync(teamSrc, teamDst);
   }
 }
+

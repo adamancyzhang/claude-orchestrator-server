@@ -123,6 +123,26 @@ export interface ChainAuditOptions {
 export class ChainAudit {
   constructor(private readonly opts: ChainAuditOptions) {}
 
+  /**
+   * Manifest writes go through here so a crash mid-write leaves either
+   * the old valid file or no file — never a half-written one. Implements
+   * the recommendation in `docs/evals/02-leader-worker-communication.md`
+   * §8.6 (D6). `fs.promises.rename` is atomic within a POSIX filesystem
+   * and chains/<chain_id>/ never crosses filesystems, so the swap is safe.
+   */
+  private async writeManifestAtomic(
+    manifestPath: string,
+    manifest: ChainManifest,
+  ): Promise<void> {
+    const tmp = `${manifestPath}.tmp-${process.pid}-${Date.now()}`;
+    await fs.promises.writeFile(
+      tmp,
+      JSON.stringify(manifest, null, 2),
+      "utf-8",
+    );
+    await fs.promises.rename(tmp, manifestPath);
+  }
+
   async openChain(chainId: ChainId, meta: ChainOpenMeta): Promise<void> {
     const manifestPath = cachePaths.chainManifestPath(
       this.opts.cache_paths,
@@ -171,11 +191,7 @@ export class ChainAudit {
       chain_depth: meta.chain_depth ?? 0,
       magic_mode: meta.magic_mode ?? false,
     };
-    await fs.promises.writeFile(
-      manifestPath,
-      JSON.stringify(manifest, null, 2),
-      "utf-8",
-    );
+    await this.writeManifestAtomic(manifestPath, manifest);
     await this.record(chainId, {
       event: "chain_opened",
       payload: { ...meta },
@@ -202,11 +218,7 @@ export class ChainAudit {
     if (manifest.max_total_retries == null) {
       manifest.max_total_retries = DEFAULT_MAX_TOTAL_RETRIES;
     }
-    await fs.promises.writeFile(
-      manifestPath,
-      JSON.stringify(manifest, null, 2),
-      "utf-8",
-    );
+    await this.writeManifestAtomic(manifestPath, manifest);
     return {
       total_retry_count: manifest.total_retry_count,
       max_total_retries: manifest.max_total_retries,
@@ -231,11 +243,7 @@ export class ChainAudit {
       return;
     }
     manifest.link_tasks[link] = taskId;
-    await fs.promises.writeFile(
-      manifestPath,
-      JSON.stringify(manifest, null, 2),
-      "utf-8",
-    );
+    await this.writeManifestAtomic(manifestPath, manifest);
   }
 
   /**
@@ -266,11 +274,7 @@ export class ChainAudit {
     }
     manifest.link_commits ??= {};
     manifest.link_commits[link] = commits;
-    await fs.promises.writeFile(
-      manifestPath,
-      JSON.stringify(manifest, null, 2),
-      "utf-8",
-    );
+    await this.writeManifestAtomic(manifestPath, manifest);
   }
 
   /**
@@ -318,11 +322,7 @@ export class ChainAudit {
       }
     }
     if (mutated) {
-      await fs.promises.writeFile(
-        manifestPath,
-        JSON.stringify(manifest, null, 2),
-        "utf-8",
-      );
+      await this.writeManifestAtomic(manifestPath, manifest);
     }
   }
 
@@ -352,11 +352,7 @@ export class ChainAudit {
       explore: null,
     };
     manifest.link_workers[link] = workerId;
-    await fs.promises.writeFile(
-      manifestPath,
-      JSON.stringify(manifest, null, 2),
-      "utf-8",
-    );
+    await this.writeManifestAtomic(manifestPath, manifest);
   }
 
   async record(
@@ -395,11 +391,7 @@ export class ChainAudit {
     if (manifest) {
       manifest.status = status;
       manifest.completed_at = new Date().toISOString();
-      await fs.promises.writeFile(
-        manifestPath,
-        JSON.stringify(manifest, null, 2),
-        "utf-8",
-      );
+      await this.writeManifestAtomic(manifestPath, manifest);
     }
     await this.record(chainId, {
       event: "chain_closed",
@@ -455,11 +447,7 @@ export class ChainAudit {
     }
     if (!manifest.child_chain_ids.includes(childChainId)) {
       manifest.child_chain_ids.push(childChainId);
-      await fs.promises.writeFile(
-        manifestPath,
-        JSON.stringify(manifest, null, 2),
-        "utf-8",
-      );
+      await this.writeManifestAtomic(manifestPath, manifest);
     }
   }
 }
