@@ -13,16 +13,8 @@ import InputLine from "./panels/input-line.js";
 import Footer from "./panels/footer.js";
 
 const MIN_COLS = 80;
-const MIN_ROWS = 35;
+const MIN_ROWS = 37;
 const SENT_INDICATOR_MS = 2000;
-
-// Proportions of content area allocated to each panel
-const PROPS = {
-  team: 0.15,
-  tasks: 0.22,
-  messages: 0.28,
-  // event log gets the remainder
-};
 
 interface Props {
   store: StateStore;
@@ -75,16 +67,11 @@ export default function App({
     prevEventCount.current = snapshot.events.length;
   }, [snapshot.events.length]);
 
-  // Auto-scroll team panel to keep selected worker visible
+  // Auto-scroll team panel to keep selected worker visible (page size = 6)
   useEffect(() => {
-    const contentRows = Math.max(4, rows - 6);
-    const minTotal = 11 + 5 + 6 + 7;
-    const extra = Math.max(0, contentRows - minTotal);
-    const teamH = 11 + Math.round(extra * PROPS.team);
-    const pageSize = Math.max(6, teamH - 5);
-    const currentPage = Math.floor(snapshot.selected_worker_index / pageSize);
+    const currentPage = Math.floor(snapshot.selected_worker_index / 6);
     setTeamScrollOffset(currentPage);
-  }, [snapshot.selected_worker_index, rows]);
+  }, [snapshot.selected_worker_index]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -170,20 +157,16 @@ export default function App({
       return;
     }
 
-    // [ / ] : team panel page navigation
+    // [ / ] : team panel page navigation (6 workers per page)
     if (input === "[" || input === "]") {
       if (snapshot.workers.length > 0) {
-        const contentRows = Math.max(4, rows - 6);
-        const minTotal = 11 + 5 + 6 + 7;
-        const extra = Math.max(0, contentRows - minTotal);
-        const teamH = 11 + Math.round(extra * PROPS.team);
-        const ps = Math.max(6, teamH - 5);
-        const totalPages = Math.max(1, Math.ceil(snapshot.workers.length / ps));
+        const pageSize = 6;
+        const totalPages = Math.max(1, Math.ceil(snapshot.workers.length / pageSize));
         const delta = input === "[" ? -1 : 1;
         const newOffset = Math.max(0, Math.min(totalPages - 1, teamScrollOffset + delta));
         if (newOffset !== teamScrollOffset) {
           setTeamScrollOffset(newOffset);
-          leaderState.setSelectedWorkerIndex(newOffset * ps);
+          leaderState.setSelectedWorkerIndex(newOffset * pageSize);
         }
       }
       return;
@@ -212,30 +195,20 @@ export default function App({
     );
   }
 
-  // Fixed overhead: rows consumed by chrome (not the 4 proportional panels).
-  // Border rows are inside panel heights (teamH/tasksH/msgsH/logH), not here.
+  // Fixed-height layout. Only the worker messages panel grows with the terminal.
+  // borderStyle="round" eats 2 rows per panel; content rows = height - 2.
+  //
+  //   overhead(6) + team(11) + tasks(7) + log(7) + msgs(min 6) = 37 = MIN_ROWS
   const FIXED_OVERHEAD = 6; // outer padding(2) + input(3) + footer(1)
   const contentRows = Math.max(4, rows - FIXED_OVERHEAD);
 
-  // Minimum heights per panel. borderStyle="round" eats 2 rows (top + bottom).
-  // MIN_TEAM=11 gives 9 content rows: title + separator + header + 6 workers.
-  const MIN_TEAM = 11;
-  const MIN_TASKS = 5;
-  const MIN_MSGS = 6;
-  const MIN_LOG = 7;
+  const teamH = 11;   // border(2) + title(1) + sep(1) + header(1) + workers(6)
+  const tasksH = 7;   // border(2) + title(1) + sep(1) + items(3)
+  const logH = 7;     // border(2) + title(1) + sep(1) + events(3)
+  const MIN_MSGS = 6; // border(2) + title(1) + sep(1) + status(1) + history(1)
+  const msgsH = Math.max(MIN_MSGS, contentRows - teamH - tasksH - logH);
 
-  // Allocate minimums first, then distribute the remainder proportionally.
-  const minTotal = MIN_TEAM + MIN_TASKS + MIN_MSGS + MIN_LOG;
-  const extra = Math.max(0, contentRows - minTotal);
-
-  const teamH = MIN_TEAM + Math.round(extra * PROPS.team);
-  const tasksH = MIN_TASKS + Math.round(extra * PROPS.tasks);
-  const msgsH = MIN_MSGS + Math.round(extra * PROPS.messages);
-  // Log gets whatever is left so the total always equals contentRows
-  const logH = Math.max(MIN_LOG, contentRows - teamH - tasksH - msgsH);
-
-  // Items that fit in each panel (height - 2 border - 2 header rows)
-  const pendingMax = Math.max(1, tasksH - 4);
+  const pendingMax = Math.max(1, tasksH - 4);   // 3 items at height 7
   const inProgressMax = Math.max(1, tasksH - 4);
 
   return (
@@ -245,7 +218,7 @@ export default function App({
         <TeamPanel
           workers={snapshot.workers}
           selectedIndex={snapshot.selected_worker_index}
-          maxWorkers={Math.max(6, teamH - 5)}
+          maxWorkers={6}
           scrollOffset={teamScrollOffset}
         />
       </Box>
