@@ -42,11 +42,20 @@ export class CommitChecker {
     ctx: CommitContext,
     resumeSessionId?: SessionId,
   ): Promise<CommitResult | null> {
-    const status = execFileSync("git", ["status", "--porcelain"], {
-      cwd: this.opts.worktree_path,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    // -uall expands untracked directories into individual file entries so
+    // SEEDED_STATE_PATH_PREFIXES can match per-file paths under
+    // .claude-orchestrator/agents/ etc. Without it, git status emits a
+    // single ".claude-orchestrator/" entry that the prefix filter would
+    // not match, sweeping the seeded-state files into the commit.
+    const status = execFileSync(
+      "git",
+      ["status", "--porcelain", "--untracked-files=all"],
+      {
+        cwd: this.opts.worktree_path,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     if (!status.trim()) {
       this.opts.logger.info("no changes to commit");
       return null;
@@ -191,7 +200,11 @@ function parseStatus(status: string): {
   const changed: string[] = [];
   const untracked: string[] = [];
   const paths: string[] = [];
-  for (const line of status.trim().split("\n")) {
+  // Note: split on "\n" only (no .trim()); the porcelain XY code is two
+  // chars and may begin with a space (unstaged-modified is " M"). Stripping
+  // the leading space would shift every column right and make slice(3)
+  // start one character into the filename.
+  for (const line of status.split("\n")) {
     if (!line) continue;
     const code = line.slice(0, 2);
     const rest = line.slice(3);
