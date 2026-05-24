@@ -443,6 +443,7 @@ export class ChainRouter {
         work_dir: process.cwd(),
         time: new Date().toISOString(),
         content: msg.content,
+        co_root: cachePaths.coRootDir(this.opts.cache_paths),
         // magic-mode awareness for the decompose template:
         // when "true" the template must also emit an `explore` task.
         magic_mode: this.opts.magic_mode ? "true" : "false",

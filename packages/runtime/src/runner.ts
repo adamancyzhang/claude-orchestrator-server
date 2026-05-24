@@ -61,7 +61,7 @@ export class ClaudeRunner implements IClaudeRunner {
         : undefined,
     });
 
-    if (exit_code !== 0 && !opts.quiet) {
+    if (exit_code !== 0) {
       this.logger.warn("ClaudeRunner.run non-zero exit", {
         exit_code,
         log_path: opts.log_path,

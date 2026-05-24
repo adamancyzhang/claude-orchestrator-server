@@ -75,7 +75,7 @@ export class LeaderWatcher {
       content: msg.content,
     });
 
-    if (msg.from_instance !== this.leader_id) {
+    if (msg.from_instance !== this.leader_id && msg.type === "direct") {
       this.bus.emit({
         type: "worker_message_received",
         instance_id: msg.from_instance,

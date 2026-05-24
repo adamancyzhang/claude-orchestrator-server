@@ -56,7 +56,7 @@ function eventToString(event: LeaderEvent): string {
     case "debug_info":
       return `[debug] ${event.message}`;
     case "stream_chunk":
-      return event.chunk;
+      return "";
   }
 }
 
