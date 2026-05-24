@@ -12,4 +12,4 @@ sessions/
 **/.claude-orchestrator/
 !.claude-orchestrator/docs/
 countlines-cli/
-examples-workspace
+evals

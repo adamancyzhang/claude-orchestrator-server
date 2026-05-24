@@ -306,7 +306,7 @@ export async function runOrchestrator(
     project_root: projectRoot,
     runner,
     template_engine: templateEngine,
-    template_name: "worker-merge-decision.md",
+    template_name: "workflow/merge-decision.md",
     bus,
     hooks: hookEngine,
     chain_audit: chainAudit,
@@ -436,6 +436,7 @@ export async function runOrchestrator(
     git_remote: resolved.git.remote,
     hooks: resolved.hooks,
     magic_mode: magicMode,
+    origin_branch: resolved.git.merge_target_branch,
     logger: logger.child("supervisor"),
   };
   const supervisor: IChildSupervisor = deps.supervisor_factory

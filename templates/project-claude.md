@@ -16,7 +16,7 @@ All roles use `task-traceability` as the foundational traceability layer: Trace 
 
 ## Documentation Directory
 
-All work artifacts go under `{{co_root}}/docs/{{name}}/YYYY-MM-DD/`. Do not scatter documents elsewhere.
+All work artifacts go under `{{co_role_path}}/YYYY-MM-DD/`. Do not scatter documents elsewhere.
 
 Each role's typical outputs:
 
@@ -30,7 +30,7 @@ Each role's typical outputs:
 
 ## Daily Working Directory
 
-Your daily directory is `{{co_root}}/docs/{{name}}/YYYY-MM-DD/`. Each daily directory must contain a `CLAUDE.md` as directory memory.
+Your daily directory is `{{co_role_path}}/YYYY-MM-DD/`. Each daily directory must contain a `CLAUDE.md` as directory memory.
 
 **Workflow:**
 - **Start:** Navigate to today's directory. Read `CLAUDE.md` if it exists to restore context. Otherwise, create the directory and seed a fresh `CLAUDE.md`.
@@ -44,7 +44,7 @@ When your link depends on previous work:
 | Your Link | Read From `{{co_root}}/docs/` |
 |-----------|--------------------------------------|
 | Execute | `{planner_name}/YYYY-MM-DD/blueprint.md` |
-| Verify | `{planner}/.../blueprint.md` + `{executor}/.../traceability-map.md` |
+| Verify | `{planner_name}/.../blueprint.md` + `{executor_name}/.../traceability-map.md` |
 | Review | Planner + Executor + Verifier artifacts |
 | Accept | All four upstream artifacts |
 
@@ -52,7 +52,7 @@ If an upstream artifact is missing, check the chain-shared cache copy provided i
 
 ## Your Personal CLAUDE.md
 
-Your role-specific rules are at `{{co_root}}/docs/{{name}}/CLAUDE.md`. Read it at the start of every session.
+Your role-specific rules are at `{{co_role_path}}/CLAUDE.md`. Read it at the start of every session.
 
 ## Git Rules
 

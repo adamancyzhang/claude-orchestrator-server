@@ -320,30 +320,20 @@ function seedWorktreeAssets(
 ): void {
   if (!fs.existsSync(templateDir)) return;
 
-  const agentsSrc = path.join(templateDir, "agents");
   const agentsDst = path.join(worktreePath, ".claude-orchestrator", "agents");
-  if (fs.existsSync(agentsSrc)) {
+
+  // Seed identity card and per-role templates
+  for (const subdir of ["agents", "workflow"]) {
+    const srcDir = path.join(templateDir, subdir);
+    if (!fs.existsSync(srcDir)) continue;
     fs.mkdirSync(agentsDst, { recursive: true });
-    for (const file of fs.readdirSync(agentsSrc)) {
-      const src = path.join(agentsSrc, file);
+    for (const file of fs.readdirSync(srcDir, { recursive: true, encoding: "utf-8" })) {
+      const src = path.join(srcDir, file);
       const dst = path.join(agentsDst, file);
+      if (fs.statSync(src).isDirectory()) continue;
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
       if (!fs.existsSync(dst)) fs.copyFileSync(src, dst);
     }
-  }
-
-  // Seed the second-segment identity-card template into the same dir so
-  // TemplateEngine.primary_dir can locate `personal-claude-<role>.md`
-  // alongside the worker-* templates. Only the current Worker's role is
-  // seeded — other roles' personal memories are irrelevant here.
-  const personalSrc = path.join(
-    templateDir,
-    "claude-memory",
-    `personal-claude-${role}.md`,
-  );
-  if (fs.existsSync(personalSrc)) {
-    fs.mkdirSync(agentsDst, { recursive: true });
-    const personalDst = path.join(agentsDst, `personal-claude-${role}.md`);
-    if (!fs.existsSync(personalDst)) fs.copyFileSync(personalSrc, personalDst);
   }
 
   if (fs.existsSync(skillsDir)) {
@@ -359,8 +349,7 @@ function seedWorktreeAssets(
     }
   }
 
-  const memoryDir = path.join(templateDir, "claude-memory");
-  const teamSrc = path.join(memoryDir, "team-claude.md");
+  const teamSrc = path.join(templateDir, "project-claude.md");
   const teamDst = path.join(worktreePath, "CLAUDE.md");
   if (fs.existsSync(teamSrc) && !fs.existsSync(teamDst)) {
     let content = fs.readFileSync(teamSrc, "utf-8");

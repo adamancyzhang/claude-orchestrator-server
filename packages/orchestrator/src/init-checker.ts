@@ -211,7 +211,7 @@ export function createTeamClaudeMdStep(
   projectRoot: string,
   logger: ILogger,
 ): InitStep {
-  const src = path.join(templateDir, "claude-memory", "team-claude.md");
+  const src = path.join(templateDir, "project-claude.md");
   const dest = path.join(projectRoot, "CLAUDE.md");
   return {
     id: "team_claude_md",

@@ -12,9 +12,11 @@ import { extractAssistantText } from "./stream-json.js";
 export interface BuildIdentityInput {
   name: string;
   role: string;
+  origin_branch?: string | null;
   worktree_path: string;
   worktree_branch: string;
   co_root: string;
+  co_role_path: string;
 }
 
 export class ClaudeRunner implements IClaudeRunner {
@@ -30,9 +32,11 @@ export class ClaudeRunner implements IClaudeRunner {
     return template
       .replace(/\{\{name\}\}/g, input.name)
       .replace(/\{\{role\}\}/g, input.role)
+      .replace(/\{\{originBranch\}\}/g, input.origin_branch ?? "")
       .replace(/\{\{worktreePath\}\}/g, input.worktree_path)
       .replace(/\{\{worktreeBranch\}\}/g, input.worktree_branch)
-      .replace(/\{\{co_root\}\}/g, input.co_root);
+      .replace(/\{\{co_root\}\}/g, input.co_root)
+      .replace(/\{\{co_role_path\}\}/g, input.co_role_path);
   }
 
   async run(opts: RunOptions): Promise<RunResult> {

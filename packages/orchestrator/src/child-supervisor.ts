@@ -29,6 +29,11 @@ export interface ChildSupervisorOptions {
    * appropriately.
    */
   magic_mode: boolean;
+  /**
+   * The project's merge-target branch (from GitConfig). Used in the
+   * worker identity card as the origin branch this worktree was forked from.
+   */
+  origin_branch?: string | null;
   logger: ILogger;
 }
 
@@ -82,6 +87,7 @@ export class ChildSupervisor implements IChildSupervisor {
       git_remote: this.opts.git_remote,
       hooks: this.opts.hooks,
       magic_mode: this.opts.magic_mode,
+      origin_branch: this.opts.origin_branch ?? null,
     };
     const child = fork(this.opts.child_module_path, [JSON.stringify(env)], {
       stdio: "inherit",

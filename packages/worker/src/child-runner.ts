@@ -31,6 +31,11 @@ export interface ChildConfig {
    * is on.
    */
   magic_mode: boolean;
+  /**
+   * The project's merge-target branch. Populated in the worker identity
+   * card as the origin branch this worktree was forked from.
+   */
+  origin_branch?: string | null;
 }
 
 /**

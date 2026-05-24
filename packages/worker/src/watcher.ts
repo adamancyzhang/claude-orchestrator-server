@@ -33,13 +33,13 @@ import type { WorkerDocsCommitter } from "./docs-committer.js";
  * artifact paths, output contract, retry hint.
  */
 const LINK_TO_TASK_TEMPLATE: Record<TaskLink | "decompose", string> = {
-  plan: "worker-planner-task.md",
-  execute: "worker-executor-task.md",
-  verify: "worker-verifier-task.md",
-  review: "worker-reviewer-task.md",
-  accept: "worker-accepter-task.md",
-  explore: "worker-explorer-task.md",
-  decompose: "worker-decompose.md",
+  plan: "agents/planner/task.md",
+  execute: "agents/executor/task.md",
+  verify: "agents/verifier/task.md",
+  review: "agents/reviewer/task.md",
+  accept: "agents/accepter/task.md",
+  explore: "agents/explorer/task.md",
+  decompose: "workflow/decompose.md",
 };
 
 const LINK_TO_LOCAL_PREFIX: Record<TaskLink, string> = {

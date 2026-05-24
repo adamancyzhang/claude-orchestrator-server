@@ -13,6 +13,7 @@ pnpm pkgcheck                    # per-package dependency whitelist enforcement
 pnpm test                        # vitest run (all packages, --workspace-concurrency=1)
 pnpm --filter @co/contracts test # Single package
 pnpm --filter @co/leader test:watch # Watch mode for one package
+pnpm --filter @co/runtime test -- -t "Tom"  # Run a single test by name pattern
 ```
 
 Start the orchestrator: `node bin/claude-orchestrator run --worker 6` (requires `pnpm -r build` first). The in-memory message protocol is the default — no external services needed.
@@ -41,9 +42,68 @@ Strict one-directional layering enforced by `dependency-cruiser` (.dependency-cr
 - **DI through factories**: `runOrchestrator()` accepts optional `OrchestratorDeps` (zk_factory, supervisor_factory, claude_runner_factory) for test injection.
 - **In-memory messaging default**: `InMemoryZkClient` is the default (no real ZooKeeper needed for dev). Pass `--enabled-zookeeper` to use real ZK.
 - **TUI split**: React/Ink v7 with 7 panels (`event-log`, `footer`, `in-progress`, `input-line`, `pending`, `team`, `worker-messages`) — keep rendering side-effect-free.
-- **Config loading**: 5-layer merge — CLI flags -> env vars -> worktree-local config -> project config -> global `~/.claude-orchestrator/config.json`.
-- **CLAUDE.md memory system**: Three layers — Team (worktree `CLAUDE.md`), Personal (`{co_root}/docs/{name}/CLAUDE.md`), Daily (`{co_root}/docs/{name}/YYYY-MM-DD/CLAUDE.md`). Docs live in the CO root (`{projects_root}/{leader_instance_id}/docs/`), an independent git repo shared by all workers; never in the project directory.
+- **Config loading**: 5-layer merge — CLI flags → env vars → worktree-local config → project config → global `~/.claude-orchestrator/config.json`.
 - **Magic mode**: `--magic` flag enables the Explorer role and `spawn_chain` EvalDecision variant. The 6th worker becomes an explorer that autonomously discovers work and spawns sub-chains.
+
+## Template System
+
+Templates live under `templates/` and are loaded by `TemplateEngine` (`@co/runtime`) with a two-tier lookup: `primary_dir` (worktree `.claude-orchestrator/agents/`, seeded at init) shadows `fallback_dir` (the built-in `templates/` directory). Template names use subdirectory prefixes to disambiguate sources.
+
+### Directory structure
+
+| Directory | Content | Template name prefix |
+|-----------|---------|---------------------|
+| `templates/agents/` | `worker-identity.md` (identity card) + 6 per-role dirs (`planner/`, `executor/`, …) each with `responsibilities.md` + `task.md` | `agents/` |
+| `templates/workflow/` | Utility templates: `decompose.md`, `evaluate.md`, `evaluate-format-hint.md`, `commit-message.md`, `memorize-file.md`, `memorize-dir.md`, `merge-decision.md` | `workflow/` |
+| `templates/` (top-level) | `project-claude.md` (team-level CLAUDE.md seed), `user-global-claude.md` | no prefix (flat) |
+
+### Identity card (`agents/worker-identity.md`)
+
+Rendered via `ClaudeRunner.buildIdentityPrompt()` which replaces these placeholders:
+
+| Placeholder | Source |
+|-------------|--------|
+| `{{name}}`, `{{role}}` | `ChildConfig` / `WorktreeConfig` |
+| `{{originBranch}}` | `GitConfig.merge_target_branch` (null if unset) |
+| `{{worktreePath}}`, `{{worktreeBranch}}` | Worker's worktree on disk |
+| `{{co_root}}` | `{projects_root}/{leader_instance_id}` |
+| `{{co_role_path}}` | `{co_root}/docs/{name}` (worker's personal docs dir) |
+
+### System prompt assembly
+
+Happens once at worker boot (`child-boot.ts`, `in-process-supervisor.ts`). Two layers joined by `\n\n---\n\n`:
+
+1. `agents/worker-identity.md` — identity card
+2. `agents/{role}/responsibilities.md` — merged standing responsibilities, process steps, output contract, prohibited rules, session memory
+
+The old `personal-claude-{role}.md` files (formerly in `templates/claude-memory/`) no longer exist — their content was merged into `responsibilities.md`.
+
+### Task prompt
+
+Each role has a per-task template (`agents/{role}/task.md`) rendered by the WorkerWatcher with upstream artifacts, commit hashes, output paths, and retry context. These carry only the task body; the system prompt (identity + responsibilities) is sent separately via `--append-system-prompt`.
+
+### CLAUDE.md memory system
+
+Workers read/write three layers of CLAUDE.md:
+- **Team**: project root `CLAUDE.md` (seeded from `templates/project-claude.md`)
+- **Personal**: `{{co_role_path}}/CLAUDE.md`
+- **Daily**: `{{co_role_path}}/YYYY-MM-DD/CLAUDE.md`
+
+The `co_role_path` directory lives under the CO root (`{projects_root}/{leader_instance_id}/docs/{name}/`), an independent git repo shared by all workers; never in the project directory.
+
+### Template name reference map
+
+Key code locations that map role/link names to template paths:
+
+| Mapping | Package / File | Template names |
+|---------|---------------|----------------|
+| `ROLE_TO_SYSTEM_TEMPLATE` | `orchestrator/src/child-boot.ts`, `orchestrator/src/in-process-supervisor.ts` | `"agents/{role}/responsibilities.md"` |
+| `LINK_TO_TASK_TEMPLATE` | `worker/src/watcher.ts` | `"agents/{role}/task.md"` |
+| decompose | `leader/src/chain-router.ts`, `worker/src/watcher.ts` | `"workflow/decompose.md"` |
+| merge-decision | `orchestrator/src/run.ts` | `"workflow/merge-decision.md"` |
+| memorize | `leader/src/memory-bootstrap.ts` | `"workflow/memorize-file.md"`, `"workflow/memorize-dir.md"` |
+| evaluate | `worker/src/evaluator.ts` (SelfEvaluator) | `"workflow/evaluate.md"`, `"workflow/evaluate-format-hint.md"` (retry hint on attempt >= 2) |
+| commit-message | `worker/src/commit-checker.ts`, `worker/src/docs-committer.ts` | `"workflow/commit-message.md"` |
 
 ## Roles & Responsibility Chain
 

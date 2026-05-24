@@ -31,8 +31,8 @@ export interface MemoryBootstrapOptions {
 }
 
 const DEFAULT_GLOBS = ["packages/**/*.ts"];
-const DEFAULT_FILE_TEMPLATE = "worker-memorize-file.md";
-const DEFAULT_DIR_TEMPLATE = "worker-memorize-dir.md";
+const DEFAULT_FILE_TEMPLATE = "workflow/memorize-file.md";
+const DEFAULT_DIR_TEMPLATE = "workflow/memorize-dir.md";
 
 export interface BootstrapStats {
   files_generated: number;

@@ -425,7 +425,7 @@ export class ChainRouter {
       if (handled) return;
     }
 
-    if (this.opts.template_engine.has("worker-decompose.md")) {
+    if (this.opts.template_engine.has("workflow/decompose.md")) {
       const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
       const resultPath = cachePaths.decomposeResultPath(
         this.opts.cache_paths,
@@ -433,7 +433,7 @@ export class ChainRouter {
       );
       await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
 
-      const prompt = this.opts.template_engine.render("worker-decompose.md", {
+      const prompt = this.opts.template_engine.render("workflow/decompose.md", {
         name: this.opts.leader_name,
         role: "leader",
         task_title: msg.task_title ?? "",

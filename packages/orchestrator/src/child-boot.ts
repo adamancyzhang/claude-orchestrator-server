@@ -66,7 +66,7 @@ async function boot(config: ChildConfig): Promise<void> {
   const messageRouter = new MessageRouter({ zk });
   const taskQueue = new TaskQueue({ zk });
 
-  const builtinAgentsDir = path.join(resolveTemplateDir(config.worktree_path), "agents");
+  const builtinDir = resolveTemplateDir(config.worktree_path);
   const projectAgentsDir = path.join(
     config.worktree_path,
     ".claude-orchestrator",
@@ -74,7 +74,7 @@ async function boot(config: ChildConfig): Promise<void> {
   );
   const templateEngine = new TemplateEngine({
     primary_dir: projectAgentsDir,
-    fallback_dir: builtinAgentsDir,
+    fallback_dir: builtinDir,
   });
 
   const runner = new ClaudeRunner(config.cli_command, logger);
@@ -83,31 +83,23 @@ async function boot(config: ChildConfig): Promise<void> {
   // description. Both are fixed for this Worker's process lifetime so
   // claude-cli prompt caching can keep them hot across tasks.
   const ROLE_TO_SYSTEM_TEMPLATE: Record<string, string> = {
-    planner: "worker-planner.md",
-    executor: "worker-executor.md",
-    verifier: "worker-verifier.md",
-    reviewer: "worker-reviewer.md",
-    accepter: "worker-accepter.md",
-    explorer: "worker-explorer.md",
+    planner: "agents/planner/responsibilities.md",
+    executor: "agents/executor/responsibilities.md",
+    verifier: "agents/verifier/responsibilities.md",
+    reviewer: "agents/reviewer/responsibilities.md",
+    accepter: "agents/accepter/responsibilities.md",
+    explorer: "agents/explorer/responsibilities.md",
   };
-  const identityTpl = templateEngine.has("worker-identity.md")
-    ? templateEngine.load("worker-identity.md")
+  const identityTpl = templateEngine.has("agents/worker-identity.md")
+    ? templateEngine.load("agents/worker-identity.md")
     : "You are {{name}}, a {{role}}.";
   const coRoot = path.join(config.projects_root, config.leader_instance_id);
-  const personalTplName = `personal-claude-${config.role}.md`;
-  const personalTpl = templateEngine.has(personalTplName)
-    ? templateEngine.render(personalTplName, {
-        name: config.name,
-        role: config.role,
-        co_root: coRoot,
-      })
-    : "";
   const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[config.role];
   const roleTpl =
     roleTplName && templateEngine.has(roleTplName)
       ? templateEngine.load(roleTplName)
       : "";
-  const identityParts = [identityTpl, personalTpl, roleTpl].filter(
+  const identityParts = [identityTpl, roleTpl].filter(
     (s) => s.length > 0,
   );
   const identitySystemPrompt = ClaudeRunner.buildIdentityPrompt(
@@ -115,9 +107,11 @@ async function boot(config: ChildConfig): Promise<void> {
     {
       name: config.name,
       role: config.role,
+      origin_branch: config.origin_branch ?? null,
       worktree_path: config.worktree_path,
       worktree_branch: config.branch,
       co_root: coRoot,
+      co_role_path: path.join(coRoot, "docs", config.name),
     },
   );
 
