@@ -102,7 +102,7 @@ export class TaskRecovery {
       throw new OrphanRetryExhaustedError(record.task_id, MAX_RETRIES);
     }
     try {
-      const newTask = await this.queue.retry(record.task_id);
+      const newTask = await this.queue.retry(record.task_id, snapshot);
       this.bus.emit({
         type: "task_recovered",
         task_id: newTask.id,

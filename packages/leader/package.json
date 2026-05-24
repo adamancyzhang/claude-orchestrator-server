@@ -18,6 +18,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "ink": "^7.0.0",
+    "react": "^19.2.0",
     "zod": "^3.23.0"
   },
   "peerDependencies": {
@@ -28,6 +30,7 @@
   "devDependencies": {
     "@co/contracts": "workspace:*",
     "@co/runtime": "workspace:*",
-    "@co/coordination": "workspace:*"
+    "@co/coordination": "workspace:*",
+    "@types/react": "^19.0.0"
   }
 }

@@ -280,11 +280,16 @@ export class TaskQueue implements ITaskQueue {
     );
   }
 
-  async retry(taskId: TaskId): Promise<Task> {
-    const completedPath = zkPaths.taskCompleted(taskId, this.paths);
-    const data = await this.zk.getData(completedPath);
-    if (!data) throw new ZkNodeNotFoundError(`completed missing: ${taskId}`);
-    const original = parseTask(decode<Record<string, unknown>>(data.data));
+  async retry(taskId: TaskId, snapshot?: Task): Promise<Task> {
+    let original: Task;
+    if (snapshot) {
+      original = snapshot;
+    } else {
+      const completedPath = zkPaths.taskCompleted(taskId, this.paths);
+      const data = await this.zk.getData(completedPath);
+      if (!data) throw new ZkNodeNotFoundError(`completed missing: ${taskId}`);
+      original = parseTask(decode<Record<string, unknown>>(data.data));
+    }
     const retryCount = (original.retry_count ?? 0) + 1;
     const payload = {
       ...original,

@@ -42,7 +42,7 @@ export interface ITaskQueue {
     durationSeconds: number | null,
   ): Promise<void>;
   fail(taskId: TaskId, reason: string): Promise<void>;
-  retry(taskId: TaskId): Promise<Task>;
+  retry(taskId: TaskId, snapshot?: Task): Promise<Task>;
   listPending(): Promise<Task[]>;
   listClaimed(): Promise<ClaimRecord[]>;
   getPending(taskId: TaskId): Promise<Task | null>;
