@@ -379,6 +379,7 @@ export class WorkerWatcher {
         upstream_verify_commit: upstreamCommits.verify ?? "",
         upstream_review_commit: upstreamCommits.review ?? "",
         upstream_accept_commit: upstreamCommits.accept ?? "",
+        co_root: cachePaths.coRootDir(this.opts.cache_paths),
         workspace_memory_path: workspaceMemoryPath,
         retry_hint: retryHint,
       });

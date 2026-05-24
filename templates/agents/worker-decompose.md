@@ -2,7 +2,7 @@ Break down the requirement below into a chain of tasks following the Plan → Ex
 
 ## Step 0: Restore Directory Memory
 
-Read `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` (use today's date) to restore session context. If it doesn't exist, create the directory and seed it with today's date, your name and role. Read your personal CLAUDE.md at `.claude-orchestrator/docs/{{name}}/CLAUDE.md` for role-specific rules.
+Read `{{co_root}}/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` (use today's date) to restore session context. If it doesn't exist, create the directory and seed it with today's date, your name and role. Read your personal CLAUDE.md at `{{co_root}}/docs/{{name}}/CLAUDE.md` for role-specific rules.
 
 ## Requirement
 
@@ -30,7 +30,7 @@ When `magic_mode=false`, the chain MUST NOT include an `explore` task.
 
 ## Output
 
-Write the result to {{result_path}}. Also save a copy to `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/chain-def.json`.
+Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{name}}/YYYY-MM-DD/chain-def.json`.
 
 ```json
 // magic_mode=false (default — no explore task)
@@ -70,4 +70,4 @@ Output ONLY the JSON for the active mode. No explanation.
 
 ## Record
 
-After completion, update `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` with the chain_id and chain_title.
+After completion, update `{{co_root}}/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` with the chain_id and chain_title.

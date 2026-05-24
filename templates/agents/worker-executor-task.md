@@ -35,7 +35,7 @@ You MUST write your traceability map to **exactly** these two paths:
   `{{local_doc_path}}`
 
 Save evidence (logs, screenshots, test runs) under
-`.claude-orchestrator/docs/{{name}}/{{date}}/evidence/`.
+`{{co_root}}/docs/{{name}}/{{date}}/evidence/`.
 
 Use the **Write** tool for both paths. After writing, use the **Read** tool on `result_path` to confirm the file exists and is non-empty. Commit your code changes with your name in the signature.
 

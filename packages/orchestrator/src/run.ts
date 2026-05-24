@@ -207,6 +207,9 @@ export async function runOrchestrator(
       ? envMaxChains
       : input.magic_max_chains ?? null;
 
+  const leaderId = asInstanceId(randomUUID().replace(/-/g, ""));
+  const coRoot = path.join(resolved.projects_root, leaderId);
+
   const worktreeConfigs = await initializeWorktrees({
     project_root: projectRoot,
     worker_count: input.worker_count,
@@ -214,8 +217,9 @@ export async function runOrchestrator(
     skills_dir: paths.skills_dir,
     logger: logger.child("worktree"),
     magic_mode: magicMode,
+    leader_instance_id: leaderId,
+    co_root: coRoot,
   });
-  const leaderId = asInstanceId(randomUUID().replace(/-/g, ""));
 
   const zkEnsurePaths = zkPaths.allEnsurePaths();
   const zkOpts = {
@@ -259,7 +263,7 @@ export async function runOrchestrator(
   });
   saveInstanceId(leaderInstance.id);
 
-  const coRoot = await ensureCoRoot({
+  await ensureCoRoot({
     projects_root: resolved.projects_root,
     leader_instance_id: leaderInstance.id,
     git_command: resolved.commands.git,

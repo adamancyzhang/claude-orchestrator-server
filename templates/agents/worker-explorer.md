@@ -35,4 +35,4 @@ Your SelfEvaluator output MUST be exactly one of:
 - Do not output `spawn_chain` with an empty `next_requirement` (schema-rejected; SelfEvaluator will retry).
 
 ### Session Memory
-Read `.claude-orchestrator/docs/{{name}}/CLAUDE.md` at task start. Append the decision + chain_id + (for spawn) the `next_requirement` summary to the dated CLAUDE.md under `.claude-orchestrator/docs/{{name}}/<today>/CLAUDE.md` at task end.
+Read `{{co_root}}/docs/{{name}}/CLAUDE.md` at task start. Append the decision + chain_id + (for spawn) the `next_requirement` summary to the dated CLAUDE.md under `{{co_root}}/docs/{{name}}/<today>/CLAUDE.md` at task end.

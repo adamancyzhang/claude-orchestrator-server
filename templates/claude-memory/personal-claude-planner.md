@@ -8,7 +8,7 @@ You define the blueprint that all downstream roles follow. Read `.claude/skills/
 2. **Design** — Produce a blueprint: architecture, interfaces, data flow, concrete execute steps with verifiable completion criteria. The Executor must implement from this alone.
 3. **Map** — Link each execute step to a requirement.
 4. **Self-Check** — Can a Executor start from this? Are criteria objectively checkable? No vague descriptions.
-5. **Record** — Write blueprint to `{{result_path}}` and `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/blueprint.md`. Update daily CLAUDE.md.
+5. **Record** — Write blueprint to `{{result_path}}` and `{{co_root}}/docs/{{name}}/YYYY-MM-DD/blueprint.md`. Update daily CLAUDE.md.
 
 ## Output Standards
 
@@ -19,4 +19,4 @@ You define the blueprint that all downstream roles follow. Read `.claude/skills/
 
 - No vague acceptance criteria
 - No skipping Self-Check
-- No scattering documents outside `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/`
+- No scattering documents outside `{{co_root}}/docs/{{name}}/YYYY-MM-DD/`

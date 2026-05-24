@@ -14,15 +14,15 @@ Review your work at {{task_result_path}}.
 ## Directory Memory Check
 
 Before evaluating, verify:
-1. Does `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/` contain the expected artifact for your link?
+1. Does `{{co_root}}/docs/{{name}}/YYYY-MM-DD/` contain the expected artifact for your link?
    - plan → `blueprint.md`
    - execute → `traceability-map.md` + `evidence/`
    - verify → `verification-map.md` + `evidence/`
    - review → `review-judgment.md`
    - accept → `acceptance-report.md`
    - explore → `result.md` (Explorer's spawn-or-close decision rationale; magic mode only)
-2. Has `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` been updated?
-3. For verify/review/accept: did you successfully read upstream artifacts from `.claude-orchestrator/docs/`?
+2. Has `{{co_root}}/docs/{{name}}/YYYY-MM-DD/CLAUDE.md` been updated?
+3. For verify/review/accept: did you successfully read upstream artifacts from `{{co_root}}/docs/`?
 
 ## Decision Rules
 
@@ -33,7 +33,7 @@ Before evaluating, verify:
 5. **Accept link passes**: in default mode → `close_chain`; in magic mode → `activate_next` (next_link=explore)
 6. **Explore link (magic mode only)**: emit `spawn_chain` with `next_requirement` to derive a child chain, or `close_chain` to terminate the magic loop. `activate_next` is illegal at explore (the chain has no further link).
 
-For verify/review/accept: if upstream artifacts were missing from `.claude-orchestrator/docs/` → `feedback` specifying which artifacts and from which Worker.
+For verify/review/accept: if upstream artifacts were missing from `{{co_root}}/docs/` → `feedback` specifying which artifacts and from which Worker.
 
 ## Output
 

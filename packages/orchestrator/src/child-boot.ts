@@ -93,11 +93,13 @@ async function boot(config: ChildConfig): Promise<void> {
   const identityTpl = templateEngine.has("worker-identity.md")
     ? templateEngine.load("worker-identity.md")
     : "You are {{name}}, a {{role}}.";
+  const coRoot = path.join(config.projects_root, config.leader_instance_id);
   const personalTplName = `personal-claude-${config.role}.md`;
   const personalTpl = templateEngine.has(personalTplName)
     ? templateEngine.render(personalTplName, {
         name: config.name,
         role: config.role,
+        co_root: coRoot,
       })
     : "";
   const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[config.role];
@@ -115,6 +117,7 @@ async function boot(config: ChildConfig): Promise<void> {
       role: config.role,
       worktree_path: config.worktree_path,
       worktree_branch: config.branch,
+      co_root: coRoot,
     },
   );
 
@@ -147,7 +150,6 @@ async function boot(config: ChildConfig): Promise<void> {
   // cachePaths.coRootDir). All Worker processes share this single
   // working tree — WorkerDocsCommitter's `git commit --only` is what
   // keeps concurrent commits from leaking into each other.
-  const coRoot = path.join(config.projects_root, config.leader_instance_id);
   const docsCommitter = new WorkerDocsCommitter({
     co_root: coRoot,
     worker_name: config.name,

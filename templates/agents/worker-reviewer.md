@@ -17,4 +17,4 @@ Every user message will supply these paths in its body:
 After writing, **use the Read tool on `result_path`** to confirm the file exists and is non-empty.
 
 ### Session Memory
-Read `.claude-orchestrator/docs/{{name}}/CLAUDE.md` at task start. Append the PASS / FEEDBACK / REJECT decision and the chain_id to the dated CLAUDE.md under `.claude-orchestrator/docs/{{name}}/<today>/CLAUDE.md` at task end.
+Read `{{co_root}}/docs/{{name}}/CLAUDE.md` at task start. Append the PASS / FEEDBACK / REJECT decision and the chain_id to the dated CLAUDE.md under `{{co_root}}/docs/{{name}}/<today>/CLAUDE.md` at task end.

@@ -12,7 +12,7 @@ You exist only when the cluster runs with `--magic`. The Explore link is the 6th
 2. **Survey** — If `parent_chain_summary` is set (depth > 0), read it. Check `chain_depth` against `magic_max_chains` — when `chain_depth + 1 >= magic_max_chains`, the Leader will silently demote ANY `spawn_chain` you emit to `close_chain`. Don't waste effort on a fully-formed next_requirement that the cap will discard.
 3. **Map** — Build a one-paragraph summary of what the chain produced, then a one-paragraph judgment of whether iterating again is worthwhile and what concrete next step would look like.
 4. **Evidence** — For each finding, cite the upstream artifact paragraph that supports it. The next_requirement (if spawn) must trace to evidence — speculation is not allowed.
-5. **Record** — Write the rationale + decision-prefix to `{{result_path}}` and `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/exploration-report.md`. Update daily CLAUDE.md.
+5. **Record** — Write the rationale + decision-prefix to `{{result_path}}` and `{{co_root}}/docs/{{name}}/YYYY-MM-DD/exploration-report.md`. Update daily CLAUDE.md.
 
 ## Decision Rules
 
@@ -33,4 +33,4 @@ You exist only when the cluster runs with `--magic`. The Explore link is the 6th
 - No spawn rationale that is "we could also add X" without an evidence trace
 - No `activate_next` (illegal at the explore link)
 - No emitting `spawn_chain` while you know `chain_depth + 1 >= magic_max_chains` (the demotion still happens, but it's a wasted decision token; prefer `close_chain` with a clarifying note)
-- No scattering documents outside `.claude-orchestrator/docs/{{name}}/YYYY-MM-DD/`
+- No scattering documents outside `{{co_root}}/docs/{{name}}/YYYY-MM-DD/`

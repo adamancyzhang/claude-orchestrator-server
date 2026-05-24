@@ -34,7 +34,7 @@ You MUST write your verification map to **exactly** these two paths:
 - `local_doc_path` (in-worktree copy for downstream Reviewer):
   `{{local_doc_path}}`
 
-Save evidence under `.claude-orchestrator/docs/{{name}}/{{date}}/evidence/`.
+Save evidence under `{{co_root}}/docs/{{name}}/{{date}}/evidence/`.
 
 Use the **Write** tool for both paths. After writing, use the **Read** tool on `result_path` to confirm the file exists and is non-empty.
 

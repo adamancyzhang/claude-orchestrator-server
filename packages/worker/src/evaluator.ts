@@ -79,6 +79,7 @@ export class SelfEvaluator {
       task_result_path: input.task_result_path,
       work_dir: this.opts.worktree_path,
       time: new Date().toISOString(),
+      co_root: cachePaths.coRootDir(this.opts.cache_paths),
       ...input.msg_vars,
     };
 

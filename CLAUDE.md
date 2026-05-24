@@ -42,7 +42,7 @@ Strict one-directional layering enforced by `dependency-cruiser` (.dependency-cr
 - **In-memory messaging default**: `InMemoryZkClient` is the default (no real ZooKeeper needed for dev). Pass `--enabled-zookeeper` to use real ZK.
 - **TUI split**: React/Ink v7 with 7 panels (`event-log`, `footer`, `in-progress`, `input-line`, `pending`, `team`, `worker-messages`) — keep rendering side-effect-free.
 - **Config loading**: 5-layer merge — CLI flags -> env vars -> worktree-local config -> project config -> global `~/.claude-orchestrator/config.json`.
-- **CLAUDE.md memory system**: Three layers — Team (root `CLAUDE.md`), Personal (`.claude-orchestrator/docs/{name}/CLAUDE.md`), Daily (`.claude-orchestrator/docs/{name}/YYYY-MM-DD/CLAUDE.md`).
+- **CLAUDE.md memory system**: Three layers — Team (worktree `CLAUDE.md`), Personal (`{co_root}/docs/{name}/CLAUDE.md`), Daily (`{co_root}/docs/{name}/YYYY-MM-DD/CLAUDE.md`). Docs live in the CO root (`{projects_root}/{leader_instance_id}/docs/`), an independent git repo shared by all workers; never in the project directory.
 - **Magic mode**: `--magic` flag enables the Explorer role and `spawn_chain` EvalDecision variant. The 6th worker becomes an explorer that autonomously discovers work and spawns sub-chains.
 
 ## Roles & Responsibility Chain

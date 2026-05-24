@@ -140,11 +140,13 @@ export class InProcessSupervisor implements IChildSupervisor {
     const identityTpl = templateEngine.has("worker-identity.md")
       ? templateEngine.load("worker-identity.md")
       : "You are {{name}}, a {{role}}.";
+    const coRoot = cachePaths.coRootDir(this.opts.cache_paths);
     const personalTplName = `personal-claude-${cfg.role}.md`;
     const personalTpl = templateEngine.has(personalTplName)
       ? templateEngine.render(personalTplName, {
           name: cfg.name,
           role: cfg.role,
+          co_root: coRoot,
         })
       : "";
     const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[cfg.role];
@@ -162,6 +164,7 @@ export class InProcessSupervisor implements IChildSupervisor {
         role: cfg.role,
         worktree_path: cfg.worktree_path,
         worktree_branch: cfg.branch,
+        co_root: coRoot,
       },
     );
 
@@ -185,7 +188,6 @@ export class InProcessSupervisor implements IChildSupervisor {
       worker_name: cfg.name,
     });
 
-    const coRoot = cachePaths.coRootDir(this.opts.cache_paths);
     const docsCommitter = new WorkerDocsCommitter({
       co_root: coRoot,
       worker_name: cfg.name,

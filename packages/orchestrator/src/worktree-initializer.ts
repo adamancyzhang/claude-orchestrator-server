@@ -150,6 +150,10 @@ export interface InitializeWorktreesOptions {
   // when true the 6th worker is assigned role=explorer
   // instead of the default executor.
   magic_mode?: boolean;
+  /** Leader instance ID, used for co_root path computation at seed time. */
+  leader_instance_id?: InstanceId;
+  /** Absolute path to the CO root directory (precomputed in run.ts). */
+  co_root?: string;
 }
 
 export async function initializeWorktrees(
@@ -276,7 +280,7 @@ export async function initializeWorktrees(
 
     const instanceId = asInstanceId(randomUUID().replace(/-/g, ""));
 
-    seedWorktreeAssets(wtPath, name, role, opts.template_dir, opts.skills_dir);
+    seedWorktreeAssets(wtPath, name, role, opts.template_dir, opts.skills_dir, opts.co_root ?? null);
 
     configs.push({
       name,
@@ -312,6 +316,7 @@ function seedWorktreeAssets(
   role: InstanceRole,
   templateDir: string,
   skillsDir: string,
+  coRoot: string | null,
 ): void {
   if (!fs.existsSync(templateDir)) return;
 
@@ -358,7 +363,15 @@ function seedWorktreeAssets(
   const teamSrc = path.join(memoryDir, "team-claude.md");
   const teamDst = path.join(worktreePath, "CLAUDE.md");
   if (fs.existsSync(teamSrc) && !fs.existsSync(teamDst)) {
-    fs.copyFileSync(teamSrc, teamDst);
+    let content = fs.readFileSync(teamSrc, "utf-8");
+    if (coRoot) {
+      content = content
+        .replace(/\{\{co_root\}\}/g, coRoot)
+        .replace(/\{\{name\}\}/g, name);
+    } else {
+      content = content.replace(/\{your_name\}/g, name);
+    }
+    fs.writeFileSync(teamDst, content);
   }
 }
 

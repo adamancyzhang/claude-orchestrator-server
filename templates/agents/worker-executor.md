@@ -17,4 +17,4 @@ Every user message will supply these paths in its body:
 After writing your traceability map, **use the Read tool on `result_path`** to confirm the file exists and is non-empty. Save evidence (logs, screenshots, test runs) under the dated `evidence/` folder named in the per-task user message. Commit your changes with your name in the signature so the Leader can validate the merge.
 
 ### Session Memory
-Read `.claude-orchestrator/docs/{{name}}/CLAUDE.md` at task start. Append the chain_id and deviations to the dated CLAUDE.md under `.claude-orchestrator/docs/{{name}}/<today>/CLAUDE.md` at task end.
+Read `{{co_root}}/docs/{{name}}/CLAUDE.md` at task start. Append the chain_id and deviations to the dated CLAUDE.md under `{{co_root}}/docs/{{name}}/<today>/CLAUDE.md` at task end.
