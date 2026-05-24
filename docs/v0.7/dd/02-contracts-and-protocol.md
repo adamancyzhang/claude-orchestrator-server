@@ -25,20 +25,16 @@ v0.7 相对 v0.6 的破坏性变更：
 | EvalDecision 枚举 | 4 态 | 5 态（新增 `spawn_chain`） |
 | ChainManifest 字段 | base + total_retry_count | base + 4 个新字段（见 §6） |
 
-### 1.2 校验流程
+### 1.2 v0.7 的协议号定位 —— 诊断元数据，不做门禁
 
-Worker 子进程启动后第一步：
+v0.7 把 `PROTOCOL_VERSION` 视作**诊断元数据**而非启动门禁：
 
-```ts
-// 伪代码（Worker child-runner）
-const leader = await zk.getJSON('/leader');
-if (leader.protocol_version !== PROTOCOL_VERSION) {
-  console.error(`Protocol mismatch: leader=${leader.protocol_version}, self=${PROTOCOL_VERSION}`);
-  process.exit(2);
-}
-```
+- Leader 抢 `/leader` EPHEMERAL 节点时把 `protocol_version: "0.7.0"` 写入 payload（`packages/orchestrator/src/run.ts:215`）。
+- Worker 注册 `/instances/{id}` 时把 `protocol_version` 写入 InstanceSchema 字段（`packages/contracts/src/schemas/instance.ts`）。
+- Worker 启动**不**强制校验 `/leader.protocol_version`；`packages/orchestrator/src/child-boot.ts` 中早期版本的 `void PROTOCOL_VERSION` 占位已删除。
+- 协议号仅用于运维排查：用 `zkCli get /leader` 与 `zkCli get /instances/<id>` 看 payload 即可发现跨版本混跑。
 
-Leader 抢占 `/leader` 节点时把 `protocol_version` 写入 EPHEMERAL 节点 payload；任一 Worker 协议号不匹配立即退出，避免 v0.6 Worker 误连 v0.7 Leader（反之亦然）。
+> 如果未来需要恢复"协议不匹配 → Worker 退出"的强校验，建议在 `child-boot.ts` 连上 ZK 后读 `/leader` payload，与 `PROTOCOL_VERSION` 比较；抛 `ProtocolVersionMismatchError` 并 `process.exit(2)`。当前 v0.7 不启用。
 
 ---
 
@@ -250,18 +246,14 @@ export type ChainStatus = z.infer<typeof ChainStatusSchema>;
 export const ChainManifestSchema = z.object({
   // —— 标识与时间
   chain_id:           ChainIdSchema,
-  protocol_version:   z.literal(PROTOCOL_VERSION),
   created_at:         z.string().datetime(),
   completed_at:       z.string().datetime().nullable(),
 
   // —— 状态
   status:             ChainStatusSchema,
-  abort_reason:       z.string().nullable(),  // 'retry_ceiling_exceeded' / 'self_eval_failed' / 'invalid_decision' / ...
-  merge_failures:     z.array(z.object({
-    link:           TaskLinkSchema,
-    branch:         z.string(),
-    error:          z.string(),
-  })).default([]),  // 仅 status='merge_failed' 时有内容（FR-17）
+  // ↑ abort_reason / merge_failures 不在 manifest 中持久化，落入 audit.jsonl
+  //   对应事件的 payload：`chain_closed.reason` / `merge_failure.{branch,sha,error,category}`。
+  //   manifest 收窄为"链元数据 + 当前状态"，详情走 audit.jsonl 避免字段无限膨胀。
 
   // —— 链节关联
   link_tasks:         z.record(TaskLinkSchema, TaskIdSchema).partial(),

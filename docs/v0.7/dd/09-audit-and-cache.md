@@ -47,9 +47,10 @@ export interface ChainAudit {
     chainId: ChainId,
     status: 'completed' | 'aborted' | 'merge_failed' | 'failed',
     extra?: {
-      reason?: string;                                            // abort_reason
-      failures?: ChainManifest['merge_failures'];                 // merge_failed 必填
-      child_chain_id?: ChainId;                                   // spawn_chain 时同步 append
+      reason?: string;                                            // aborted 时落 audit.jsonl `chain_closed.detail.reason`
+      failures?: Array<{ link: TaskLink; branch: string; error: string; category?: string }>;
+                                                                  // merge_failed 时落 audit.jsonl `merge_failure` 事件 payload
+      child_chain_id?: ChainId;                                   // spawn_chain 时同步 append 到 manifest.child_chain_ids
     },
   ): Promise<ChainManifest>;
 
@@ -97,12 +98,9 @@ export interface ChainAudit {
 | 字段 | 类型 | 写入时机 | 写入者 |
 |---|---|---|---|
 | `chain_id` | ChainId | openChain | ChainAudit |
-| `protocol_version` | `"0.7.0"` | openChain | ChainAudit |
 | `created_at` | ISO-8601 | openChain | ChainAudit |
 | `completed_at` | ISO-8601 \| null | closeChain | ChainAudit |
 | `status` | ChainStatus | open / close | ChainAudit |
-| `abort_reason` | string \| null | closeChain（仅 `aborted`） | ChainAudit |
-| `merge_failures[]` | { link, branch, error } | closeChain（仅 `merge_failed`） | MergeValidator（详见 `07-merge-validator-and-closure.md` §4） |
 | `link_tasks[link]` | TaskId | ChainRouter push 任务后 | ChainRouter |
 | `link_workers[link]` | InstanceId | task_claimed 事件后 | ChainRouter（订阅 `task_claimed`） |
 | **`link_commits[link]`** | LinkCommitRecord | Worker 任务完成 → completion_report 到达 | ChainRouter.handleCompletionReport（调 `recordLinkCommit`） |
@@ -113,6 +111,8 @@ export interface ChainAudit {
 | **`child_chain_ids[]`** | ChainId[] | appendChildChain | ChainRouter（spawn_chain 时） |
 | **`chain_depth`** | int | openChain | ChainAudit |
 | **`magic_mode`** | boolean | openChain | ChainAudit |
+
+> manifest 收窄为"链元数据 + 当前状态"。终态原因（如 abort reason、merge 冲突明细）只进 audit.jsonl：abort → `chain_closed.payload.reason`；merge 冲突 → `merge_failure.payload.{category,branch,sha,error}`。这样 manifest 字段集合保持稳定，所有 forensics 走 append-only 的 audit。
 
 > Schema 见 `02-contracts-and-protocol.md` §6.2。
 
@@ -131,21 +131,18 @@ openChain(chainId, requirement, opts):
       throw ChainConflictError(chainId, existing.status)   // FR-20
   manifest = {
     chain_id: chainId,
-    protocol_version: "0.7.0",
     created_at: now(),
     completed_at: null,
     status: 'running',
-    abort_reason: null,
-    merge_failures: [],
     link_tasks: {},
     link_workers: {},
     total_retry_count: 0,
     max_total_retries: opts.max_total_retries ?? envInt('CO_CHAIN_MAX_RETRIES', 9),
     requirement_path: '<cache>/chains/<chainId>/requirement.md',
-    parent_chain_id: opts.parent_chain_id,        //
-    child_chain_ids: [],                          //
-    chain_depth: opts.chain_depth,                //
-    magic_mode: opts.magic_mode,                  //
+    parent_chain_id: opts.parent_chain_id,
+    child_chain_ids: [],
+    chain_depth: opts.chain_depth,
+    magic_mode: opts.magic_mode,
   }
   writeFile(<cache>/chains/<chainId>/requirement.md, requirement)
   writeManifestAtomic(manifest)
@@ -162,17 +159,14 @@ closeChain(chainId, status, extra):
   manifest = readManifest(chainId)  // 必须存在且 status='running'
   manifest.status = status
   manifest.completed_at = now()
-  if status == 'aborted':
-    manifest.abort_reason = extra.reason ?? 'unspecified'
-  if status == 'merge_failed':
-    manifest.merge_failures = extra.failures ?? []
-  if extra.child_chain_id:                       //
+  if extra.child_chain_id:
     manifest.child_chain_ids.push(extra.child_chain_id)
   writeManifestAtomic(manifest)
+  // extra.reason / extra.failures 不进 manifest，仅落 audit.jsonl 的 chain_closed.detail
   appendAudit({ event_type: 'chain_closed', chain_id, detail: { status, ...extra } })
   emit LeaderEventBus 'chain_closed' { chain_id, status }
   if status == 'merge_failed':
-    emit LeaderEventBus 'chain_merge_failed' { chain_id, failures }
+    emit LeaderEventBus 'chain_merge_failed' { chain_id, failures: extra.failures ?? [] }
   return manifest
 ```
 
@@ -323,16 +317,20 @@ ZK 节点 payload 上限 1 MiB。Worker 完成任务的 EvalDecision 如果某 r
 
 ## 6. Lifecycle Hooks（FR-14）
 
-### 6.1 4 类钩子 + 2 内置事件
+### 6.1 8 类钩子事件
 
 | 事件 | 触发位置 | 阻塞主流程？ |
 |---|---|---|
-| `worker_message_start` | Worker.TaskExecutor 在 `claude -p` 调用前 | 否（fire-and-forget + 5s 超时） |
-| `worker_message_end` | `claude -p` 调用返回后（无论成功失败） | 否 |
-| `task_claimed` | TaskOrchestrator 监听到 `/tasks/claimed` 新节点 | 否 |
-| `task_completed` | LeaderWatcher 处理完 completion_report | 否 |
-| **内置** `task_recovered` | Recovery.reclaim 完成 | 否 |
-| **内置** `task_failed` | retry_count > 3 归档 | 否 |
+| `leader_message_start` | `packages/leader/src/chain-router.ts:454`（Leader 调 `claude -p` 跑 decompose 之前） | 否（fire-and-forget + 5s 超时） |
+| `leader_message_end` | `chain-router.ts:466`（decompose 返回后） | 否 |
+| `worker_message_start` | `packages/worker/src/watcher.ts:322-333`（Worker 调 `claude -p` 跑任务之前） | 否 |
+| `worker_message_end` | `watcher.ts:424-436`（claude -p 返回后，无论成败） | 否 |
+| `task_claimed` | `watcher.ts:239-248`（`task_queue.claimById` 成功之后） | 否 |
+| `task_completed` | `watcher.ts:590-600`（`task_queue.complete` 之后） | 否 |
+| `chain_activated` | `chain-router.ts:702-707`（openChain + push tasks 之后） | 否 |
+| `merge_decision_made` | `packages/leader/src/merge-validator.ts:122-130`（决策落定后，merge 执行前） | 否 |
+
+> `task_recovered` / `task_failed` 不再是 hook 事件，而是 LeaderEventBus 内存事件 + ChainAudit 持久化事件（写 `audit.jsonl`）；详见 §4.2。
 
 ### 6.2 配置
 
@@ -340,49 +338,49 @@ ZK 节点 payload 上限 1 MiB。Worker 完成任务的 EvalDecision 如果某 r
 
 ```json
 {
-  "hooks": {
-    "worker_message_start": "/path/to/notify.sh",
-    "worker_message_end":   null,
-    "task_claimed":         "echo $CO_TASK_ID >> /tmp/claimed.log",
-    "task_completed":       null,
-    "task_recovered":       null,
-    "task_failed":          null
-  }
+  "hooks": [
+    { "event": "worker_message_start", "command": "/path/to/notify.sh", "enabled": true },
+    { "event": "task_claimed",         "command": "echo $CO_TASK_ID >> /tmp/claimed.log", "enabled": true },
+    { "event": "merge_decision_made",  "command": "echo $CO_DECISION $CO_BRANCH >> /tmp/merge.log", "enabled": true }
+  ]
 }
 ```
 
-> 值为 null 表示禁用。值为 shell 字符串 → `sh -c <value>` 执行。
+> 数组元素 `{ event, command, enabled }`：未列出的事件即禁用；`enabled: false` 也禁用；`command` 为 shell 字符串 → `sh -c <command>` 执行。事件名必须落在 §6.1 的 8 类之一。
 
-### 6.3 CO_* 环境变量清单
+### 6.3 CO_* 环境变量按事件类型
 
-| 变量 | 来源 | 范例 |
-|---|---|---|
-| `CO_EVENT` | 触发事件名 | `worker_message_start` |
-| `CO_WORKER_NAME` | Worker 名 | `Tom` |
-| `CO_WORKER_ROLE` | Worker role | `planner` |
-| `CO_INSTANCE_ID` | Worker instance_id | `Tom` |
-| `CO_TASK_ID` | 当前 task | `task-00042` |
-| `CO_MESSAGE_ID` | 当前 message | `msg-00123` |
-| `CO_CHAIN_ID` | 当前 chain | `chain-1747547280000-a3b1c2` |
-| `CO_LINK` | 当前 link | `execute` |
-| `CO_LEADER_ID` | Leader instance_id | `leader-host-12345-xxx` |
-| `CO_PROTOCOL_VERSION` | 协议号 | `0.7.0` |
+所有事件都自带 `CO_EVENT=<event_type>`（`hook-engine.ts:45`）。其余字段按事件类型如下（schema：`packages/contracts/src/hooks.ts:9-58`）：
 
-> `task_claimed` / `task_completed` 时还会注入 `CO_DECISION`（EvalDecision 的 decision 值）。
+| 事件 | env 字段 |
+|------|---------|
+| `leader_message_start` | `CO_LEADER_ID, CO_MESSAGE_ID, CO_LINK, CO_LOG_PATH` |
+| `leader_message_end` | 上 + `exit_code: number` |
+| `worker_message_start` | `CO_WORKER_NAME, CO_WORKER_ID, CO_WORKER_ROLE, CO_LEADER_ID, CO_MESSAGE_ID, CO_TASK_ID, CO_LINK, CO_CHAIN_ID, CO_LOG_PATH, CO_RESULT_PATH` |
+| `worker_message_end` | 上 + `exit_code: number` |
+| `task_claimed` | `CO_WORKER_NAME, CO_WORKER_ID, CO_WORKER_ROLE, CO_LEADER_ID, CO_MESSAGE_ID, CO_TASK_ID, CO_LINK, CO_CHAIN_ID` |
+| `task_completed` | 上 + `duration_seconds: number \| null` |
+| `chain_activated` | `CO_CHAIN_ID`（仅一个） |
+| `merge_decision_made` | `CO_DECISION, CO_BRANCH, CO_REASON` |
+
+> `flattenEnv`（`hook-engine.ts:78-85`）把 env 字典里的 null/undefined 转换为空串后并入 `process.env`，所以 shell 脚本里读到的总是 string。
+>
+> v0.7 不再注入 `CO_INSTANCE_ID`（统一用 `CO_WORKER_ID`）与 `CO_PROTOCOL_VERSION`（协议号仅作 ZK payload 诊断元数据，详见 §02-contracts §1.2）。
 
 ### 6.4 HookEngine 实现要点
 
 ```text
-HookEngine.fire(eventName, env):
-  cmd = config.hooks[eventName]
-  if cmd == null: return
-  fork sh -c cmd with env merged
+HookEngine.fire(event):
+  cmd = handlers.get(event.type)        // 来自 5 层合并后的 ResolvedConfig.hooks
+  if cmd == null: return                 // 未配置即跳过
+  spawn sh -c <cmd> with env merged      // stdio: 'ignore', detached: true, child.unref()
   startTimer 5s
-  on exit:        clearTimer; ignore exit code; emit 'debug_info' if non-zero
-  on timer fire:  SIGTERM child; emit 'debug_info' "hook <eventName> timeout"
+  on exit:        clearTimer; resolve()  // 不区分 exit code，不 emit 任何事件
+  on error:       clearTimer; log warn; resolve()
+  on timer fire:  SIGKILL child; log warn 'hook <event.type> timeout'; resolve()
 ```
 
-> 失败 / 超时不会传播到主流程：hook 只是辅助通知，不是质量门。
+> 失败 / 超时不会传播到主流程也不污染 LeaderEventBus：hook 是 fire-and-forget 的辅助通知。spawn 选项见 `packages/runtime/src/hook-engine.ts:44-47`。
 
 ---
 
@@ -423,6 +421,6 @@ Worker `claude -p` 通过 `execWithStreaming` 按行回调时会产生 `stream_c
 | closeChain 触发链路 | `05-chain-router-and-decisions.md` §4 + `07-merge-validator-and-closure.md` §3 | §1.5 |
 | incrementRetry 调用 | `05-chain-router-and-decisions.md` §4.2 | §1.2 |
 | appendChildChain | `10-magic-loop.md` §4 | §1.2 / §4.3 |
-| merge_failures 写入 | `07-merge-validator-and-closure.md` §4 | §1.3 |
+| merge 失败明细写入（仅 audit.jsonl） | `07-merge-validator-and-closure.md` §4 | §4.2 `merge_failure` |
 | memory 卡片 / source_hash | `08-memory-and-bootstrap.md` §3 | §5.5 |
 | hook 调用点 | `06-tasks-and-workers.md` §3 / §8 | §6 |
