@@ -50,6 +50,14 @@ function copyDir(src: string, dst: string): void {
 export function createTempProject(opts: {
   source_templates_dir: string;
   source_skills_dir: string;
+  /**
+   * Additional files (rel-path → content) to drop into the project root
+   * and include in the seed commit. Lets the e2e test inject e.g. a
+   * `.claude-orchestrator/config.json` with hook bindings before
+   * `runOrchestrator` reads it, while keeping `ensureCleanWorkspace`
+   * happy (`git status --porcelain` returns empty post-seed).
+   */
+  extra_files?: Record<string, string>;
 }): TempProject {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "co-eval-startup-"));
   const templatesDst = path.join(root, "templates");
@@ -60,6 +68,12 @@ export function createTempProject(opts: {
 
   // Write a stub root file so the initial commit is non-empty.
   fs.writeFileSync(path.join(root, "README.md"), "# temp project\n");
+
+  for (const [rel, content] of Object.entries(opts.extra_files ?? {})) {
+    const dst = path.join(root, rel);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, content);
+  }
 
   git(root, ["init", "-q", "-b", "main"]);
   git(root, ["add", "-A"]);

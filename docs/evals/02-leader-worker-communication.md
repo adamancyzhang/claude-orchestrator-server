@@ -467,54 +467,74 @@ chain_spawned, chain_spawned_from, magic_depth_exhausted
 
 **修复方案**：改 `docs/v0.7/dd/09-audit-and-cache.md` §6.4 删除 "emit 'debug_info' if non-zero" 一行；新增一行 "hook 子进程退出（无论 exit code）只 clearTimer + resolve；timeout 会 log warn 但不 emit"。
 
-### 8.6 manifest 写入非原子
+### 8.6 manifest 写入非原子 — **已修复**
 
-| 项 | 预期（DD §1.4） | 实际 |
-|----|---|---|
-| 写入策略 | `writeManifestAtomic = fs.writeFile(path + '.tmp', json); fs.rename(path + '.tmp', path)` | `fs.promises.writeFile(manifestPath, JSON.stringify(...), 'utf-8')` 直写覆盖（`chain-audit.ts:168, :263, :315, :349`） |
+| 项 | 预期（DD §1.4） | 旧实际 | 当前实际 |
+|----|---|---|---|
+| 写入策略 | `writeManifestAtomic = fs.writeFile(path + '.tmp', json); fs.rename(path + '.tmp', path)` | `fs.promises.writeFile(manifestPath, JSON.stringify(...), 'utf-8')` 直写覆盖 | `ChainAudit.writeManifestAtomic` 私有 helper，8 处调用点（openChain / incrementRetry / setLinkTask / recordLinkCommit / clearLinkCommitsFrom / setLinkWorker / closeChain / appendChildChain）统一走 `writeFile(*.tmp) + rename(*.tmp, *)` |
 
-**判定**：**两边都需要补一边**。代码语义上写入是单 Leader 进程串行的，崩在 fs.writeFile 中途确实会留半文件；理论上有崩盘窗口（虽然实践罕见）。
+**修复**：`packages/leader/src/chain-audit.ts:133-151` 新增 `writeManifestAtomic`；崩盘窗口在 e2e slow 测试中以 `fs.promises.writeFile` 注入 EIO 验证（`leader-worker-communication.slow.test.ts > "partial writeFile leaves prior manifest valid"`）——崩在 `.tmp` 写入即抛错且 manifest.json 原值保留。
 
-**修复方案（二选一）**：
-1. **以文档为准**：在 `chain-audit.ts` 加 `writeManifestAtomic(path, manifest)` helper，全部 `writeFile(manifestPath, ...)` 调用点（5 处）替换；为 `incrementRetry / recordLinkCommit / clearLinkCommitsFrom / setLinkTask / setLinkWorker / appendChildChain / openChain / closeChain` 共享。
-2. **以代码为准**：改 DD §1.4 把"原子覆写（write to *.tmp + rename）"删掉。
+### 8.7 MessageRouter 丢弃 v0.7 可选字段（新发现）
 
-**推荐**：方案 1。`fs.rename` 在 POSIX 同分区是原子操作，成本几乎为零，能消除崩盘窗口。
+| 项 | 预期（schema + chain-router 调用） | 旧实际 | 当前实际 |
+|----|---|---|---|
+| `upstream_commits` / `spawned_from` / `next_requirement` payload | `MessageRouter.send` 应透传到 ZK 节点 payload | `packages/coordination/src/message-router.ts:48-82` 的 payload 对象未引用任何一个字段——chain-router.ts:909 显式传入也被丢弃 | 已在 payload 中按需透传，下游 worker `preTaskRebase` / `collectChainArtifacts` 现在能拿到上游 commit。 |
+
+**判定**：**以文档为准** — Schema 已声明字段、leader 也在写，但传输层吞掉。**已修复**。e2e 测试 `"upstream_commits propagates monotonically through link_commits"` + `"preTaskRebase landed each upstream sha as an ancestor"` 同时回归。
+
+### 8.8 CommitChecker 把 orchestrator-managed state 文件提交进 worker 分支（新发现）
+
+| 项 | 预期（§6.2 preTaskRebase） | 旧实际 | 当前实际 |
+|----|---|---|---|
+| 哪些 untracked 路径算 commit 候选 | 仅 worker 自己生成的工件（result.md、源码改动等） | `parseStatus` 把 `git status --porcelain` 列出的所有 `??` 一律入 commit 列表，包括 `seedWorktreeAssets` 每次启动都重新拷的 `.claude-orchestrator/agents/*.md`、`.claude/skills/*/SKILL.md`、`CLAUDE.md` | `parseStatus` 增加 `SEEDED_STATE_PATH_PREFIXES` + `SEEDED_STATE_EXACT_PATHS` 过滤名单，这三类路径不再被 `git add` |
+
+**判定**：**以文档为准** — 这些是 stateless 重复种入物，不该入任何 worker 的分支。如果 commit 了，下游 link 的 `git rebase <upstream_sha>` 会因 "untracked working tree files would be overwritten by checkout" 失败，silently 退化 §6.2 documented 的 preTaskRebase 行为。**已修复**。e2e 测试 `"preTaskRebase landed each upstream sha as an ancestor"` 现在通过。
 
 ---
 
-## 9. 后续真机验证项（留待 `02-leader-worker-communication-runtime.md`）
+## 9. 后续真机验证项
 
-本份纸面验证无法 100% 闭环，下一份 evals 文档需要真机跑一次"键入需求 → 完链路 → close" 并回填：
+> **状态更新**：原计划留给 `02-leader-worker-communication-runtime.md` 真机回填的 11 项，绝大多数已被自动化 e2e（无 docker / 无真 claude-cli，纯 in-memory ZK + stubbed `IClaudeRunner`）覆盖。覆盖落在 `packages/orchestrator/tests/core/e2e/leader-worker-communication.{test,slow.test}.ts`；详见 §11。
 
-- [ ] **消息序号**：6 个 worker × 5 link × 至少 1 个 task_dispatch + 1 个 completion_report；ZK `/messages/{instance}/` 节点序列应该从 `msg-0000000000` 开始顺序递增。
-- [ ] **Hook 触发计数**：8 个事件实际触发次数；至少 `leader_message_start/end` 各 1（decompose），`worker_message_start/end` 各 5（5 个 link），`task_claimed` 5，`task_completed` 5，`chain_activated` 1。
-- [ ] **CO_* env 抓取**：注入一段 hook 脚本 `printenv | grep ^CO_ > /tmp/co-hook-<event>.env`，验证 §4.2 表逐字段对得上。
-- [ ] **双轨 commit 落盘**：`<project>/.claude-orchestrator/worktree/<name>/` 的 5 个 worker 分支应各有 ≥0 个新 commit；`<co_root>/docs/<name>/<date>/` 应各有 ≥0 个新文件 + 提交。
-- [ ] **commits envelope 完整性**：完成后 `<co_root>/chains/{chain_id}/manifest.json` 的 `link_commits` 里 5 个 link 各 1 条 `{worktree, docs, branch}` 记录（worktree/docs 允许为 null）。
-- [ ] **upstream_commits 注入**：抓 4 条 `task_dispatch` 消息体（execute/verify/review/accept 的 `to_instance` 入队消息），验证 `upstream_commits` 字段从 `{plan}` → `{plan, execute}` → `{plan, execute, verify}` → `{plan, execute, verify, review}` 严格单调递增。
-- [ ] **preTaskRebase 实际执行**：执行后每条 worker 分支 `git log` 应包含上游 worker 的 commit（用 `git merge-base --is-ancestor <upstream_sha> HEAD` 验证）。
-- [ ] **audit.jsonl 14 类事件覆盖率**：最少应该出现 `requirement_received, chain_opened, task_dispatch×5, completion_report×5, chain_closed` 共 ≥13 条。
-- [ ] **manifest 写入 race**：人为 kill Leader 在 `recordLinkCommit` 调用中途（用 `gdb -p <pid>` SIGSTOP），重启后 manifest 半成品是否被 JSON.parse 拒绝。验证 §8.6 提到的风险窗口。
-- [ ] **复现 CommitFailedError → forced feedback**：在某个 worker 的 worktree 里造一个永远会失败的 pre-commit hook（`echo exit 1 > .git/hooks/pre-commit`），观察 Leader 是否把该 link 的报告转成 `feedback` 而非 `activate_next`。
-- [ ] **TUI 与 EventBus**：EVENT LOG 面板应该出现 `message_received`、`task_dispatch`、`task_completed`、`chain_closed` 这一串事件。
+- [x] **消息序号**：`/messages/{instance}/msg-NNNN` 单调编号校验。覆盖测试：`leader-worker-communication.test.ts > "ZK message tree shows per-worker mailboxes with sequential msg-NNNN nodes"`。
+- [x] **Hook 触发计数 + CO_* env**：8 个 hook 事件至少各触发 1 次，CO_* 字段与 §4.2 表一致。覆盖测试：`"CO_* env was captured for every hook event"`（hook 脚本 harness 把 env dump 到磁盘）。
+- [x] **双轨 commit 落盘**：worker 分支与 `<co_root>/docs/<name>/` 各产生 ≥0 commit。覆盖测试：`"per-worker worktrees have ≥1 new commit on the worker branch"`。
+- [x] **commits envelope 完整性**：`manifest.link_commits.<link>.{worktree,docs,branch}`。覆盖测试：`"manifest.link_commits carries dual {worktree, docs, branch} per link"`。
+- [x] **upstream_commits 单调递增**：覆盖测试：`"upstream_commits propagates monotonically through link_commits"`（解析 manifest 等价于解析 task_dispatch 的 upstream_commits 集合）。
+- [x] **preTaskRebase 实际执行**：每条下游 worker 分支必须包含上游 worker 的 commit。覆盖测试：`"preTaskRebase landed each upstream sha as an ancestor of each downstream branch"`（`git merge-base --is-ancestor`）。
+- [x] **audit.jsonl 关键事件覆盖率**：覆盖测试：`"audit.jsonl contains the documented core events"`。
+- [x] **manifest 写入 race**：`fs.promises.writeFile` 在 `.tmp` 中途 EIO，断言 manifest.json 不会半写。覆盖测试：`leader-worker-communication.slow.test.ts > "partial writeFile leaves prior manifest valid"`。配合 §8.6 已落地的原子写。
+- [x] **TUI 与 EventBus**：覆盖测试：`"LeaderEventBus emitted the documented sequence"`（事件总线 tap 抓取流式事件）。
+- [ ] **CommitFailedError → forced feedback**：`leader-worker-communication.slow.test.ts` 中以 `it.todo` 占位，待后续补；现有 watcher.ts:551-562 在生产路径中确实把 CommitFailedError 路由到 `sendForcedFeedbackReport`，但端到端测试需要单独再建一次启动并塞入失败 pre-commit hook，留待下一轮。
 
 ---
 
 ## 10. 维护
 
-- 任何改动 `packages/leader/src/chain-router.ts`、`packages/worker/src/watcher.ts`、`packages/leader/src/chain-audit.ts`、`packages/runtime/src/hook-engine.ts`、`packages/contracts/src/hooks.ts`、`packages/contracts/src/schemas/message.ts` 的 PR 都应回看本文 §3 / §4 / §5 / §6 / §7 是否仍然成立。
+- 任何改动 `packages/leader/src/chain-router.ts`、`packages/worker/src/watcher.ts`、`packages/leader/src/chain-audit.ts`、`packages/runtime/src/hook-engine.ts`、`packages/contracts/src/hooks.ts`、`packages/contracts/src/schemas/message.ts`、`packages/coordination/src/message-router.ts`、`packages/worker/src/commit-checker.ts` 的 PR 都应回看本文 §3 / §4 / §5 / §6 / §7 是否仍然成立，并跑 `npx vitest run packages/orchestrator/tests/core/e2e/leader-worker-communication.test.ts`。
 - 与本场景不相关的新行为变更（如 `--magic` spawn_chain、merge_failed 重派）不应混入本文；新增的应建编号 03+ 的 evals 文档。
-- §8 列出的 6 项 DD 文档漂移（D1–D6）任何一项被修复时，应同步删除本文 §8 对应小节。
-- 一旦 `02-leader-worker-communication-runtime.md` 完成真机回填，本文 §9 的 checklist 全部勾选并交叉链接到 runtime 文档对应小节。
+- §8 列出的 8 项 drift（D1–D8）任何一项被修复或重新出现时，应同步更新本文 §8 对应小节并补回归测试。
 
 ---
 
 ## 11. 关联自动化测试
 
-**目前尚无对应的 e2e 测试**。本场景的可测部分（消息路由分派、CO_* env 注入、commits envelope 落 manifest、upstream_commits 单调递增）建议新增到：
+完整责任链跑通的 e2e 已落到 **`packages/orchestrator/tests/core/e2e/leader-worker-communication.test.ts`**（10 个子用例）+ **`leader-worker-communication.slow.test.ts`**（manifest 原子写崩盘窗口）。该测试：
 
-- `packages/leader/tests/core/integration/chain-router-completion.test.ts` —— 覆盖 §3.2 分派矩阵 + §5.4 + §6.1。
+- 用 `InMemoryZkClient`（`packages/orchestrator/tests/helpers/in-memory-zk-client.ts`）替代真 ZK，无 docker 依赖。
+- 用 `FakeClaudeRunner`（`packages/orchestrator/tests/helpers/fake-claude-runner.ts`）stub 所有 `claude -p` 调用（decompose / 5 个 link / 5 次 self-evaluate / commit-message / merge-decision）。
+- 用 `InProcessWorkerSupervisor`（`packages/orchestrator/tests/helpers/in-process-worker-supervisor.ts`）在测试进程内启动 6 个真实 `WorkerWatcher`，watch loop / preTaskRebase / CommitChecker / DocsCommitter / SelfEvaluator 全部跑产出代码。
+- 用 `HookHarness`（`packages/orchestrator/tests/helpers/hook-script-harness.ts`）注入临时 bash 脚本，把每次 hook 触发时的 `CO_*` env dump 到文件供断言。
+
+新发现 / 已修复的代码 drift（测试发现并触发的 PR）：
+
+- **D7**：`MessageRouter.send`（`packages/coordination/src/message-router.ts:48-82`）原本不在 payload 中转发 `upstream_commits` / `spawned_from` / `next_requirement` 三个 v0.7 Schema 字段——leader 端 `chain-router.ts:909` 显式传入也被静默丢弃。**修复**：补齐 payload 透传，恢复 §3.4 表与 §6.1 的预期。
+- **D8**：`CommitChecker.parseStatus`（`packages/worker/src/commit-checker.ts`）把 `seedWorktreeAssets` 写入的 untracked agent 模板 / skills / 团队 CLAUDE.md 一并算进 commit 集合——每个 worker 都会把这些 stateless 重复种入物提交进自己的分支，于是下游 link 的 `git rebase <upstream_sha>` 必败（"untracked working tree files would be overwritten by checkout"）。**修复**：在 `parseStatus` 中过滤 orchestrator-managed 路径前缀，让这些种入物对 git 维持纯 untracked 状态。
+
+后续如需补 §6.1 / §6.3 / §3.3 各 step 的微观集成测试，可继续放到：
+
+- `packages/leader/tests/core/integration/chain-router-completion.test.ts` —— 覆盖 §3.2 分派矩阵 + §5.4 + §6.1 的更细粒度场景。
 - `packages/worker/tests/core/integration/worker-message-cycle.test.ts` —— 覆盖 §3.3 step 1–10 + §5.1 / §5.2 + §6.2 / §6.3。
 - `packages/runtime/tests/core/integration/hook-engine-events.test.ts` —— 覆盖 §4.1 / §4.2 + §8.5。
 
