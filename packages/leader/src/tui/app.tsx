@@ -172,8 +172,8 @@ export default function App({
       return;
     }
 
-    // Regular character input
-    if (input.length === 1 && !key.ctrl && !key.meta) {
+    // Regular character input (accept multi-char IME output)
+    if (input.length > 0 && !key.ctrl && !key.meta) {
       setInputBuffer((b) => b + input);
     }
   });
