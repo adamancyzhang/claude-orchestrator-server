@@ -102,7 +102,7 @@ const LINK_TO_ROLE: Record<TaskLink | "decompose", string> = {
  * `feedback` on plan is illegal (no PREV) and silently dropped by
  * `resolveFeedbackTarget` returning null.
  */
-function isDecisionLegalForLink(
+export function isDecisionLegalForLink(
   decisionKind: EvalDecision["decision"],
   link: TaskLink,
   magicMode: boolean,
@@ -119,6 +119,54 @@ function isDecisionLegalForLink(
   // existing handlers further constrain them — e.g. feedback on plan
   // becomes feedback_unresolved).
   return true;
+}
+
+/**
+ * True when `content` parses as JSON and structurally looks like a
+ * `ChainDef` payload (carries `chain_id` and `tasks` keys). Parse
+ * failures and non-object payloads return false — this is a "looks like"
+ * predicate, not a validator. ChainRouter uses it as a cheap gate before
+ * the full ChainDefSchema.parse downstream.
+ */
+export function looksLikeChainDef(content: string): boolean {
+  try {
+    const json = JSON.parse(extractJson(content)) as Record<string, unknown>;
+    return Boolean(
+      json && typeof json === "object" && "chain_id" in json && "tasks" in json,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Best-effort human-readable string for a merge error. Lock / permission /
+ * network classes preserve their stderr; conflict carries conflict files;
+ * everything else falls back to `String(err)`. Mirror partner of
+ * `categorizeMergeError`.
+ */
+export function formatMergeError(err: unknown): string {
+  if (err instanceof MergeConflictError) {
+    return `conflict: ${err.conflict_files.join(", ") || err.message}`;
+  }
+  if (err instanceof WorktreeLockedError) {
+    return `worktree_locked: ${err.stderr || err.message}`;
+  }
+  if (err instanceof GitPermissionError) {
+    return `permission: ${err.stderr || err.message}`;
+  }
+  if (err instanceof GitNetworkError) {
+    return `network: ${err.stderr || err.message}`;
+  }
+  return String(err);
+}
+
+export function categorizeMergeError(err: unknown): MergeFailureCategory {
+  if (err instanceof MergeConflictError) return "conflict";
+  if (err instanceof WorktreeLockedError) return "worktree_locked";
+  if (err instanceof GitPermissionError) return "permission";
+  if (err instanceof GitNetworkError) return "network";
+  return "other";
 }
 
 export interface ChainRouterOptions {
@@ -274,7 +322,7 @@ export class ChainRouter {
       await this.handleCompletionReport(msg);
       return;
     }
-    if (this.looksLikeChainDef(msg.content)) {
+    if (looksLikeChainDef(msg.content)) {
       await this.handleTaskDefinitions(msg, msg.content);
       return;
     }
@@ -395,15 +443,6 @@ export class ChainRouter {
         from: msg.from_name,
         error: String(err),
       });
-    }
-  }
-
-  private looksLikeChainDef(content: string): boolean {
-    try {
-      const json = JSON.parse(extractJson(content)) as Record<string, unknown>;
-      return Boolean(json && typeof json === "object" && "chain_id" in json && "tasks" in json);
-    } catch {
-      return false;
     }
   }
 
@@ -1185,8 +1224,8 @@ export class ChainRouter {
             sha: acceptRecord.worktree,
             branch: acceptRecord.branch,
             message: `chain ${chainId} accept`,
-            error: this.formatMergeError(err),
-            category: this.categorizeMergeError(err),
+            error: formatMergeError(err),
+            category: categorizeMergeError(err),
           });
           return failures;
         }
@@ -1196,36 +1235,6 @@ export class ChainRouter {
       // the accept link, or accept produced docs-only changes).
     }
     return this.runMergeValidation(chainId, mode);
-  }
-
-  /**
-   * Best-effort classification of a merge error into a human-readable
-   * "error" string for chain-audit. Lock/permission/network errors
-   * carry stderr from MergeValidator's classifyGitError; conflict
-   * errors carry their conflict_files list.
-   */
-  private formatMergeError(err: unknown): string {
-    if (err instanceof MergeConflictError) {
-      return `conflict: ${err.conflict_files.join(", ") || err.message}`;
-    }
-    if (err instanceof WorktreeLockedError) {
-      return `worktree_locked: ${err.stderr || err.message}`;
-    }
-    if (err instanceof GitPermissionError) {
-      return `permission: ${err.stderr || err.message}`;
-    }
-    if (err instanceof GitNetworkError) {
-      return `network: ${err.stderr || err.message}`;
-    }
-    return String(err);
-  }
-
-  private categorizeMergeError(err: unknown): MergeFailureCategory {
-    if (err instanceof MergeConflictError) return "conflict";
-    if (err instanceof WorktreeLockedError) return "worktree_locked";
-    if (err instanceof GitPermissionError) return "permission";
-    if (err instanceof GitNetworkError) return "network";
-    return "other";
   }
 
   /**
@@ -1265,8 +1274,8 @@ export class ChainRouter {
           sha: commit.sha,
           branch: commit.branch,
           message: commit.message,
-          error: this.formatMergeError(err),
-          category: this.categorizeMergeError(err),
+          error: formatMergeError(err),
+          category: categorizeMergeError(err),
         });
       }
     }
