@@ -32,7 +32,7 @@ export type Instance = z.infer<typeof InstanceSchema>;
 export interface CreateInstanceInput {
   id?: InstanceId;
   name: string;
-  role?: InstanceRole;
+  role: InstanceRole;
   work_dir?: string | null;
   worktree_name?: WorktreeName | null;
   worktree_path?: string | null;
