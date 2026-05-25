@@ -1,14 +1,56 @@
+// CORE-RETENTION
+// Locks in: ClaudeRunner.run() invokes the underlying CLI with the exact
+// `command`, `cwd`, `system_prompt`, and `prompt` we feed in — preserving
+// the `claude --append-system-prompt '<sys>' -p '<user>'` invocation
+// contract that worker boot depends on. Also locks in
+// buildIdentityPrompt's `{{co_root}}` / `{{co_role_path}}` /
+// `{{originBranch}}` interpolation including the null-origin → "" fallback.
+// Critical because: a regression that drops cwd, swaps prompts, or muddles
+// the identity-card placeholders silently produces workers that operate in
+// the wrong directory, lose their role identity, or hit "permission
+// denied" because they spawn from the leader's cwd instead of their own
+// worktree — none of which surface as a test failure today without this
+// guard.
+// Primary sources: packages/runtime/src/runner.ts,
+//                  packages/runtime/src/identity.ts (buildIdentityPrompt)
+
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
-import { asInstanceId } from "@co/contracts";
+import { asInstanceId, type ILogger } from "@co/contracts";
 
-// ── Mock @co/infra: only execWithStreaming is faked; everything else is real ──
+// TRUST-JUSTIFICATION: Mocking @co/infra.execWithStreaming only.
+// Downstream: the real `claude` CLI subprocess — a network-bound LLM
+// invocation that costs tokens and produces non-deterministic output.
+// Reason: the contract under test is "what arguments does ClaudeRunner
+// hand to execWithStreaming", which is the protocol boundary between
+// runtime/ and the child process. Running the real CLI in unit tests is
+// impractical (cost, latency, non-determinism).
+// Evidence: every other named export from @co/infra (loadConfig,
+// saveInstanceId, …) is forwarded unchanged via importOriginal, so the
+// fs-based config round-trip below exercises real production code.
 vi.mock("@co/infra", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@co/infra")>();
   return { ...actual, execWithStreaming: vi.fn() };
 });
+
+// TRUST-JUSTIFICATION: SILENT_LOGGER is a no-op ILogger.
+// Downstream: structured log writes — observable only via stdout/file sinks
+// the runner does not own.
+// Reason: ClaudeRunner.run() is the SUT; it does not READ from the logger,
+// only writes. No assertion targets logger call counts. A throwing stub
+// would be louder but here we accept silence because the runner's logger
+// usage is internal diagnostics, not protocol.
+// Evidence: assertions below target opts captured by execWithStreaming —
+// the protocol contract — not logger state.
+const SILENT_LOGGER: ILogger = {
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+  child: () => SILENT_LOGGER,
+} as unknown as ILogger;
 
 import {
   execWithStreaming,
@@ -255,13 +297,7 @@ describe("ClaudeRunner.run() with real config", () => {
       work_dir: tom.worktree_path,
     });
 
-    const logger = {
-      debug: vi.fn(),
-      warn: vi.fn(),
-      info: vi.fn(),
-      error: vi.fn(),
-    };
-    const runner = new ClaudeRunner("claude", logger);
+    const runner = new ClaudeRunner("claude", SILENT_LOGGER);
 
     await runner.run({
       prompt: taskPrompt,
@@ -272,15 +308,6 @@ describe("ClaudeRunner.run() with real config", () => {
     });
 
     const opts = vi.mocked(execWithStreaming).mock.calls.at(-1)![0];
-
-    console.log("\n════════════ FINAL CLI INVOCATION ════════════");
-    console.log(`Worker      : ${tom.name} (${tom.role})`);
-    console.log(`command     : ${opts.command}`);
-    console.log(`cwd         : ${opts.cwd}`);
-    console.log(`system_prompt: ${opts.system_prompt!.length} chars`);
-    console.log(`user_prompt  : ${opts.prompt.length} chars`);
-    console.log(`log_path     : ${opts.log_path}`);
-    console.log("═══════════════════════════════════════════════\n");
 
     expect(opts.command).toBe("claude");
     expect(opts.cwd).toBe(tom.worktree_path);

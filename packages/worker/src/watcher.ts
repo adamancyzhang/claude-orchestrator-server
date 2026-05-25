@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import {
   asTaskId,
   cachePaths,
@@ -26,83 +25,25 @@ import type { SelfEvaluator } from "./evaluator.js";
 import { chainLinksFor } from "./evaluator.js";
 import type { CommitChecker, CommitResult } from "./commit-checker.js";
 import type { WorkerDocsCommitter } from "./docs-committer.js";
-
-/**
- * Per-link user-message template. The system prompt (identity + standing
- * role description) is loaded once at boot in child-boot.ts; these
- * templates only carry the per-task body — task metadata, upstream
- * artifact paths, output contract, retry hint.
- */
-const LINK_TO_TASK_TEMPLATE: Record<TaskLink | "decompose", string> = {
-  plan: "agents/planner/task.md",
-  execute: "agents/executor/task.md",
-  verify: "agents/verifier/task.md",
-  review: "agents/reviewer/task.md",
-  accept: "agents/accepter/task.md",
-  explore: "agents/explorer/task.md",
-  decompose: "workflow/decompose.md",
-};
-
-const LINK_TO_LOCAL_PREFIX: Record<TaskLink, string> = {
-  plan: "plan",
-  execute: "execute",
-  verify: "verify",
-  review: "review",
-  accept: "accept",
-  explore: "explore",
-};
-
-/**
- * Pick the immediate predecessor link's commit hash for pre-task
- * rebase. We rebase onto the *immediate* predecessor (not all
- * upstream links) because each link rebases onto its predecessor in
- * turn, so the predecessor's HEAD already contains the full upstream
- * history. Returns null when there is no upstream commit to rebase
- * onto (planner, first-link retries, decompose tasks, or upstream
- * link did not produce a worktree commit).
- */
-function pickImmediatePredecessor(
-  link: TaskLink,
-  upstream: UpstreamCommits | undefined,
-): string | null {
-  if (!upstream) return null;
-  // Predecessor order is fixed by chain definition. Walk back from
-  // the current link and return the first non-empty hash. Tolerant
-  // to gaps (e.g. accept gets a chain where plan committed but
-  // execute/verify/review had no worktree commit — accept still
-  // rebases onto plan).
-  // `accept` is added to the upstream chain because the
-  // explore link rebases on top of accept's commit. The list omits
-  // explore itself because no link follows it.
-  type UpstreamKey = "plan" | "execute" | "verify" | "review" | "accept";
-  const order: UpstreamKey[] = [
-    "plan",
-    "execute",
-    "verify",
-    "review",
-    "accept",
-  ];
-  if (link === "plan") return null;
-  // For "explore": walk the full upstream list back-to-front (accept
-  // → review → verify → execute → plan). Other links read their own
-  // index minus one as the start of the walk.
-  const startIdx =
-    link === "explore"
-      ? order.length - 1
-      : order.indexOf(link as UpstreamKey) - 1;
-  for (let i = startIdx; i >= 0; i--) {
-    const h = upstream[order[i]];
-    if (h) return h;
-  }
-  return null;
-}
-
-const MAX_GENERATION_RETRIES = 3;
-
-interface GenerationFailure {
-  kind: "missing" | "empty" | "exit_code";
-  detail: string;
-}
+import {
+  collectChainArtifacts,
+  LINK_TO_LOCAL_PREFIX,
+  pickImmediatePredecessor,
+} from "./chain-artifacts.js";
+import {
+  buildCompletionBody,
+  sendCompletionReport as sendCompletionReportFn,
+  sendDecomposeReport as sendDecomposeReportFn,
+  sendForcedFeedbackReport as sendForcedFeedbackReportFn,
+  type WorkerIdentity,
+} from "./report-messages.js";
+import { buildWorkerTaskPrompt } from "./prompt-render.js";
+import {
+  classifyWorkerOutput,
+  MAX_GENERATION_RETRIES,
+  type GenerationFailure,
+} from "./output-validator.js";
+import { preTaskRebase } from "./git-rebase.js";
 
 export interface WorkerWatcherOptions {
   instance_id: InstanceId;
@@ -206,7 +147,11 @@ export class WorkerWatcher {
     isChainLink: boolean;
   }): Promise<void> {
     const { msg, link, taskId, realTaskId, isChainLink } = args;
-    const chainArtifacts = await this.collectChainArtifacts(msg, link);
+    const chainArtifacts = await collectChainArtifacts(
+      this.opts.cache_paths,
+      msg.chain_id,
+      link,
+    );
     const resultPath = cachePaths.taskResultPath(
       this.opts.cache_paths,
       taskId,
@@ -279,7 +224,12 @@ export class WorkerWatcher {
       );
       if (predecessor) {
         try {
-          await this.preTaskRebase(predecessor);
+          await preTaskRebase({
+            worktree_path: this.opts.worktree_path,
+            target_sha: predecessor,
+            git_remote: this.opts.git_remote,
+            logger: this.opts.logger,
+          });
         } catch (err) {
           if (err instanceof RebaseConflictError) {
             this.opts.logger.error(
@@ -351,64 +301,33 @@ export class WorkerWatcher {
     const workspaceMemoryPath = cachePaths.workspaceMemoryRoot(
       this.opts.cache_paths,
     );
-    const renderPrompt = (retryHint: string): string => {
-      if (!link) return msg.content;
-      const tplName = LINK_TO_TASK_TEMPLATE[link];
-      if (!this.opts.template_engine.has(tplName)) {
-        throw new TemplateNotFoundError(tplName);
-      }
-      const upstreamCommits = msg.upstream_commits ?? {};
-      return this.opts.template_engine.render(tplName, {
-        name: this.opts.worker_name,
-        role: this.opts.worker_role,
-        date: dateStamp,
-        unique_key: uniqueKey,
-        task_title: msg.task_title ?? "",
-        task_description: msg.task_description ?? msg.content,
-        task_criteria: msg.task_criteria ?? "",
+    const coRoot = cachePaths.coRootDir(this.opts.cache_paths);
+    const renderPrompt = (retryHint: string): string =>
+      buildWorkerTaskPrompt({
+        template_engine: this.opts.template_engine,
+        link,
+        msg,
+        worker_name: this.opts.worker_name,
+        worker_role: this.opts.worker_role,
+        worktree_path: this.opts.worktree_path,
         result_path: resultPath,
         local_doc_path: localDocPath,
-        work_dir: this.opts.worktree_path,
-        time: new Date().toISOString(),
-        content: msg.content,
-        original_requirement_path: msg.original_requirement_path ?? "",
-        upstream_plan_artifact: chainArtifacts.plan,
-        upstream_execute_artifact: chainArtifacts.execute,
-        upstream_verify_artifact: chainArtifacts.verify,
-        upstream_review_artifact: chainArtifacts.review,
-        upstream_accept_artifact: chainArtifacts.accept,
-        upstream_plan_commit: upstreamCommits.plan ?? "",
-        upstream_execute_commit: upstreamCommits.execute ?? "",
-        upstream_verify_commit: upstreamCommits.verify ?? "",
-        upstream_review_commit: upstreamCommits.review ?? "",
-        upstream_accept_commit: upstreamCommits.accept ?? "",
-        co_root: cachePaths.coRootDir(this.opts.cache_paths),
-        workspace_memory_path: workspaceMemoryPath,
+        unique_key: uniqueKey,
+        date: dateStamp,
         retry_hint: retryHint,
+        chain_artifacts: chainArtifacts,
+        co_root: coRoot,
+        workspace_memory_path: workspaceMemoryPath,
       });
-    };
 
-    const validateOutput = async (
+    const validateOutput = (
       runResult: { exit_code: number },
-    ): Promise<GenerationFailure | null> => {
-      if (runResult.exit_code !== 0) {
-        return { kind: "exit_code", detail: `exit_code=${runResult.exit_code}` };
-      }
-      if (!isChainLink) return null;
-      try {
-        const stat = await fs.promises.stat(resultPath);
-        if (stat.size === 0) {
-          return { kind: "empty", detail: `${resultPath} is 0 bytes` };
-        }
-        const content = await fs.promises.readFile(resultPath, "utf-8");
-        if (!content.trim()) {
-          return { kind: "empty", detail: `${resultPath} contains only whitespace` };
-        }
-        return null;
-      } catch {
-        return { kind: "missing", detail: `${resultPath} does not exist` };
-      }
-    };
+    ): Promise<GenerationFailure | null> =>
+      classifyWorkerOutput({
+        exit_code: runResult.exit_code,
+        is_chain_link: isChainLink,
+        result_path: resultPath,
+      });
 
     let result: { exit_code: number; session_id: SessionId | null; log_path: string } = {
       exit_code: -1,
@@ -664,72 +583,14 @@ export class WorkerWatcher {
     void ClaudeRunner.buildIdentityPrompt; // keep reference for runtime hint
   }
 
-  /**
-   * Resolve upstream artifact paths for the current link by reading the
-   * chain manifest. Each upstream link's accepted task_id maps to
-   * `tasks/<task_id>/result.md`. Empty string when no chain_id is set
-   * (ad-hoc / decompose flows) or when the manifest is missing the entry
-   * — template rendering remains stable.
-   */
-  private async collectChainArtifacts(
-    msg: Message,
-    link: TaskLink | "decompose" | null,
-  ): Promise<{
-    plan: string;
-    execute: string;
-    verify: string;
-    review: string;
-    accept: string;
-  }> {
-    const empty = {
-      plan: "",
-      execute: "",
-      verify: "",
-      review: "",
-      accept: "",
+  private workerIdentity(): WorkerIdentity {
+    return {
+      instance_id: this.opts.instance_id,
+      worker_name: this.opts.worker_name,
+      worker_role: this.opts.worker_role,
+      worktree_branch: this.opts.worktree_branch,
+      leader_id: this.opts.leader_id,
     };
-    if (!msg.chain_id || !link || link === "decompose") return empty;
-    const chainId = msg.chain_id as ChainId;
-    let manifest: { link_tasks?: Record<string, string | null> } | null = null;
-    try {
-      const manifestPath = cachePaths.chainManifestPath(
-        this.opts.cache_paths,
-        chainId,
-      );
-      manifest = JSON.parse(await fs.promises.readFile(manifestPath, "utf-8"));
-    } catch {
-      return empty;
-    }
-    const linkTasks = manifest?.link_tasks ?? {};
-    const lookup = (k: TaskLink): string => {
-      const tid = linkTasks[k];
-      if (!tid) return "";
-      return cachePaths.taskResultPath(
-        this.opts.cache_paths,
-        asTaskId(tid),
-      );
-    };
-    const plan = lookup("plan");
-    const execute = lookup("execute");
-    const verify = lookup("verify");
-    const review = lookup("review");
-    const accept = lookup("accept");
-    switch (link as TaskLink) {
-      case "plan":
-        return empty;
-      case "execute":
-        return { plan, execute: "", verify: "", review: "", accept: "" };
-      case "verify":
-        return { plan, execute, verify: "", review: "", accept: "" };
-      case "review":
-        return { plan, execute, verify, review: "", accept: "" };
-      case "accept":
-        return { plan, execute, verify, review, accept: "" };
-      // explore reads every upstream link's result.md so
-      // the Explorer can decide spawn vs close with full context.
-      case "explore":
-        return { plan, execute, verify, review, accept };
-    }
   }
 
   private async sendCompletionReport(
@@ -754,159 +615,24 @@ export class WorkerWatcher {
       resume_session_id: resumeSessionId,
     });
 
-    let body = evalContent;
-    if (commit || docsSha) {
-      try {
-        const json = JSON.parse(evalContent);
-        // New `commits` envelope carries BOTH project worktree commit
-        // and CO root docs commit so Leader can propagate them as
-        // upstream_commits to the next link's task. Legacy `commit`
-        // field is retained alongside for backward-compatible parsers.
-        json.commits = {
-          worktree: commit?.sha ?? null,
-          docs: docsSha,
-          branch: this.opts.worktree_branch,
-        };
-        if (commit) {
-          json.commit = {
-            sha: commit.sha,
-            message: commit.message,
-            branch: this.opts.worktree_branch,
-            changed_files: commit.changed_files,
-            untracked_files: commit.untracked_files,
-          };
-        }
-        body = JSON.stringify(json);
-      } catch {
-        const tag = commit
-          ? `\nCommit: ${commit.sha.slice(0, 7)} - ${commit.message}`
-          : "";
-        const docsTag = docsSha ? `\nDocs commit: ${docsSha.slice(0, 7)}` : "";
-        body = evalContent + tag + docsTag;
-      }
-    }
+    const body = buildCompletionBody({
+      evalContent,
+      commit,
+      docsSha,
+      worktreeBranch: this.opts.worktree_branch,
+    });
 
-    await this.opts.message_router.send({
-      type: "completion_report",
-      from_instance: this.opts.instance_id,
-      from_name: this.opts.worker_name,
-      from_role: this.opts.worker_role,
-      to_instance: this.opts.leader_id,
-      content: body,
+    await sendCompletionReportFn({
+      router: this.opts.message_router,
+      identity: this.workerIdentity(),
       link,
-      task_id: taskId,
-      chain_id: msg.chain_id ?? null,
-      result_path: resultPath,
+      msg,
+      resultPath,
+      taskId,
+      body,
     });
   }
 
-  /**
-   * Rebase the Worker's own branch onto the immediate predecessor
-   * link's commit so the in-progress task sees the upstream artifacts
-   * in git. With the project repo's shared `.git`, this commit is
-   * already reachable locally — no `git fetch` needed unless the
-   * Worker is operating against an out-of-process remote (rare).
-   *
-   * Conflict → RebaseConflictError so caller can report feedback.
-   * Other errors propagate as plain Error so the caller can log and
-   * proceed without a rebase rather than block the chain.
-   */
-  private async preTaskRebase(targetSha: string): Promise<void> {
-    // Skip when worker branch already contains targetSha. Avoids the
-    // "rebase noop" that still touches the worktree.
-    try {
-      execFileSync(
-        "git",
-        ["merge-base", "--is-ancestor", targetSha, "HEAD"],
-        {
-          cwd: this.opts.worktree_path,
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-      this.opts.logger.debug("pre-task rebase skipped (ancestor)", {
-        target: targetSha.slice(0, 8),
-      });
-      return;
-    } catch (err) {
-      const status = (err as { status?: number }).status;
-      if (status !== 1) {
-        // unexpected; fall through and attempt rebase anyway
-        this.opts.logger.debug("merge-base --is-ancestor probe failed", {
-          error: String(err),
-        });
-      }
-    }
-    // Optional fetch when remote is configured. Failure to fetch is
-    // non-fatal — the sha is usually already in shared .git.
-    if (this.opts.git_remote) {
-      try {
-        execFileSync(
-          "git",
-          ["fetch", this.opts.git_remote, targetSha],
-          {
-            cwd: this.opts.worktree_path,
-            stdio: "pipe",
-          },
-        );
-      } catch (err) {
-        this.opts.logger.debug("pre-task fetch failed (non-fatal)", {
-          error: String(err),
-        });
-      }
-    }
-    try {
-      execFileSync("git", ["rebase", targetSha], {
-        cwd: this.opts.worktree_path,
-        stdio: "pipe",
-      });
-      this.opts.logger.info("pre-task rebase succeeded", {
-        target: targetSha.slice(0, 8),
-      });
-    } catch (err) {
-      // Check whether rebase is mid-conflict — diagnosed via the
-      // presence of .git/REBASE_HEAD or non-empty unmerged paths.
-      let conflicts: string[] = [];
-      try {
-        const out = execFileSync(
-          "git",
-          ["diff", "--name-only", "--diff-filter=U"],
-          {
-            cwd: this.opts.worktree_path,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-          },
-        );
-        conflicts = out.split("\n").filter(Boolean);
-      } catch {
-        // ignore
-      }
-      try {
-        execFileSync("git", ["rebase", "--abort"], {
-          cwd: this.opts.worktree_path,
-          stdio: "pipe",
-        });
-      } catch {
-        // ignore: state may already be clean
-      }
-      if (conflicts.length > 0) {
-        throw new RebaseConflictError(
-          `rebase onto ${targetSha.slice(0, 8)} conflicted`,
-          conflicts,
-          err,
-        );
-      }
-      throw err instanceof Error ? err : new Error(String(err));
-    }
-  }
-
-  /**
-   * Emit a completion_report with a forced `feedback` EvalDecision when
-   * a commit failure prevents the link from producing a valid artifact.
-   * Skips the self-evaluator entirely so an LLM hallucination can't
-   * promote broken work to activate_next. The feedback targets the same
-   * worker (self-retry of the same link) — Leader's chain-router treats
-   * it like any other feedback dispatch, subject to the retry ceiling.
-   */
   private async sendForcedFeedbackReport(args: {
     link: TaskLink;
     msg: Message;
@@ -914,24 +640,14 @@ export class WorkerWatcher {
     taskId: TaskId;
     stderr: string;
   }): Promise<void> {
-    const { link, msg, resultPath, taskId, stderr } = args;
-    const decision = {
-      decision: "feedback" as const,
-      reason: `commit failed at ${link}: ${stderr.slice(0, 200) || "unknown error"}`,
-      feedback_to_worker: `git commit failed for ${link} task ${taskId}. Diagnose with 'git status' / 'git diff' in the worktree, resolve the issue, then re-run.`,
-      feedback_target: this.opts.instance_id,
-    };
-    await this.opts.message_router.send({
-      type: "completion_report",
-      from_instance: this.opts.instance_id,
-      from_name: this.opts.worker_name,
-      from_role: this.opts.worker_role,
-      to_instance: this.opts.leader_id,
-      content: JSON.stringify(decision),
-      link,
-      task_id: taskId,
-      chain_id: msg.chain_id ?? null,
-      result_path: resultPath,
+    await sendForcedFeedbackReportFn({
+      router: this.opts.message_router,
+      identity: this.workerIdentity(),
+      link: args.link,
+      msg: args.msg,
+      resultPath: args.resultPath,
+      taskId: args.taskId,
+      stderr: args.stderr,
     });
   }
 
@@ -940,18 +656,12 @@ export class WorkerWatcher {
     resultPath: string,
     taskId: TaskId,
   ): Promise<void> {
-    const content = await fs.promises.readFile(resultPath, "utf-8");
-    await this.opts.message_router.send({
-      type: "completion_report",
-      from_instance: this.opts.instance_id,
-      from_name: this.opts.worker_name,
-      from_role: this.opts.worker_role,
-      to_instance: this.opts.leader_id,
-      content,
-      link: null,
-      task_id: taskId,
-      chain_id: msg.chain_id ?? null,
-      result_path: resultPath,
+    await sendDecomposeReportFn({
+      router: this.opts.message_router,
+      identity: this.workerIdentity(),
+      msg,
+      resultPath,
+      taskId,
     });
   }
 }
