@@ -20,8 +20,15 @@ import { ClaudeRunner } from "../src/runner.js";
 import { TemplateEngine } from "../src/template.js";
 import { buildWorkerSystemPrompt } from "../src/identity.js";
 
-// ── Real project with complete .claude-orchestrator/config.json ──
-const PROJECT_DIR = "/mnt/c/Users/adama/Documents/projects/test2";
+// ── In-tree test fixture: stands in for the developer-local project that
+//    the previous version of this test hardcoded. The fixture directory
+//    carries a complete `.claude-orchestrator/config.json` with a six-
+//    worker worktree map, so loadConfig() + loadProjectWorktreeConfig()
+//    return realistic data without touching any out-of-tree path.
+const PROJECT_DIR = path.resolve(
+  import.meta.dirname,
+  "../../../test-workspace",
+);
 
 // ── Template directory (from this repo) ──
 const TEMPLATES_DIR = path.resolve(import.meta.dirname, "../../../templates");
@@ -35,12 +42,38 @@ let WORKERS: (WorktreeEntry & {
 let originalCwd: () => string;
 
 beforeAll(() => {
+  // Fail loud if the in-tree fixture is missing instead of letting
+  // loadConfig() return defaults and the test crash deep inside
+  // path.join(...null) — the previous failure mode that masked the
+  // hardcoded-developer-path bug.
+  const fixtureConfig = path.join(
+    PROJECT_DIR,
+    ".claude-orchestrator",
+    "config.json",
+  );
+  if (!fs.existsSync(fixtureConfig)) {
+    throw new Error(
+      `runner.test fixture missing: ${fixtureConfig}. ` +
+        `Initialize it by ensuring test-workspace/.claude-orchestrator/config.json is checked in.`,
+    );
+  }
+
   originalCwd = process.cwd;
   process.cwd = () => PROJECT_DIR;
 
   const resolved = loadConfig();
   const entries = loadProjectWorktreeConfig();
-  CO_ROOT = path.join(resolved.projects_root, resolved.instance_id!);
+  if (!resolved.instance_id) {
+    throw new Error(
+      `runner.test fixture invalid: ${fixtureConfig} must set "instance_id"`,
+    );
+  }
+  if (Object.keys(entries).length === 0) {
+    throw new Error(
+      `runner.test fixture invalid: ${fixtureConfig} must set "worktree" with at least one worker`,
+    );
+  }
+  CO_ROOT = path.join(resolved.projects_root, resolved.instance_id);
   WORKERS = Object.entries(entries).map(([_key, w]) => ({
     ...w,
     instance_id: asInstanceId(w.instance_id),

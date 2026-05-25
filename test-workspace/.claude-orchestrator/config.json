@@ -1,0 +1,58 @@
+{
+  "instance_id": "leader-test-fixture",
+  "name": "TestLeader",
+  "role": "leader",
+  "projects_root": ".co-projects",
+  "zookeeper": {
+    "hosts": "127.0.0.1:2181",
+    "session_timeout_ms": 30000
+  },
+  "git": {
+    "merge_target_branch": "master",
+    "remote": "origin"
+  },
+  "worktree": {
+    "Tom": {
+      "name": "Tom",
+      "role": "planner",
+      "path": "workers/Tom",
+      "branch": "claude-orchestrator/Tom-workspace",
+      "instance_id": "fixture-tom-planner-001"
+    },
+    "Bob": {
+      "name": "Bob",
+      "role": "executor",
+      "path": "workers/Bob",
+      "branch": "claude-orchestrator/Bob-workspace",
+      "instance_id": "fixture-bob-executor-001"
+    },
+    "Carol": {
+      "name": "Carol",
+      "role": "verifier",
+      "path": "workers/Carol",
+      "branch": "claude-orchestrator/Carol-workspace",
+      "instance_id": "fixture-carol-verifier-001"
+    },
+    "Dave": {
+      "name": "Dave",
+      "role": "reviewer",
+      "path": "workers/Dave",
+      "branch": "claude-orchestrator/Dave-workspace",
+      "instance_id": "fixture-dave-reviewer-001"
+    },
+    "Eve": {
+      "name": "Eve",
+      "role": "accepter",
+      "path": "workers/Eve",
+      "branch": "claude-orchestrator/Eve-workspace",
+      "instance_id": "fixture-eve-accepter-001"
+    },
+    "Frank": {
+      "name": "Frank",
+      "role": "explorer",
+      "path": "workers/Frank",
+      "branch": "claude-orchestrator/Frank-workspace",
+      "instance_id": "fixture-frank-explorer-001"
+    }
+  }
+}

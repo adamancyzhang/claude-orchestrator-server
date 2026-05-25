@@ -11,5 +11,13 @@ sessions/
 .claude-orchestrator/*
 **/.claude-orchestrator/
 !.claude-orchestrator/docs/
+# Test fixture: in-tree workspace stand-in for the developer-local path
+# previously hardcoded by packages/runtime/tests/runner.test.ts. Re-include
+# the dir and its config.json so the checked-in fixture stays tracked,
+# but keep the CO state directory the test config points at gitignored.
+!test-workspace/
+!test-workspace/.claude-orchestrator/
+!test-workspace/.claude-orchestrator/**
+test-workspace/.co-projects/
 countlines-cli/
 evals
