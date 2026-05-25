@@ -277,6 +277,16 @@ describe("LeaderState — magic mode", () => {
 describe("LeaderState — selected worker index", () => {
   it("clamps to [0, workers.length-1] and only fires onChange when the value changes", () => {
     const state = new LeaderState();
+    // TRUST-JUSTIFICATION: vi.fn() used as a callback spy.
+    // Downstream: nothing — onChange is a user-supplied notification
+    // sink that LeaderState's public API exposes (state.onChange(fn)).
+    // Reason: the contract under test IS the invocation count — the
+    // public contract is "fires onChange only when selected_worker_index
+    // actually changes." Invocation count IS observable behavior, not
+    // an internal call count.
+    // Evidence: assertions interleave selected_worker_index reads and
+    // onChange call-count reads to verify the value-change-implies-fire
+    // contract; no internal state is inspected.
     const onChange = vi.fn();
     state.onChange(onChange);
 
