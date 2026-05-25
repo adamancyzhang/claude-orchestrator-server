@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import {
   asTaskId,
   cachePaths,
@@ -44,6 +43,7 @@ import {
   MAX_GENERATION_RETRIES,
   type GenerationFailure,
 } from "./output-validator.js";
+import { preTaskRebase } from "./git-rebase.js";
 
 export interface WorkerWatcherOptions {
   instance_id: InstanceId;
@@ -224,7 +224,12 @@ export class WorkerWatcher {
       );
       if (predecessor) {
         try {
-          await this.preTaskRebase(predecessor);
+          await preTaskRebase({
+            worktree_path: this.opts.worktree_path,
+            target_sha: predecessor,
+            git_remote: this.opts.git_remote,
+            logger: this.opts.logger,
+          });
         } catch (err) {
           if (err instanceof RebaseConflictError) {
             this.opts.logger.error(
@@ -626,105 +631,6 @@ export class WorkerWatcher {
       taskId,
       body,
     });
-  }
-
-  /**
-   * Rebase the Worker's own branch onto the immediate predecessor
-   * link's commit so the in-progress task sees the upstream artifacts
-   * in git. With the project repo's shared `.git`, this commit is
-   * already reachable locally — no `git fetch` needed unless the
-   * Worker is operating against an out-of-process remote (rare).
-   *
-   * Conflict → RebaseConflictError so caller can report feedback.
-   * Other errors propagate as plain Error so the caller can log and
-   * proceed without a rebase rather than block the chain.
-   */
-  private async preTaskRebase(targetSha: string): Promise<void> {
-    // Skip when worker branch already contains targetSha. Avoids the
-    // "rebase noop" that still touches the worktree.
-    try {
-      execFileSync(
-        "git",
-        ["merge-base", "--is-ancestor", targetSha, "HEAD"],
-        {
-          cwd: this.opts.worktree_path,
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-      this.opts.logger.debug("pre-task rebase skipped (ancestor)", {
-        target: targetSha.slice(0, 8),
-      });
-      return;
-    } catch (err) {
-      const status = (err as { status?: number }).status;
-      if (status !== 1) {
-        // unexpected; fall through and attempt rebase anyway
-        this.opts.logger.debug("merge-base --is-ancestor probe failed", {
-          error: String(err),
-        });
-      }
-    }
-    // Optional fetch when remote is configured. Failure to fetch is
-    // non-fatal — the sha is usually already in shared .git.
-    if (this.opts.git_remote) {
-      try {
-        execFileSync(
-          "git",
-          ["fetch", this.opts.git_remote, targetSha],
-          {
-            cwd: this.opts.worktree_path,
-            stdio: "pipe",
-          },
-        );
-      } catch (err) {
-        this.opts.logger.debug("pre-task fetch failed (non-fatal)", {
-          error: String(err),
-        });
-      }
-    }
-    try {
-      execFileSync("git", ["rebase", targetSha], {
-        cwd: this.opts.worktree_path,
-        stdio: "pipe",
-      });
-      this.opts.logger.info("pre-task rebase succeeded", {
-        target: targetSha.slice(0, 8),
-      });
-    } catch (err) {
-      // Check whether rebase is mid-conflict — diagnosed via the
-      // presence of .git/REBASE_HEAD or non-empty unmerged paths.
-      let conflicts: string[] = [];
-      try {
-        const out = execFileSync(
-          "git",
-          ["diff", "--name-only", "--diff-filter=U"],
-          {
-            cwd: this.opts.worktree_path,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-          },
-        );
-        conflicts = out.split("\n").filter(Boolean);
-      } catch {
-        // ignore
-      }
-      try {
-        execFileSync("git", ["rebase", "--abort"], {
-          cwd: this.opts.worktree_path,
-          stdio: "pipe",
-        });
-      } catch {
-        // ignore: state may already be clean
-      }
-      if (conflicts.length > 0) {
-        throw new RebaseConflictError(
-          `rebase onto ${targetSha.slice(0, 8)} conflicted`,
-          conflicts,
-          err,
-        );
-      }
-      throw err instanceof Error ? err : new Error(String(err));
-    }
   }
 
   private async sendForcedFeedbackReport(args: {
