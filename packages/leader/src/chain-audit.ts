@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   cachePaths,
   ChainConflictError,
@@ -134,7 +135,11 @@ export class ChainAudit {
     manifestPath: string,
     manifest: ChainManifest,
   ): Promise<void> {
-    const tmp = `${manifestPath}.tmp-${process.pid}-${Date.now()}`;
+    // Use a UUID rather than pid+ms to defeat the same-millisecond collision
+    // that two in-process callers would otherwise hit (the rename of the
+    // second writer would race against the already-completed rename of the
+    // first writer and fail with ENOENT).
+    const tmp = `${manifestPath}.tmp-${process.pid}-${randomUUID()}`;
     await fs.promises.writeFile(
       tmp,
       JSON.stringify(manifest, null, 2),

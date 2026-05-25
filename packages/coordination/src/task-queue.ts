@@ -5,6 +5,7 @@ import {
   ROLE_WEIGHTS,
   TaskSchema,
   ValidationError,
+  ZkNodeExistsError,
   ZkNodeNotFoundError,
   zkPaths,
   type ClaimRecord,
@@ -133,9 +134,13 @@ export class TaskQueue implements ITaskQueue {
           zkPaths.taskClaimed(claimer, id, this.paths),
           encode(record),
         );
-      } catch {
-        // Lost the race for this task; try the next candidate.
-        continue;
+      } catch (err) {
+        // Only race-loss (node already exists) means "try the next candidate."
+        // Any other ZK failure — session expired, network, validation — must
+        // surface; conflating it with a benign race produces a phantom
+        // "no task to claim" state while the cluster is actually broken.
+        if (err instanceof ZkNodeExistsError) continue;
+        throw err;
       }
       await this.zk.delete(zkPaths.taskPending(id, this.paths)).catch(() => {});
       return {
@@ -190,8 +195,12 @@ export class TaskQueue implements ITaskQueue {
         zkPaths.taskClaimed(claimer, taskId, this.paths),
         encode(record),
       );
-    } catch {
-      return null;
+    } catch (err) {
+      // Race-loss returns null (someone else claimed first). Real ZK errors
+      // bubble so the caller sees the cluster failure instead of a silent
+      // "no claim happened."
+      if (err instanceof ZkNodeExistsError) return null;
+      throw err;
     }
     await this.zk
       .delete(zkPaths.taskPending(taskId, this.paths))

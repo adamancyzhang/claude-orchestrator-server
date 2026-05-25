@@ -8,13 +8,21 @@ export {
 export { TaskRecovery } from "./recovery.js";
 export {
   MergeValidator,
+  classifyGitError,
+  extractStderr,
   type CommitInfo,
   type MergeValidatorOptions,
 } from "./merge-validator.js";
 export { StreamTailer, type StreamLineCallback } from "./stream-tailer.js";
 export {
   ChainRouter,
+  isDecisionLegalForLink,
+  looksLikeChainDef,
+  formatMergeError,
+  categorizeMergeError,
   type ChainRouterOptions,
+  type MergeFailure,
+  type MergeFailureCategory,
 } from "./chain-router.js";
 export {
   ChainAudit,

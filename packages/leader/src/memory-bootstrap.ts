@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { execSync } from "node:child_process";
 import {
   cachePaths,
+  TemplateNotFoundError,
   type IClaudeRunner,
   type ILogger,
   type ITemplateEngine,
@@ -159,11 +160,11 @@ export class MemoryBootstrap {
     let skipped = 0;
     let failed = 0;
     const tplName = this.opts.file_template ?? DEFAULT_FILE_TEMPLATE;
+    // Configuration error: a missing required template is not a runtime
+    // failure but a deployment problem. Returning fake "all failed" stats
+    // hides the root cause behind a log line that no one will read.
     if (!this.opts.template_engine.has(tplName)) {
-      this.opts.logger.warn("memory bootstrap: file template missing", {
-        template: tplName,
-      });
-      return { generated: 0, skipped: 0, failed: sources.length };
+      throw new TemplateNotFoundError(tplName);
     }
     const date = new Date().toISOString().slice(0, 10);
     for (const source of sources) {
@@ -372,8 +373,15 @@ export class MemoryBootstrap {
     let body = "";
     try {
       body = fs.readFileSync(memoryFilePath, "utf-8");
-    } catch {
-      return "";
+    } catch (err) {
+      // ENOENT is expected (memory file may not yet exist when we are
+      // building a dir summary that includes a file scheduled for
+      // refresh) — return an empty purpose and let the caller decide.
+      // Every other errno (EACCES, EISDIR, EIO) is a real problem and
+      // must surface; otherwise a broken file system silently corrupts
+      // the dir-level template render.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw err;
     }
     const match = body.match(/##\s+Purpose\s*\n([\s\S]*?)(?=\n##\s|$)/);
     if (!match) return "";
@@ -407,10 +415,7 @@ export class MemoryBootstrap {
     let failed = 0;
     const tplName = this.opts.dir_template ?? DEFAULT_DIR_TEMPLATE;
     if (!this.opts.template_engine.has(tplName)) {
-      this.opts.logger.warn("memory bootstrap: dir template missing", {
-        template: tplName,
-      });
-      return { generated: 0, failed: grouped.size };
+      throw new TemplateNotFoundError(tplName);
     }
     const date = new Date().toISOString().slice(0, 10);
     for (const [dir, files] of grouped) {

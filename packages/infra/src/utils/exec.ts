@@ -21,6 +21,18 @@ export interface ExecStreamingOptions {
 export interface ExecStreamingResult {
   exit_code: number;
   session_id: string | null;
+  // Populated when the child process failed to spawn (binary not found,
+  // permission denied, fork failure). Absent on every code path where the
+  // child started — including when the child itself exits non-zero.
+  spawn_error?: string;
+}
+
+export interface ExecCaptureResult {
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  // Same contract as ExecStreamingResult.spawn_error.
+  spawn_error?: string;
 }
 
 function tryExtractSessionId(line: string): string | null {
@@ -95,7 +107,13 @@ export async function execWithStreaming(
       resolve({ exit_code: code ?? -1, session_id: sessionId });
     });
 
-    child.on("error", () => resolve({ exit_code: -1, session_id: null }));
+    child.on("error", (err) =>
+      resolve({
+        exit_code: -1,
+        session_id: null,
+        spawn_error: String(err),
+      }),
+    );
   });
 }
 
@@ -103,7 +121,7 @@ export async function execAndCapture(
   command: string,
   args: readonly string[] = [],
   options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
-): Promise<{ exit_code: number; stdout: string; stderr: string }> {
+): Promise<ExecCaptureResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -118,7 +136,12 @@ export async function execAndCapture(
       resolve({ exit_code: code ?? -1, stdout, stderr }),
     );
     child.on("error", (err) =>
-      resolve({ exit_code: -1, stdout, stderr: stderr + String(err) }),
+      resolve({
+        exit_code: -1,
+        stdout,
+        stderr,
+        spawn_error: String(err),
+      }),
     );
   });
 }
