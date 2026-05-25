@@ -38,22 +38,7 @@ import {
   sendForcedFeedbackReport as sendForcedFeedbackReportFn,
   type WorkerIdentity,
 } from "./report-messages.js";
-
-/**
- * Per-link user-message template. The system prompt (identity + standing
- * role description) is loaded once at boot in child-boot.ts; these
- * templates only carry the per-task body — task metadata, upstream
- * artifact paths, output contract, retry hint.
- */
-const LINK_TO_TASK_TEMPLATE: Record<TaskLink | "decompose", string> = {
-  plan: "agents/planner/task.md",
-  execute: "agents/executor/task.md",
-  verify: "agents/verifier/task.md",
-  review: "agents/reviewer/task.md",
-  accept: "agents/accepter/task.md",
-  explore: "agents/explorer/task.md",
-  decompose: "workflow/decompose.md",
-};
+import { buildWorkerTaskPrompt } from "./prompt-render.js";
 
 const MAX_GENERATION_RETRIES = 3;
 
@@ -313,42 +298,24 @@ export class WorkerWatcher {
     const workspaceMemoryPath = cachePaths.workspaceMemoryRoot(
       this.opts.cache_paths,
     );
-    const renderPrompt = (retryHint: string): string => {
-      if (!link) return msg.content;
-      const tplName = LINK_TO_TASK_TEMPLATE[link];
-      if (!this.opts.template_engine.has(tplName)) {
-        throw new TemplateNotFoundError(tplName);
-      }
-      const upstreamCommits = msg.upstream_commits ?? {};
-      return this.opts.template_engine.render(tplName, {
-        name: this.opts.worker_name,
-        role: this.opts.worker_role,
-        date: dateStamp,
-        unique_key: uniqueKey,
-        task_title: msg.task_title ?? "",
-        task_description: msg.task_description ?? msg.content,
-        task_criteria: msg.task_criteria ?? "",
+    const coRoot = cachePaths.coRootDir(this.opts.cache_paths);
+    const renderPrompt = (retryHint: string): string =>
+      buildWorkerTaskPrompt({
+        template_engine: this.opts.template_engine,
+        link,
+        msg,
+        worker_name: this.opts.worker_name,
+        worker_role: this.opts.worker_role,
+        worktree_path: this.opts.worktree_path,
         result_path: resultPath,
         local_doc_path: localDocPath,
-        work_dir: this.opts.worktree_path,
-        time: new Date().toISOString(),
-        content: msg.content,
-        original_requirement_path: msg.original_requirement_path ?? "",
-        upstream_plan_artifact: chainArtifacts.plan,
-        upstream_execute_artifact: chainArtifacts.execute,
-        upstream_verify_artifact: chainArtifacts.verify,
-        upstream_review_artifact: chainArtifacts.review,
-        upstream_accept_artifact: chainArtifacts.accept,
-        upstream_plan_commit: upstreamCommits.plan ?? "",
-        upstream_execute_commit: upstreamCommits.execute ?? "",
-        upstream_verify_commit: upstreamCommits.verify ?? "",
-        upstream_review_commit: upstreamCommits.review ?? "",
-        upstream_accept_commit: upstreamCommits.accept ?? "",
-        co_root: cachePaths.coRootDir(this.opts.cache_paths),
-        workspace_memory_path: workspaceMemoryPath,
+        unique_key: uniqueKey,
+        date: dateStamp,
         retry_hint: retryHint,
+        chain_artifacts: chainArtifacts,
+        co_root: coRoot,
+        workspace_memory_path: workspaceMemoryPath,
       });
-    };
 
     const validateOutput = async (
       runResult: { exit_code: number },
