@@ -39,13 +39,11 @@ import {
   type WorkerIdentity,
 } from "./report-messages.js";
 import { buildWorkerTaskPrompt } from "./prompt-render.js";
-
-const MAX_GENERATION_RETRIES = 3;
-
-interface GenerationFailure {
-  kind: "missing" | "empty" | "exit_code";
-  detail: string;
-}
+import {
+  classifyWorkerOutput,
+  MAX_GENERATION_RETRIES,
+  type GenerationFailure,
+} from "./output-validator.js";
 
 export interface WorkerWatcherOptions {
   instance_id: InstanceId;
@@ -317,27 +315,14 @@ export class WorkerWatcher {
         workspace_memory_path: workspaceMemoryPath,
       });
 
-    const validateOutput = async (
+    const validateOutput = (
       runResult: { exit_code: number },
-    ): Promise<GenerationFailure | null> => {
-      if (runResult.exit_code !== 0) {
-        return { kind: "exit_code", detail: `exit_code=${runResult.exit_code}` };
-      }
-      if (!isChainLink) return null;
-      try {
-        const stat = await fs.promises.stat(resultPath);
-        if (stat.size === 0) {
-          return { kind: "empty", detail: `${resultPath} is 0 bytes` };
-        }
-        const content = await fs.promises.readFile(resultPath, "utf-8");
-        if (!content.trim()) {
-          return { kind: "empty", detail: `${resultPath} contains only whitespace` };
-        }
-        return null;
-      } catch {
-        return { kind: "missing", detail: `${resultPath} does not exist` };
-      }
-    };
+    ): Promise<GenerationFailure | null> =>
+      classifyWorkerOutput({
+        exit_code: runResult.exit_code,
+        is_chain_link: isChainLink,
+        result_path: resultPath,
+      });
 
     let result: { exit_code: number; session_id: SessionId | null; log_path: string } = {
       exit_code: -1,
