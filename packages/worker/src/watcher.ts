@@ -31,6 +31,13 @@ import {
   LINK_TO_LOCAL_PREFIX,
   pickImmediatePredecessor,
 } from "./chain-artifacts.js";
+import {
+  buildCompletionBody,
+  sendCompletionReport as sendCompletionReportFn,
+  sendDecomposeReport as sendDecomposeReportFn,
+  sendForcedFeedbackReport as sendForcedFeedbackReportFn,
+  type WorkerIdentity,
+} from "./report-messages.js";
 
 /**
  * Per-link user-message template. The system prompt (identity + standing
@@ -619,6 +626,16 @@ export class WorkerWatcher {
     void ClaudeRunner.buildIdentityPrompt; // keep reference for runtime hint
   }
 
+  private workerIdentity(): WorkerIdentity {
+    return {
+      instance_id: this.opts.instance_id,
+      worker_name: this.opts.worker_name,
+      worker_role: this.opts.worker_role,
+      worktree_branch: this.opts.worktree_branch,
+      leader_id: this.opts.leader_id,
+    };
+  }
+
   private async sendCompletionReport(
     link: TaskLink,
     msg: Message,
@@ -641,49 +658,21 @@ export class WorkerWatcher {
       resume_session_id: resumeSessionId,
     });
 
-    let body = evalContent;
-    if (commit || docsSha) {
-      try {
-        const json = JSON.parse(evalContent);
-        // New `commits` envelope carries BOTH project worktree commit
-        // and CO root docs commit so Leader can propagate them as
-        // upstream_commits to the next link's task. Legacy `commit`
-        // field is retained alongside for backward-compatible parsers.
-        json.commits = {
-          worktree: commit?.sha ?? null,
-          docs: docsSha,
-          branch: this.opts.worktree_branch,
-        };
-        if (commit) {
-          json.commit = {
-            sha: commit.sha,
-            message: commit.message,
-            branch: this.opts.worktree_branch,
-            changed_files: commit.changed_files,
-            untracked_files: commit.untracked_files,
-          };
-        }
-        body = JSON.stringify(json);
-      } catch {
-        const tag = commit
-          ? `\nCommit: ${commit.sha.slice(0, 7)} - ${commit.message}`
-          : "";
-        const docsTag = docsSha ? `\nDocs commit: ${docsSha.slice(0, 7)}` : "";
-        body = evalContent + tag + docsTag;
-      }
-    }
+    const body = buildCompletionBody({
+      evalContent,
+      commit,
+      docsSha,
+      worktreeBranch: this.opts.worktree_branch,
+    });
 
-    await this.opts.message_router.send({
-      type: "completion_report",
-      from_instance: this.opts.instance_id,
-      from_name: this.opts.worker_name,
-      from_role: this.opts.worker_role,
-      to_instance: this.opts.leader_id,
-      content: body,
+    await sendCompletionReportFn({
+      router: this.opts.message_router,
+      identity: this.workerIdentity(),
       link,
-      task_id: taskId,
-      chain_id: msg.chain_id ?? null,
-      result_path: resultPath,
+      msg,
+      resultPath,
+      taskId,
+      body,
     });
   }
 
@@ -786,14 +775,6 @@ export class WorkerWatcher {
     }
   }
 
-  /**
-   * Emit a completion_report with a forced `feedback` EvalDecision when
-   * a commit failure prevents the link from producing a valid artifact.
-   * Skips the self-evaluator entirely so an LLM hallucination can't
-   * promote broken work to activate_next. The feedback targets the same
-   * worker (self-retry of the same link) — Leader's chain-router treats
-   * it like any other feedback dispatch, subject to the retry ceiling.
-   */
   private async sendForcedFeedbackReport(args: {
     link: TaskLink;
     msg: Message;
@@ -801,24 +782,14 @@ export class WorkerWatcher {
     taskId: TaskId;
     stderr: string;
   }): Promise<void> {
-    const { link, msg, resultPath, taskId, stderr } = args;
-    const decision = {
-      decision: "feedback" as const,
-      reason: `commit failed at ${link}: ${stderr.slice(0, 200) || "unknown error"}`,
-      feedback_to_worker: `git commit failed for ${link} task ${taskId}. Diagnose with 'git status' / 'git diff' in the worktree, resolve the issue, then re-run.`,
-      feedback_target: this.opts.instance_id,
-    };
-    await this.opts.message_router.send({
-      type: "completion_report",
-      from_instance: this.opts.instance_id,
-      from_name: this.opts.worker_name,
-      from_role: this.opts.worker_role,
-      to_instance: this.opts.leader_id,
-      content: JSON.stringify(decision),
-      link,
-      task_id: taskId,
-      chain_id: msg.chain_id ?? null,
-      result_path: resultPath,
+    await sendForcedFeedbackReportFn({
+      router: this.opts.message_router,
+      identity: this.workerIdentity(),
+      link: args.link,
+      msg: args.msg,
+      resultPath: args.resultPath,
+      taskId: args.taskId,
+      stderr: args.stderr,
     });
   }
 
@@ -827,18 +798,12 @@ export class WorkerWatcher {
     resultPath: string,
     taskId: TaskId,
   ): Promise<void> {
-    const content = await fs.promises.readFile(resultPath, "utf-8");
-    await this.opts.message_router.send({
-      type: "completion_report",
-      from_instance: this.opts.instance_id,
-      from_name: this.opts.worker_name,
-      from_role: this.opts.worker_role,
-      to_instance: this.opts.leader_id,
-      content,
-      link: null,
-      task_id: taskId,
-      chain_id: msg.chain_id ?? null,
-      result_path: resultPath,
+    await sendDecomposeReportFn({
+      router: this.opts.message_router,
+      identity: this.workerIdentity(),
+      msg,
+      resultPath,
+      taskId,
     });
   }
 }
