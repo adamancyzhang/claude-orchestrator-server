@@ -1,8 +1,35 @@
+// CORE-RETENTION
+// Locks in: identity.ts assembles a worker system prompt that (a) includes
+// the worker's name and labelled role, (b) leaves no `{{placeholders}}`
+// unresolved, (c) throws TemplateNotFoundError when a required template
+// is missing — never a silent fallback. Also locks in the
+// ROLE_TO_SYSTEM_TEMPLATE map shape and the per-role responsibilities
+// templates' self-identification + skill scoping. Finally, locks in the
+// runner-integration contract: buildWorkerSystemPrompt's output reaches
+// execWithStreaming verbatim as system_prompt; renderDecomposePrompt
+// sends NO system_prompt for leader-side decomposition.
+// Critical because: silent fallback in identity composition produces
+// workers with the wrong role label (e.g. an Executor that thinks it's a
+// Planner) which routes every chain message to the wrong template; a
+// dropped placeholder leaks raw `{{co_root}}` into Claude's prompt and
+// breaks downstream file-path resolution; missing system_prompt on a
+// chain task removes the worker's identity card and the worker would
+// answer as a generic assistant.
+// Primary sources: packages/runtime/src/identity.ts,
+//                  packages/runtime/src/runner.ts (ClaudeRunner.run)
+
 import { describe, it, expect, vi } from "vitest";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
+import type { ILogger } from "@co/contracts";
 
-// Only mock the process-spawning boundary
+// TRUST-JUSTIFICATION: Mocking @co/infra.execWithStreaming only.
+// Downstream: the real `claude` CLI subprocess.
+// Reason: the runner-integration tests (Test 5) assert WHAT we hand to
+// the subprocess, not the subprocess's response. Spawning the real CLI
+// in unit tests is costly and non-deterministic.
+// Evidence: every other @co/infra export is forwarded via importOriginal;
+// template loading exercises real fs reads under templates/.
 vi.mock("@co/infra", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@co/infra")>();
   return { ...actual, execWithStreaming: vi.fn() };
@@ -16,6 +43,23 @@ import {
   TemplateEngine,
   ClaudeRunner,
 } from "../src/index.js";
+
+// TRUST-JUSTIFICATION: SILENT_LOGGER is a no-op ILogger.
+// Downstream: structured log writes — observable only via stdout/file
+// sinks the runner does not own.
+// Reason: ClaudeRunner.run() is the SUT; it writes diagnostics to logger
+// but never reads. No assertion targets logger call counts. A throwing
+// stub would be louder but unnecessary because the runner's logger usage
+// is internal, not protocol.
+// Evidence: assertions below target the call captured on
+// execWithStreaming — the protocol contract — not logger state.
+const SILENT_LOGGER: ILogger = {
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+  child: () => SILENT_LOGGER,
+} as unknown as ILogger;
 
 const TEMPLATES_DIR = path.resolve(import.meta.dirname, "../../../templates");
 
@@ -44,12 +88,6 @@ describe("buildWorkerSystemPrompt", () => {
   it("returns a prompt containing worker name and role", () => {
     const engine = createEngine();
     const result = buildWorkerSystemPrompt(engine, SAMPLE_INPUT);
-
-    console.log("\n" + "═".repeat(70));
-    console.log("  buildWorkerSystemPrompt — Tom (planner)");
-    console.log("═".repeat(70));
-    console.log(result);
-    console.log("═".repeat(70));
 
     expect(result).toContain("Tom");
     expect(result).toContain("Your Role: Planner");
@@ -158,12 +196,6 @@ describe("renderDecomposePrompt", () => {
   it("renders with no unresolved {{placeholders}}", () => {
     const engine = createEngine();
     const result = renderDecomposePrompt(engine, sampleVars);
-
-    console.log("\n" + "═".repeat(70));
-    console.log("  renderDecomposePrompt");
-    console.log("═".repeat(70));
-    console.log(result);
-    console.log("═".repeat(70));
 
     expect(result).toContain(sampleVars.task_description);
     expect(result).not.toContain("{{");
@@ -302,13 +334,7 @@ describe("runner integration: system prompt + task prompt → execWithStreaming"
       retry_hint: "",
     });
 
-    const logger = {
-      debug: vi.fn(),
-      warn: vi.fn(),
-      info: vi.fn(),
-      error: vi.fn(),
-    };
-    const runner = new ClaudeRunner("claude", logger);
+    const runner = new ClaudeRunner("claude", SILENT_LOGGER);
 
     await runner.run({
       prompt: taskPrompt,
@@ -318,16 +344,6 @@ describe("runner integration: system prompt + task prompt → execWithStreaming"
     });
 
     const call = vi.mocked(execWithStreaming).mock.calls.at(-1)![0];
-
-    console.log("\n" + "═".repeat(70));
-    console.log("  Runner integration: execWithStreaming received");
-    console.log("═".repeat(70));
-    console.log(`  command            : ${call.command}`);
-    console.log(`  system_prompt (chars): ${call.system_prompt!.length}`);
-    console.log(`  prompt (chars)     : ${call.prompt.length}`);
-    console.log(`  cwd                : ${call.cwd}`);
-    console.log("═".repeat(70));
-    console.log("  Shell: claude --append-system-prompt '<sys>' -p '<prompt>'");
 
     expect(call.command).toBe("claude");
     expect(call.system_prompt).toBe(systemPrompt);
@@ -357,13 +373,7 @@ describe("runner integration: system prompt + task prompt → execWithStreaming"
       magic_max_chains: "unlimited",
     });
 
-    const logger = {
-      debug: vi.fn(),
-      warn: vi.fn(),
-      info: vi.fn(),
-      error: vi.fn(),
-    };
-    const runner = new ClaudeRunner("claude", logger);
+    const runner = new ClaudeRunner("claude", SILENT_LOGGER);
 
     await runner.run({
       prompt: decomposePrompt,
@@ -371,13 +381,6 @@ describe("runner integration: system prompt + task prompt → execWithStreaming"
     });
 
     const call = vi.mocked(execWithStreaming).mock.calls.at(-1)![0];
-
-    console.log("\n" + "═".repeat(70));
-    console.log("  Leader decompose: NO system_prompt");
-    console.log("═".repeat(70));
-    console.log(`  command            : ${call.command}`);
-    console.log(`  system_prompt      : ${call.system_prompt ?? "(NONE)"}`);
-    console.log(`  prompt (chars)     : ${call.prompt.length}`);
 
     expect(call.system_prompt).toBeUndefined();
     expect(call.prompt).toBe(decomposePrompt);
