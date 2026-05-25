@@ -11,5 +11,9 @@ sessions/
 .claude-orchestrator/*
 **/.claude-orchestrator/
 !.claude-orchestrator/docs/
+# packages/runtime/tests/runner.test.ts initializes this directory at runtime
+# (calls real @co/infra save functions to generate .claude-orchestrator/config.json),
+# then cleans it up. Nothing here should ever be checked in.
+test-workspace/
 countlines-cli/
 evals

@@ -14,14 +14,23 @@ import {
   execWithStreaming,
   loadConfig,
   loadProjectWorktreeConfig,
+  saveInstanceId,
+  saveProjectWorktreeConfig,
   type WorktreeEntry,
 } from "@co/infra";
 import { ClaudeRunner } from "../src/runner.js";
 import { TemplateEngine } from "../src/template.js";
 import { buildWorkerSystemPrompt } from "../src/identity.js";
 
-// ── Real project with complete .claude-orchestrator/config.json ──
-const PROJECT_DIR = "/mnt/c/Users/adama/Documents/projects/test2";
+// ── Designated test workspace at the repo root. beforeAll initializes
+//    `.claude-orchestrator/config.json` here by calling the real @co/infra
+//    save functions (the same code production uses), then the test reads
+//    the generated file back through loadConfig + loadProjectWorktreeConfig.
+//    No fixture file is checked in.
+const PROJECT_DIR = path.resolve(
+  import.meta.dirname,
+  "../../../test-workspace",
+);
 
 // ── Template directory (from this repo) ──
 const TEMPLATES_DIR = path.resolve(import.meta.dirname, "../../../templates");
@@ -34,13 +43,64 @@ let WORKERS: (WorktreeEntry & {
 })[] = [];
 let originalCwd: () => string;
 
+// Worker data the test feeds into the real save functions. Roles match
+// what @co/orchestrator's assignRoles(6, magic_mode=true) would produce
+// (planner → executor → verifier → reviewer → accepter → explorer),
+// names match the head of BUILTIN_NAMES, and branches follow the
+// `claude-orchestrator/<name>-workspace` convention used in production.
+// Instance ids are deterministic (no randomUUID) so test runs are stable.
+const SEED_INSTANCE_ID = "leader-runner-test";
+const SEED_WORKERS: WorktreeEntry[] = [
+  { name: "Tom",   role: "planner",  path: ".claude-orchestrator/worktree/Tom",   branch: "claude-orchestrator/Tom-workspace",   instance_id: "tom-planner-seed"   },
+  { name: "Jerry", role: "executor", path: ".claude-orchestrator/worktree/Jerry", branch: "claude-orchestrator/Jerry-workspace", instance_id: "jerry-executor-seed" },
+  { name: "Lucy",  role: "verifier", path: ".claude-orchestrator/worktree/Lucy",  branch: "claude-orchestrator/Lucy-workspace",  instance_id: "lucy-verifier-seed"  },
+  { name: "Thomas",role: "reviewer", path: ".claude-orchestrator/worktree/Thomas",branch: "claude-orchestrator/Thomas-workspace",instance_id: "thomas-reviewer-seed"},
+  { name: "Jack",  role: "accepter", path: ".claude-orchestrator/worktree/Jack",  branch: "claude-orchestrator/Jack-workspace",  instance_id: "jack-accepter-seed"  },
+  { name: "Lisa",  role: "explorer", path: ".claude-orchestrator/worktree/Lisa",  branch: "claude-orchestrator/Lisa-workspace",  instance_id: "lisa-explorer-seed"  },
+];
+
 beforeAll(() => {
+  // Start from a clean test workspace — wipe any state from a prior run
+  // before initializing. Without this, leftover `init_status` entries or
+  // a stale `worktree` map could shadow the fresh write below.
+  const dotDir = path.join(PROJECT_DIR, ".claude-orchestrator");
+  fs.rmSync(dotDir, { recursive: true, force: true });
+  fs.mkdirSync(PROJECT_DIR, { recursive: true });
+
+  // Mock cwd FIRST so the real save functions resolve their target path
+  // (path.join(process.cwd(), ".claude-orchestrator/config.json")) to the
+  // test workspace rather than the test runner's actual cwd.
   originalCwd = process.cwd;
   process.cwd = () => PROJECT_DIR;
 
+  // Real initialization: call the production @co/infra save functions
+  // exactly as orchestrator's runOrchestrator() + initializeWorktrees()
+  // do. saveInstanceId writes the leader id; saveProjectWorktreeConfig
+  // writes the six-worker map. Both end up in the SAME config.json that
+  // loadConfig/loadProjectWorktreeConfig then read back.
+  saveInstanceId(SEED_INSTANCE_ID);
+  const worktreeRecord: Record<string, WorktreeEntry> = {};
+  for (const w of SEED_WORKERS) worktreeRecord[w.name] = w;
+  saveProjectWorktreeConfig(worktreeRecord);
+
+  // Sanity-check: the file we just generated must exist and be readable
+  // through the real load path; otherwise the test below operates on
+  // empty data and assertions like "system_prompt > 500 chars" silently
+  // pass on the wrong inputs.
+  const generated = path.join(dotDir, "config.json");
+  if (!fs.existsSync(generated)) {
+    throw new Error(`real init did not generate ${generated}`);
+  }
   const resolved = loadConfig();
   const entries = loadProjectWorktreeConfig();
-  CO_ROOT = path.join(resolved.projects_root, resolved.instance_id!);
+  if (!resolved.instance_id) {
+    throw new Error("generated config.json missing instance_id");
+  }
+  if (Object.keys(entries).length === 0) {
+    throw new Error("generated config.json missing worktree map");
+  }
+
+  CO_ROOT = path.join(resolved.projects_root, resolved.instance_id);
   WORKERS = Object.entries(entries).map(([_key, w]) => ({
     ...w,
     instance_id: asInstanceId(w.instance_id),
@@ -50,6 +110,11 @@ beforeAll(() => {
 
 afterAll(() => {
   process.cwd = originalCwd;
+  // Tear down the workspace so each test run starts from a clean slate.
+  fs.rmSync(path.join(PROJECT_DIR, ".claude-orchestrator"), {
+    recursive: true,
+    force: true,
+  });
 });
 
 function renderTaskPrompt(w: (typeof WORKERS)[number]): string {
