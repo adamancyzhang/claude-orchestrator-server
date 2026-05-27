@@ -25,6 +25,7 @@ import type { SelfEvaluator } from "./evaluator.js";
 import { chainLinksFor } from "./evaluator.js";
 import type { CommitChecker, CommitResult } from "./commit-checker.js";
 import type { WorkerDocsCommitter } from "./docs-committer.js";
+import type { WorkerActivityReporter } from "./activity-reporter.js";
 import {
   collectChainArtifacts,
   LINK_TO_LOCAL_PREFIX,
@@ -76,6 +77,13 @@ export interface WorkerWatcherOptions {
    * `explore`). Sourced from the leader's CLI flags via child-boot.
    */
   magic_mode: boolean;
+  /**
+   * Optional pipeline-step reporter. When provided, the Worker surfaces
+   * phase transitions (claim/rebase/generate/commit/...) to the Leader
+   * for live display in the TUI. Absence keeps the Worker silent — used
+   * by tests that do not care about activity.
+   */
+  activity_reporter?: WorkerActivityReporter;
 }
 
 export class WorkerWatcher {
@@ -125,9 +133,27 @@ export class WorkerWatcher {
         this.opts.logger.warn("heartbeat busy failed", { error: String(err) });
       });
 
+    this.opts.activity_reporter?.report({
+      phase: "claim",
+      action: "phase_start",
+      detail: `task ${realTaskId ?? taskId}`,
+      link: link as TaskLink | null,
+      task_id: taskId,
+    });
+
     try {
       await this.processTask({ msg, link, taskId, realTaskId, isChainLink });
     } finally {
+      this.opts.activity_reporter?.report({
+        phase: "report",
+        action: "phase_end",
+        detail: "task message processed",
+        link: link as TaskLink | null,
+        task_id: taskId,
+      });
+      // Force-flush so the final frame reaches the Leader before the
+      // worker goes idle in the TUI.
+      await this.opts.activity_reporter?.flush();
       await this.opts.registry
         .heartbeat(this.opts.instance_id, {
           status: "idle",
@@ -207,6 +233,14 @@ export class WorkerWatcher {
       }
     }
 
+    this.opts.activity_reporter?.report({
+      phase: "claim",
+      action: "phase_end",
+      detail: realTaskId ? `claimed ${realTaskId}` : "ad-hoc message",
+      link: link as TaskLink | null,
+      task_id: taskId,
+    });
+
     // Pre-task rebase onto the immediate predecessor link's commit
     // hash so this Worker's branch contains all upstream artifacts
     // before work starts. Skipped for decompose tasks and the plan
@@ -223,6 +257,13 @@ export class WorkerWatcher {
         msg.upstream_commits,
       );
       if (predecessor) {
+        this.opts.activity_reporter?.report({
+          phase: "rebase",
+          action: "phase_start",
+          detail: `onto ${predecessor.slice(0, 8)}`,
+          link: link as TaskLink | null,
+          task_id: taskId,
+        });
         try {
           await preTaskRebase({
             worktree_path: this.opts.worktree_path,
@@ -230,8 +271,22 @@ export class WorkerWatcher {
             git_remote: this.opts.git_remote,
             logger: this.opts.logger,
           });
+          this.opts.activity_reporter?.report({
+            phase: "rebase",
+            action: "phase_end",
+            detail: `onto ${predecessor.slice(0, 8)}`,
+            link: link as TaskLink | null,
+            task_id: taskId,
+          });
         } catch (err) {
           if (err instanceof RebaseConflictError) {
+            this.opts.activity_reporter?.report({
+              phase: "rebase",
+              action: "error",
+              detail: `conflict on ${err.conflict_files.join(", ").slice(0, 80)}`,
+              link: link as TaskLink | null,
+              task_id: taskId,
+            });
             this.opts.logger.error(
               "pre-task rebase conflicted — reporting as feedback",
               {
@@ -338,7 +393,21 @@ export class WorkerWatcher {
     let failure: GenerationFailure | null = null;
     let assistantResponse = "";
     const maxAttempts = isChainLink ? MAX_GENERATION_RETRIES : 1;
+    this.opts.activity_reporter?.report({
+      phase: "generate",
+      action: "phase_start",
+      detail: `up to ${maxAttempts} attempt(s)`,
+      link: link as TaskLink | null,
+      task_id: taskId,
+    });
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      this.opts.activity_reporter?.report({
+        phase: "generate",
+        action: "retry",
+        detail: `attempt ${attempt}/${maxAttempts}`,
+        link: link as TaskLink | null,
+        task_id: taskId,
+      });
       const prompt = renderPrompt(retryHint);
       let attemptText = "";
       result = await this.opts.runner.run({
@@ -368,6 +437,15 @@ export class WorkerWatcher {
         retryHint = `[RETRY ${attempt + 1}/${maxAttempts}] Previous attempt failed: ${failure.detail}. You MUST write your output to exactly: ${resultPath}. Use the Write tool, then immediately Read it back to confirm the file exists and is non-empty.`;
       }
     }
+    this.opts.activity_reporter?.report({
+      phase: "validate",
+      action: failure ? "error" : "phase_end",
+      detail: failure
+        ? `${failure.kind}: ${failure.detail}`.slice(0, 120)
+        : `${assistantResponse.length} chars`,
+      link: link as TaskLink | null,
+      task_id: taskId,
+    });
 
     await this.opts.hooks.fire({
       type: "worker_message_end",
@@ -438,6 +516,13 @@ export class WorkerWatcher {
     let commitFailure: CommitFailedError | null = null;
     let docsSha: string | null = null;
     if (link && this.chainLinks.includes(link as TaskLink)) {
+      this.opts.activity_reporter?.report({
+        phase: "commit",
+        action: "phase_start",
+        detail: `link ${link}`,
+        link: link as TaskLink,
+        task_id: taskId,
+      });
       try {
         commit = await this.opts.commit_checker.check(
           {
@@ -448,6 +533,15 @@ export class WorkerWatcher {
           },
           result.session_id ?? undefined,
         );
+        this.opts.activity_reporter?.report({
+          phase: "commit",
+          action: "phase_end",
+          detail: commit
+            ? `sha ${commit.sha.slice(0, 8)} (${commit.changed_files.length} files)`
+            : "no changes",
+          link: link as TaskLink,
+          task_id: taskId,
+        });
       } catch (err) {
         if (err instanceof CommitFailedError) {
           // git commit raised a real error (not "no changes"). Capture
@@ -455,6 +549,13 @@ export class WorkerWatcher {
           // Leader can retry instead of a silent activate_next that
           // would let close_chain proceed without our link's commit.
           commitFailure = err;
+          this.opts.activity_reporter?.report({
+            phase: "commit",
+            action: "error",
+            detail: err.stderr.slice(0, 120),
+            link: link as TaskLink,
+            task_id: taskId,
+          });
           this.opts.logger.error(
             "commit failed — reporting as feedback retry to Leader",
             { task_id: taskId, link, stderr: err.stderr },
@@ -469,6 +570,13 @@ export class WorkerWatcher {
       // and uses `git commit --only -- <paths>` so it is safe to run
       // concurrently with other workers sharing the CO root.
       if (!commitFailure) {
+        this.opts.activity_reporter?.report({
+          phase: "docs_commit",
+          action: "phase_start",
+          detail: `docs for ${this.opts.worker_name}`,
+          link: link as TaskLink,
+          task_id: taskId,
+        });
         try {
           docsSha = await this.opts.docs_committer.commitIfChanged(
             {
@@ -478,7 +586,21 @@ export class WorkerWatcher {
             },
             result.session_id ?? undefined,
           );
+          this.opts.activity_reporter?.report({
+            phase: "docs_commit",
+            action: "phase_end",
+            detail: docsSha ? `sha ${docsSha.slice(0, 8)}` : "no docs changes",
+            link: link as TaskLink,
+            task_id: taskId,
+          });
         } catch (err) {
+          this.opts.activity_reporter?.report({
+            phase: "docs_commit",
+            action: "error",
+            detail: String(err).slice(0, 120),
+            link: link as TaskLink,
+            task_id: taskId,
+          });
           this.opts.logger.warn("docs commit threw unexpectedly", {
             error: String(err),
           });
@@ -529,6 +651,13 @@ export class WorkerWatcher {
           stderr: commitFailure.stderr,
         });
       } else {
+        this.opts.activity_reporter?.report({
+          phase: "evaluate",
+          action: "phase_start",
+          detail: `link ${link}`,
+          link: link as TaskLink,
+          task_id: taskId,
+        });
         await this.sendCompletionReport(
           link as TaskLink,
           msg,
@@ -538,6 +667,13 @@ export class WorkerWatcher {
           docsSha,
           result.session_id ?? undefined,
         );
+        this.opts.activity_reporter?.report({
+          phase: "evaluate",
+          action: "phase_end",
+          detail: `link ${link}`,
+          link: link as TaskLink,
+          task_id: taskId,
+        });
       }
     } else if (link === "decompose") {
       await this.sendDecomposeReport(msg, resultPath, taskId);

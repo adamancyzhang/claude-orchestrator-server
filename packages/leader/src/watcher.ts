@@ -4,7 +4,9 @@ import {
   type IMessageRouter,
   type InstanceId,
   type LeaderEvent,
+  type TaskId,
   type TaskLink,
+  type WorkerActivityPayload,
 } from "@co/contracts";
 import type { ChainRouter } from "./chain-router.js";
 
@@ -86,6 +88,21 @@ export class LeaderWatcher {
       });
     }
 
+    if (
+      msg.from_instance !== this.leader_id &&
+      msg.type === "worker_activity"
+    ) {
+      this.emitWorkerActivities(msg.from_instance, msg.content);
+      this.bus.emit({
+        type: "message_processed",
+        message_id: msg.id as never,
+        log_path: "",
+      });
+      // worker_activity messages are observability-only; do not hand
+      // them off to the chain router (no chain semantics attached).
+      return;
+    }
+
     try {
       // The chain router accepts the message envelope directly.
       await this.chain_router.route(msg as Parameters<ChainRouter["route"]>[0]);
@@ -101,5 +118,35 @@ export class LeaderWatcher {
       message_id: msg.id as never,
       log_path: "",
     });
+  }
+
+  private emitWorkerActivities(
+    from_instance: InstanceId,
+    content: string,
+  ): void {
+    let batch: WorkerActivityPayload[];
+    try {
+      const parsed = JSON.parse(content) as { batch?: WorkerActivityPayload[] };
+      batch = Array.isArray(parsed.batch) ? parsed.batch : [];
+    } catch (err) {
+      this.logger.warn("worker_activity payload not parseable", {
+        from: from_instance,
+        error: String(err),
+      });
+      return;
+    }
+    for (const p of batch) {
+      this.bus.emit({
+        type: "worker_activity",
+        instance_id: from_instance,
+        task_id: (p.task_id as TaskId | null) ?? null,
+        link: (p.link as TaskLink | null) ?? null,
+        phase: p.phase,
+        action: p.action,
+        detail: p.detail,
+        next: p.next ?? null,
+        timestamp: p.timestamp,
+      });
+    }
   }
 }
