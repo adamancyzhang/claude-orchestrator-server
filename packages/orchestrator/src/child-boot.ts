@@ -97,6 +97,17 @@ async function boot(config: ChildConfig): Promise<void> {
     leader_instance_id: asInstanceId(config.leader_instance_id),
   };
 
+  const activityReporter = new WorkerActivityReporter({
+    router: messageRouter,
+    identity: {
+      instance_id: instance.id,
+      worker_name: config.name,
+      worker_role: config.role,
+      leader_id: asInstanceId(config.leader_instance_id),
+    },
+    logger: logger.child("activity"),
+  });
+
   const evaluator = new SelfEvaluator({
     runner,
     template_engine: templateEngine,
@@ -106,6 +117,7 @@ async function boot(config: ChildConfig): Promise<void> {
     identity_system_prompt: identitySystemPrompt,
     worker_name: config.name,
     worker_role: config.role,
+    activity_reporter: activityReporter,
   });
 
   const commitChecker = new CommitChecker({
@@ -138,17 +150,6 @@ async function boot(config: ChildConfig): Promise<void> {
     })),
     logger.child("hooks"),
   );
-
-  const activityReporter = new WorkerActivityReporter({
-    router: messageRouter,
-    identity: {
-      instance_id: instance.id,
-      worker_name: config.name,
-      worker_role: config.role,
-      leader_id: asInstanceId(config.leader_instance_id),
-    },
-    logger: logger.child("activity"),
-  });
 
   const watcher = new WorkerWatcher({
     instance_id: instance.id,

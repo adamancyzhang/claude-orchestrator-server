@@ -146,6 +146,20 @@ export class InProcessSupervisor implements IChildSupervisor {
       co_role_path: path.join(coRoot, "docs", cfg.name),
     });
 
+    const messageRouter = new MessageRouter({ zk: this.zk });
+    const taskQueue = new TaskQueue({ zk: this.zk });
+
+    const activityReporter = new WorkerActivityReporter({
+      router: messageRouter,
+      identity: {
+        instance_id: instance.id,
+        worker_name: cfg.name,
+        worker_role: cfg.role,
+        leader_id: this.opts.leader_instance_id,
+      },
+      logger: logger.child("activity"),
+    });
+
     const evaluator = new SelfEvaluator({
       runner,
       template_engine: templateEngine,
@@ -155,6 +169,7 @@ export class InProcessSupervisor implements IChildSupervisor {
       identity_system_prompt: identitySystemPrompt,
       worker_name: cfg.name,
       worker_role: cfg.role,
+      activity_reporter: activityReporter,
     });
 
     const commitChecker = new CommitChecker({
@@ -184,20 +199,6 @@ export class InProcessSupervisor implements IChildSupervisor {
       })),
       logger.child("hooks"),
     );
-
-    const messageRouter = new MessageRouter({ zk: this.zk });
-    const taskQueue = new TaskQueue({ zk: this.zk });
-
-    const activityReporter = new WorkerActivityReporter({
-      router: messageRouter,
-      identity: {
-        instance_id: instance.id,
-        worker_name: cfg.name,
-        worker_role: cfg.role,
-        leader_id: this.opts.leader_instance_id,
-      },
-      logger: logger.child("activity"),
-    });
 
     const watcher = new WorkerWatcher({
       instance_id: instance.id,

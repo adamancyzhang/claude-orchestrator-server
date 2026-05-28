@@ -420,6 +420,37 @@ export class WorkerWatcher {
           if (chunk.text) {
             attemptText += chunk.text;
           }
+          const e = chunk.event;
+          if (!e) return;
+          if (e.kind === "tool_use") {
+            this.opts.activity_reporter?.report({
+              phase: "generate",
+              action: "tool_use",
+              detail: `${e.tool}: ${e.summary}`.slice(0, 120),
+              link: link as TaskLink | null,
+              task_id: taskId,
+            });
+          } else if (e.kind === "text") {
+            const first =
+              e.text.split("\n").find((l) => l.trim().length > 0) ?? "";
+            if (first.length > 0) {
+              this.opts.activity_reporter?.report({
+                phase: "generate",
+                action: "text",
+                detail: first.slice(0, 120),
+                link: link as TaskLink | null,
+                task_id: taskId,
+              });
+            }
+          } else if (e.kind === "thinking") {
+            this.opts.activity_reporter?.report({
+              phase: "generate",
+              action: "thinking",
+              detail: "thinking…",
+              link: link as TaskLink | null,
+              task_id: taskId,
+            });
+          }
         },
       });
       failure = await validateOutput(result);
