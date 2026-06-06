@@ -95,37 +95,24 @@ team-coach 是**协作纪律的执行者**，职责：
 
 ## 3. 工作记录规范
 
-每日工作记录保存在 `docs/daily-log/YYYY-MM-DD/work-log.md`，采用**证据链**格式：
+详细规范参见 `docs/CLAUDE.md`。
 
-```markdown
-# 工作日志 YYYY-MM-DD
+### 核心要求
 
-## 当日目标
-- [ ] 目标1
+| 项目 | 要求 |
+|------|------|
+| **日志位置** | `docs/daily-log/YYYY-MM-DD/work-log.md` |
+| **计划位置** | `docs/plans/YYYY-MM-DD/iteration-N-*.md` |
+| **证据链** | 每个工作记录必须包含：Task #、Commit、变更文件、测试结果、验证状态 |
+| **成员独立记录** | 每个 dev/verifier/architect 的工作单独一节 |
+| **序号连续** | iteration-0, iteration-1, iteration-2... 不跳号 |
 
-## 证据链
+### team-lead 职责
 
-### [成员名] — [任务描述]
-- **Commit:** <hash>
-- **变更文件:**
-  - `path/to/file.ts` — 变更说明
-- **测试结果:** x/y 通过
-- **验证:** 通过/待验证
-
-## 关键决策
-## 遗留问题
-## 明日计划
-```
-
-**要求：**
-- 每个成员的每项工作必须有 commit hash 作为证据
-- 变更文件列表要具体到文件级别
-- 测试结果要写明通过/失败数量
-- team-lead 负责汇总，但每个成员的报告是证据来源
-
-重要计划保存在 `docs/plans/YYYY-MM-DD/<plan-name>.md`。
-
-team-lead 每次会话开始检查未完成的日志，结束时更新当日记录。
+- 每次会话开始检查未完成的日志
+- 每次会话结束更新当日记录
+- 确保所有任务都有文档记录
+- 任务必须先记录在 plans/ 再分配
 
 ---
 
