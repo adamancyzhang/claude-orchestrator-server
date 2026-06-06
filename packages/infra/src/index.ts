@@ -56,3 +56,19 @@ export {
   BatchedMessageRouter,
   type BatchedMessageRouterOptions,
 } from "./batched-message-router.js";
+export {
+  MemoryProfiler,
+  type MemoryProfilerOptions,
+  type MemorySample,
+  type MemoryLeak,
+  type MemoryOptimization,
+  type MemoryReport,
+  type MemoryStats,
+} from "./memory-profiler.js";
+export {
+  MemoryOptimizer,
+  ObjectPool,
+  LRUCache,
+  type MemoryOptimizerOptions,
+  type OptimizationResult,
+} from "./memory-optimizer.js";
