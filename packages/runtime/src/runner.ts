@@ -7,7 +7,7 @@ import {
   type RunResult,
 } from "@co/contracts";
 import { execWithStreaming } from "@co/infra";
-import { extractAssistantText } from "./stream-json.js";
+import { parseStreamLine } from "./stream-json.js";
 
 export interface BuildIdentityInput {
   name: string;
@@ -59,8 +59,14 @@ export class ClaudeRunner implements IClaudeRunner {
       quiet: opts.quiet,
       on_line: opts.on_chunk
         ? (line) => {
-            const text = extractAssistantText(line);
-            opts.on_chunk?.({ raw: line, text: text ?? undefined, is_final: false });
+            const event = parseStreamLine(line) ?? undefined;
+            const text = event?.kind === "text" ? event.text : undefined;
+            opts.on_chunk?.({
+              raw: line,
+              text,
+              is_final: false,
+              event,
+            });
           }
         : undefined,
     });

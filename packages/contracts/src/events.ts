@@ -12,6 +12,39 @@ import type {
 import type { Instance } from "./schemas/instance.js";
 import type { Task } from "./schemas/task.js";
 
+export type WorkerPhase =
+  | "claim"
+  | "rebase"
+  | "generate"
+  | "validate"
+  | "commit"
+  | "docs_commit"
+  | "evaluate"
+  | "report";
+
+export type WorkerAction =
+  | "phase_start"
+  | "phase_end"
+  | "retry"
+  | "tool_use"
+  | "thinking"
+  | "text"
+  | "error";
+
+// Wire-level shape sent by the Worker to the Leader inside a
+// `worker_activity` message. Multiple payloads are batched into a
+// single message (see WorkerActivityReporter); the Leader fans them
+// out to N `worker_activity` LeaderEvents on the bus.
+export interface WorkerActivityPayload {
+  phase: WorkerPhase;
+  action: WorkerAction;
+  detail: string;
+  next: string | null;
+  link: TaskLink | null;
+  task_id: TaskId | null;
+  timestamp: string;
+}
+
 export type LeaderEvent =
   | { type: "worker_joined"; instance: Instance }
   | { type: "worker_left"; instance_id: InstanceId; name: string }
@@ -95,6 +128,23 @@ export type LeaderEvent =
       type: "stream_chunk";
       instance_id: InstanceId;
       chunk: string;
+    }
+  // Worker self-reports a pipeline step. `phase` is the stage (rebase,
+  // generate, commit, evaluate, …); `action` is the sub-event (start /
+  // end / retry / tool_use / text / thinking / error). `detail` is a
+  // short human-readable label. High-frequency actions (tool_use, text,
+  // thinking) update WorkerInfo current_* fields but are excluded from
+  // LeaderState._events ring buffer to keep the event log scannable.
+  | {
+      type: "worker_activity";
+      instance_id: InstanceId;
+      task_id: TaskId | null;
+      link: TaskLink | null;
+      phase: WorkerPhase;
+      action: WorkerAction;
+      detail: string;
+      next: string | null;
+      timestamp: string;
     };
 
 export type LeaderEventType = LeaderEvent["type"];

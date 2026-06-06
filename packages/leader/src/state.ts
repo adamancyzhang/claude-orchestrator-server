@@ -3,8 +3,11 @@ import {
   type InstanceRole,
   type LeaderEvent,
   type Task,
+  type WorkerAction,
+  type WorkerActivityEntry,
   type WorkerInfo,
   type WorkerMessageEntry,
+  type WorkerPhase,
   assertNever,
 } from "@co/contracts";
 
@@ -24,7 +27,21 @@ interface MutableWorker {
   current_message_time: string | null;
   message_history: WorkerMessageEntry[];
   last_completed_task: WorkerInfo["last_completed_task"];
+  current_phase: WorkerPhase | null;
+  current_action: WorkerAction | null;
+  current_detail: string | null;
+  next_hint: string | null;
+  activity_history: WorkerActivityEntry[];
 }
+
+// High-frequency `worker_activity` actions: these update the worker's
+// live state but are NOT pushed to the events ring buffer, so chain /
+// task / phase events keep their slot in the 100-event log.
+const HIGH_FREQ_ACTIONS: ReadonlySet<WorkerAction> = new Set([
+  "tool_use",
+  "thinking",
+  "text",
+]);
 
 const LINK_TO_ROLE: Record<string, InstanceRole> = {
   plan: "planner",
@@ -84,8 +101,17 @@ export class LeaderState implements ILeaderStateView {
   }
 
   apply(event: LeaderEvent): void {
-    this._events.push(event);
-    if (this._events.length > 100) this._events.shift();
+    // Skip ring-buffer push for high-frequency worker_activity actions
+    // (tool_use/text/thinking). They still update worker fields below,
+    // but keeping them out of `_events` prevents them from displacing
+    // chain/task/phase events from the 100-entry event log.
+    const skipRing =
+      event.type === "worker_activity" &&
+      HIGH_FREQ_ACTIONS.has(event.action);
+    if (!skipRing) {
+      this._events.push(event);
+      if (this._events.length > 100) this._events.shift();
+    }
 
     switch (event.type) {
       case "worker_joined": {
@@ -106,6 +132,11 @@ export class LeaderState implements ILeaderStateView {
           current_message_time: null,
           message_history: [],
           last_completed_task: null,
+          current_phase: null,
+          current_action: null,
+          current_detail: null,
+          next_hint: null,
+          activity_history: [],
         });
         break;
       }
@@ -178,6 +209,11 @@ export class LeaderState implements ILeaderStateView {
           w.current_message = null;
           w.current_message_link = null;
           w.current_message_time = null;
+          w.current_phase = null;
+          w.current_action = null;
+          w.current_detail = null;
+          w.next_hint = null;
+          w.activity_history = [];
         }
         break;
       }
@@ -212,6 +248,25 @@ export class LeaderState implements ILeaderStateView {
             sw.current_message = event.chunk;
           }
           sw.current_message_time = new Date().toISOString();
+        }
+        break;
+      }
+      case "worker_activity": {
+        const aw = this._workers.find((w) => w.id === event.instance_id);
+        if (aw) {
+          aw.current_phase = event.phase;
+          aw.current_action = event.action;
+          aw.current_detail = event.detail;
+          aw.next_hint = event.next;
+          aw.activity_history.push({
+            phase: event.phase,
+            action: event.action,
+            detail: event.detail,
+            timestamp: event.timestamp,
+          });
+          if (aw.activity_history.length > 10) {
+            aw.activity_history = aw.activity_history.slice(-10);
+          }
         }
         break;
       }

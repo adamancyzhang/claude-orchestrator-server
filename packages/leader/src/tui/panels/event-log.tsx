@@ -57,6 +57,17 @@ function eventToString(event: LeaderEvent): string {
       return `[debug] ${event.message}`;
     case "stream_chunk":
       return "";
+    case "worker_activity":
+      // High-frequency actions are already visible in the worker
+      // messages panel — keep the event log focused on phase boundaries.
+      if (
+        event.action === "tool_use" ||
+        event.action === "text" ||
+        event.action === "thinking"
+      ) {
+        return "";
+      }
+      return `${event.instance_id.slice(0, 8)} [${event.phase}/${event.action}] ${event.detail}`;
   }
 }
 

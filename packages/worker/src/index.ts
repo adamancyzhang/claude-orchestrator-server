@@ -27,3 +27,9 @@ export {
   type ChildBoot,
   type ChildConfig,
 } from "./child-runner.js";
+export {
+  WorkerActivityReporter,
+  type ReportInput as WorkerActivityReportInput,
+  type WorkerActivityReporterIdentity,
+  type WorkerActivityReporterOptions,
+} from "./activity-reporter.js";

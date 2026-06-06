@@ -21,6 +21,7 @@ import {
 import {
   CommitChecker,
   SelfEvaluator,
+  WorkerActivityReporter,
   WorkerDocsCommitter,
   WorkerWatcher,
   registerChildBoot,
@@ -96,6 +97,17 @@ async function boot(config: ChildConfig): Promise<void> {
     leader_instance_id: asInstanceId(config.leader_instance_id),
   };
 
+  const activityReporter = new WorkerActivityReporter({
+    router: messageRouter,
+    identity: {
+      instance_id: instance.id,
+      worker_name: config.name,
+      worker_role: config.role,
+      leader_id: asInstanceId(config.leader_instance_id),
+    },
+    logger: logger.child("activity"),
+  });
+
   const evaluator = new SelfEvaluator({
     runner,
     template_engine: templateEngine,
@@ -105,6 +117,7 @@ async function boot(config: ChildConfig): Promise<void> {
     identity_system_prompt: identitySystemPrompt,
     worker_name: config.name,
     worker_role: config.role,
+    activity_reporter: activityReporter,
   });
 
   const commitChecker = new CommitChecker({
@@ -159,6 +172,7 @@ async function boot(config: ChildConfig): Promise<void> {
     logger: logger.child("watcher"),
     git_remote: config.git_remote,
     magic_mode: config.magic_mode,
+    activity_reporter: activityReporter,
   });
 
   await watcher.start();
@@ -166,6 +180,7 @@ async function boot(config: ChildConfig): Promise<void> {
   const aliveCheck = startParentAliveCheck(() => {
     logger.warn("parent died — exiting");
     watcher.stop();
+    activityReporter.stop();
     void zk.close();
     process.exit(0);
   });
@@ -174,6 +189,7 @@ async function boot(config: ChildConfig): Promise<void> {
     const cleanup = async () => {
       clearInterval(aliveCheck);
       watcher.stop();
+      activityReporter.stop();
       await registry.unregister(instance.id).catch(() => undefined);
       await zk.close();
       resolve();

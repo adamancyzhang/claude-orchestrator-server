@@ -66,6 +66,7 @@ describe("enum membership", () => {
       "user_input",
       "help",
       "memory_refresh",
+      "worker_activity",
     ]);
   });
 

@@ -255,6 +255,101 @@ describe("LeaderState — events ring buffer", () => {
     expect(first.message).toBe("evt-5");
     expect(last.message).toBe("evt-104");
   });
+
+  it("worker_activity high-freq actions (tool_use/text/thinking) do NOT consume ring slots", () => {
+    // Lock in: high-frequency actions update worker.current_* but must
+    // not displace chain/task/phase events from the 100-entry ring.
+    const state = new LeaderState();
+    const w = makeInstance("w-noise");
+    state.apply({ type: "worker_joined", instance: w });
+    expect(state.events).toHaveLength(1); // worker_joined
+
+    for (let i = 0; i < 200; i++) {
+      state.apply({
+        type: "worker_activity",
+        instance_id: w.id,
+        task_id: null,
+        link: null,
+        phase: "generate",
+        action: "tool_use",
+        detail: `Bash: cmd-${i}`,
+        next: null,
+        timestamp: "2026-05-25T00:00:00Z",
+      });
+    }
+    // Only worker_joined entered the ring; tool_use was filtered out.
+    expect(state.events).toHaveLength(1);
+    // But the current_* fields still tracked the latest action.
+    expect(state.workers[0].current_action).toBe("tool_use");
+    expect(state.workers[0].current_detail).toBe("Bash: cmd-199");
+  });
+});
+
+describe("LeaderState — worker activity", () => {
+  it("worker_activity updates current_phase/action/detail and pushes history (cap 10)", () => {
+    const state = new LeaderState();
+    const w = makeInstance("w-act");
+    state.apply({ type: "worker_joined", instance: w });
+
+    for (let i = 0; i < 13; i++) {
+      state.apply({
+        type: "worker_activity",
+        instance_id: w.id,
+        task_id: null,
+        link: "execute",
+        phase: "generate",
+        action: "retry",
+        detail: `attempt ${i + 1}/3`,
+        next: null,
+        timestamp: `2026-05-25T00:00:${String(i).padStart(2, "0")}Z`,
+      });
+    }
+    const worker = state.workers[0];
+    expect(worker.current_phase).toBe("generate");
+    expect(worker.current_action).toBe("retry");
+    expect(worker.current_detail).toBe("attempt 13/3");
+    // Cap at 10 with newest preserved.
+    expect(worker.activity_history).toHaveLength(10);
+    expect(worker.activity_history[0].detail).toBe("attempt 4/3");
+    expect(worker.activity_history[9].detail).toBe("attempt 13/3");
+  });
+
+  it("task_completed clears all worker_activity fields", () => {
+    const state = new LeaderState();
+    const w = makeInstance("w-act-clear");
+    const t = makeTask("t-clear", "execute");
+    state.apply({ type: "worker_joined", instance: w });
+    state.apply({ type: "task_created", task: t });
+    state.apply({ type: "task_claimed", task_id: t.id, instance_id: w.id });
+    state.apply({
+      type: "worker_activity",
+      instance_id: w.id,
+      task_id: t.id,
+      link: "execute",
+      phase: "commit",
+      action: "phase_end",
+      detail: "sha abc12345",
+      next: null,
+      timestamp: "2026-05-25T00:01:00Z",
+    });
+
+    expect(state.workers[0].current_phase).toBe("commit");
+    expect(state.workers[0].activity_history).toHaveLength(1);
+
+    state.apply({
+      type: "task_completed",
+      task_id: t.id,
+      instance_id: w.id,
+      duration_seconds: 1,
+    });
+
+    const worker = state.workers[0];
+    expect(worker.current_phase).toBeNull();
+    expect(worker.current_action).toBeNull();
+    expect(worker.current_detail).toBeNull();
+    expect(worker.next_hint).toBeNull();
+    expect(worker.activity_history).toHaveLength(0);
+  });
 });
 
 describe("LeaderState — magic mode", () => {

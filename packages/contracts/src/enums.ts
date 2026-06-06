@@ -43,6 +43,7 @@ export const MessageTypeSchema = z.enum([
   "user_input",
   "help",
   "memory_refresh",
+  "worker_activity",
 ]);
 export type MessageType = z.infer<typeof MessageTypeSchema>;
 

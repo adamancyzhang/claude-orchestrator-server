@@ -16,6 +16,7 @@ import {
 import {
   CommitChecker,
   SelfEvaluator,
+  WorkerActivityReporter,
   WorkerDocsCommitter,
   WorkerWatcher,
 } from "@co/worker";
@@ -29,6 +30,7 @@ interface RegisteredWorker {
   config: WorktreeConfig;
   instance: Instance;
   watcher: WorkerWatcher;
+  activity_reporter: WorkerActivityReporter;
 }
 
 /**
@@ -92,8 +94,12 @@ export class InProcessSupervisor implements IChildSupervisor {
         worktree_branch: cfg.branch,
       });
 
-      const watcher = this.buildWatcher(cfg, instance, logger);
-      this.registered.push({ config: cfg, instance, watcher });
+      const { watcher, activity_reporter } = this.buildWatcher(
+        cfg,
+        instance,
+        logger,
+      );
+      this.registered.push({ config: cfg, instance, watcher, activity_reporter });
       await watcher.start();
       logger.info(`in-process worker ${cfg.name} started`, {
         id: instance.id,
@@ -105,6 +111,7 @@ export class InProcessSupervisor implements IChildSupervisor {
   async shutdown(): Promise<void> {
     for (const r of this.registered) {
       r.watcher.stop();
+      r.activity_reporter.stop();
       await this.registry.unregister(r.instance.id).catch(() => undefined);
     }
     this.registered.length = 0;
@@ -114,7 +121,7 @@ export class InProcessSupervisor implements IChildSupervisor {
     cfg: WorktreeConfig,
     instance: Instance,
     logger: ILogger,
-  ): WorkerWatcher {
+  ): { watcher: WorkerWatcher; activity_reporter: WorkerActivityReporter } {
     const builtinDir = this.opts.template_dir;
     const projectAgentsDir = path.join(
       cfg.worktree_path,
@@ -139,6 +146,20 @@ export class InProcessSupervisor implements IChildSupervisor {
       co_role_path: path.join(coRoot, "docs", cfg.name),
     });
 
+    const messageRouter = new MessageRouter({ zk: this.zk });
+    const taskQueue = new TaskQueue({ zk: this.zk });
+
+    const activityReporter = new WorkerActivityReporter({
+      router: messageRouter,
+      identity: {
+        instance_id: instance.id,
+        worker_name: cfg.name,
+        worker_role: cfg.role,
+        leader_id: this.opts.leader_instance_id,
+      },
+      logger: logger.child("activity"),
+    });
+
     const evaluator = new SelfEvaluator({
       runner,
       template_engine: templateEngine,
@@ -148,6 +169,7 @@ export class InProcessSupervisor implements IChildSupervisor {
       identity_system_prompt: identitySystemPrompt,
       worker_name: cfg.name,
       worker_role: cfg.role,
+      activity_reporter: activityReporter,
     });
 
     const commitChecker = new CommitChecker({
@@ -178,10 +200,7 @@ export class InProcessSupervisor implements IChildSupervisor {
       logger.child("hooks"),
     );
 
-    const messageRouter = new MessageRouter({ zk: this.zk });
-    const taskQueue = new TaskQueue({ zk: this.zk });
-
-    return new WorkerWatcher({
+    const watcher = new WorkerWatcher({
       instance_id: instance.id,
       leader_id: this.opts.leader_instance_id,
       worker_name: cfg.name,
@@ -202,6 +221,8 @@ export class InProcessSupervisor implements IChildSupervisor {
       logger: logger.child("watcher"),
       git_remote: this.gitRemote,
       magic_mode: this.magicMode,
+      activity_reporter: activityReporter,
     });
+    return { watcher, activity_reporter: activityReporter };
   }
 }

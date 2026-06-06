@@ -5,12 +5,19 @@ import type {
   TaskLink,
 } from "../enums.js";
 import type { Task } from "../schemas/task.js";
-import type { LeaderEvent } from "../events.js";
+import type { LeaderEvent, WorkerAction, WorkerPhase } from "../events.js";
 
 export interface WorkerMessageEntry {
   readonly message_id: MessageId;
   readonly content: string;
   readonly link: TaskLink | null;
+  readonly timestamp: string;
+}
+
+export interface WorkerActivityEntry {
+  readonly phase: WorkerPhase;
+  readonly action: WorkerAction;
+  readonly detail: string;
   readonly timestamp: string;
 }
 
@@ -30,6 +37,11 @@ export interface WorkerInfo {
   readonly current_message_time: string | null;
   readonly message_history: readonly WorkerMessageEntry[];
   readonly last_completed_task: TaskId | null;
+  readonly current_phase: WorkerPhase | null;
+  readonly current_action: WorkerAction | null;
+  readonly current_detail: string | null;
+  readonly next_hint: string | null;
+  readonly activity_history: readonly WorkerActivityEntry[];
 }
 
 export interface ILeaderStateView {

@@ -12,6 +12,7 @@ import {
   type TaskLink,
 } from "@co/contracts";
 import { extractJson } from "@co/runtime";
+import type { WorkerActivityReporter } from "./activity-reporter.js";
 
 /**
  * Type-level upper bound on every responsibility-chain link the schema
@@ -57,6 +58,13 @@ export interface SelfEvaluatorOptions {
   identity_system_prompt: string;
   worker_name: string;
   worker_role: string;
+  /**
+   * Optional reporter for surfacing evaluation step actions (tool_use /
+   * text / thinking) to the Leader. The watcher emits the surrounding
+   * evaluate/phase_start and phase_end markers; this hook reports the
+   * tool calls Claude makes while reading the result file etc.
+   */
+  activity_reporter?: WorkerActivityReporter;
 }
 
 export interface EvaluateInput {
@@ -106,6 +114,16 @@ export class SelfEvaluator {
       }
 
       this.opts.logger.info(`self-evaluation attempt ${attempt + 1}/${MAX_RETRIES}`);
+      const reporter = this.opts.activity_reporter;
+      if (reporter && attempt > 0) {
+        reporter.report({
+          phase: "evaluate",
+          action: "retry",
+          detail: `attempt ${attempt + 1}/${MAX_RETRIES}`,
+          link: input.link,
+          task_id: input.task_id,
+        });
+      }
       await this.opts.runner.run({
         prompt,
         log_path: evalLogPath,
@@ -113,6 +131,29 @@ export class SelfEvaluator {
         resume_session_id: input.resume_session_id,
         fork_session: true,
         quiet: true,
+        on_chunk: reporter
+          ? (chunk) => {
+              const e = chunk.event;
+              if (!e) return;
+              if (e.kind === "tool_use") {
+                reporter.report({
+                  phase: "evaluate",
+                  action: "tool_use",
+                  detail: `${e.tool}: ${e.summary}`.slice(0, 120),
+                  link: input.link,
+                  task_id: input.task_id,
+                });
+              } else if (e.kind === "thinking") {
+                reporter.report({
+                  phase: "evaluate",
+                  action: "thinking",
+                  detail: "thinking…",
+                  link: input.link,
+                  task_id: input.task_id,
+                });
+              }
+            }
+          : undefined,
       });
 
       try {
