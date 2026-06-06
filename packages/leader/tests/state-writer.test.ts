@@ -62,7 +62,7 @@ describe("StateWriter", () => {
   it("writes state.json on start and updates on interval", async () => {
     const dir = makeTmpDir();
     const state = new LeaderState();
-    const writer = new StateWriter(state, dir, 50);
+    const writer = new StateWriter(state, dir, "leader-1", undefined, 50);
 
     writer.start();
 
@@ -77,6 +77,7 @@ describe("StateWriter", () => {
 
     expect(parsed.version).toBe(1);
     expect(typeof parsed.updated_at).toBe("string");
+    expect(parsed.leader_id).toBe("leader-1");
     expect(parsed.magic_mode).toBe(false);
     expect(parsed.magic_max_chains).toBeNull();
     expect(Array.isArray(parsed.workers)).toBe(true);
@@ -91,7 +92,7 @@ describe("StateWriter", () => {
   it("atomic write: tmp file is removed, only state.json remains", async () => {
     const dir = makeTmpDir();
     const state = new LeaderState();
-    const writer = new StateWriter(state, dir, 50);
+    const writer = new StateWriter(state, dir, "leader-2", undefined, 50);
 
     writer.start();
     await new Promise((r) => setTimeout(r, 80));
@@ -108,7 +109,7 @@ describe("StateWriter", () => {
   it("reflects state changes in the written file", async () => {
     const dir = makeTmpDir();
     const state = new LeaderState();
-    const writer = new StateWriter(state, dir, 50);
+    const writer = new StateWriter(state, dir, "leader-3", undefined, 50);
 
     // Apply a task
     state.apply({ type: "task_created", task: makeTask("t-1") });
@@ -128,7 +129,7 @@ describe("StateWriter", () => {
   it("stop() prevents further writes", async () => {
     const dir = makeTmpDir();
     const state = new LeaderState();
-    const writer = new StateWriter(state, dir, 50);
+    const writer = new StateWriter(state, dir, "leader-4", undefined, 50);
 
     writer.start();
     await new Promise((r) => setTimeout(r, 80));
@@ -152,7 +153,7 @@ describe("StateWriter", () => {
   it("start() is idempotent — calling twice does not create duplicate timers", async () => {
     const dir = makeTmpDir();
     const state = new LeaderState();
-    const writer = new StateWriter(state, dir, 50);
+    const writer = new StateWriter(state, dir, "leader-5", undefined, 50);
 
     writer.start();
     writer.start(); // second call should be no-op
@@ -168,7 +169,7 @@ describe("StateWriter", () => {
   it("stop() is idempotent — calling when not started is safe", () => {
     const dir = makeTmpDir();
     const state = new LeaderState();
-    const writer = new StateWriter(state, dir);
+    const writer = new StateWriter(state, dir, "leader-6");
 
     // Should not throw
     writer.stop();
