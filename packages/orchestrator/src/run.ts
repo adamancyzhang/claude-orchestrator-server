@@ -430,7 +430,7 @@ export async function runOrchestrator(
   } else {
     // Headless mode: write state.json periodically
     const stateDir = input.state_dir ?? coRoot;
-    stateWriter = new StateWriter(state, stateDir);
+    stateWriter = new StateWriter(state, stateDir, leaderInstance.id);
     stateWriter.start();
 
     // Write .leader-id for CLI discovery
