@@ -153,6 +153,88 @@ claude-orchestrator dashboard --state-dir ./state
 | `--host` | 127.0.0.1 | Bind address |
 | `--state-dir` | .orchestrator | Path to orchestrator state directory |
 
+## Historical Data Retention
+
+The dashboard maintains a 30-day rolling history of state snapshots for trend analysis and debugging.
+
+### Storage Format
+
+- **Format:** JSONL (append-only log)
+- **Location:** `<state-dir>/history/YYYY-MM-DD.jsonl`
+- **Content:** Lightweight state summaries (not full state.json)
+- **Record format:** `{ "ts": "ISO-8601", "workers": N, "tasks": { "total": N, "completed": N, "failed": N }, "metrics": {...} }`
+
+### Collection
+
+| Component | Behavior |
+|-----------|----------|
+| HistoryRecorder | Reads state.json every 60 seconds |
+| Write mode | Append single JSONL line per snapshot |
+| Retention | Auto-delete files older than 30 days |
+| Config | `--history-retention-days` flag (default: 30) |
+
+### Storage Estimates
+
+| Period | Snapshots | Size |
+|--------|-----------|------|
+| 1 day | 1,440 | ~0.3MB |
+| 7 days | 10,080 | ~2.1MB |
+| 30 days | 43,200 | ~8.6MB |
+
+### History API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/history` | GET | Recent history (query: `?days=7`) |
+| `/api/history/range` | GET | Date range query (query: `?from=...&to=...`) |
+| `/api/history/today` | GET | Today's snapshots |
+
+## Alerting Notifications
+
+The dashboard includes a real-time alerting system that surfaces metric threshold violations.
+
+### AlertBus Architecture
+
+```
+MetricsCollector (threshold check)
+        │
+        ▼
+    AlertBus (EventEmitter)
+        │
+        ▼
+SSE broadcast (event: alert)
+        │
+        ▼
+Dashboard UI (banner + history panel)
+```
+
+### SSE Alert Events
+
+```
+event: alert
+data: {"id":"alert-123","severity":"critical","message":"Error rate exceeded","ts":"..."}
+```
+
+### Alert API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/alerts` | GET | Current active alerts |
+| `/api/alerts/history` | GET | Resolved alert history |
+| `/api/alerts/:id/resolve` | POST | Mark alert as resolved |
+
+### Alert Persistence
+
+- **Storage:** `<state-dir>/alerts.jsonl`
+- **Format:** Append-only log of all alert events (created, resolved)
+- **Retention:** Follows same 30-day retention as history
+
+### Dashboard UI
+
+- **Persistent banner:** Top-of-page alert for active critical/warning alerts
+- **Alert history panel:** Sidebar showing resolved and active alerts
+- **Manual resolve:** Button to acknowledge and dismiss alerts
+
 ## Implementation Notes
 
 1. **State polling:** Use fs.watch with debouncing to avoid excessive updates
@@ -160,3 +242,5 @@ claude-orchestrator dashboard --state-dir ./state
 3. **Graceful shutdown:** Close SSE connections and stop watcher on SIGTERM
 4. **Error handling:** Return proper HTTP status codes for all endpoints
 5. **CORS:** Not needed since frontend is served from same origin
+6. **History rotation:** Use daily file names for easy cleanup and range queries
+7. **Alert deduplication:** Suppress repeated alerts within 60-second window
