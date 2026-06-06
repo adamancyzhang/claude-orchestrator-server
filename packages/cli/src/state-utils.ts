@@ -28,6 +28,9 @@ export interface StateData {
     description: string;
     status: string;
     link: string | null;
+    chain_id: string | null;
+    assigned_to: string | null;
+    assigned_to_name: string | null;
   }>;
   in_progress_tasks: Array<{
     id: string;
@@ -35,6 +38,9 @@ export interface StateData {
     status: string;
     claimed_by: string | null;
     link: string | null;
+    chain_id: string | null;
+    assigned_to: string | null;
+    assigned_to_name: string | null;
   }>;
   events: Array<{
     type: string;

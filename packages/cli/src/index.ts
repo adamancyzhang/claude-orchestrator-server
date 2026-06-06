@@ -203,6 +203,75 @@ program
   });
 
 program
+  .command("chains")
+  .description("Display active and completed chains")
+  .action(async function (this: Command) {
+    const stateDir = getStateDir(this.optsWithGlobals());
+    const state = readState(stateDir);
+
+    // Extract chain info from events.
+    const activated = new Map<string, string>(); // chain_id → timestamp
+    const closed = new Set<string>();
+    const spawned = new Map<string, { parent: string; depth: number }>();
+    const mergeFailed = new Set<string>();
+
+    for (const e of state.events) {
+      if (e.type === "chain_activated") {
+        activated.set(e.chain_id as string, e.timestamp as string);
+      } else if (e.type === "chain_closed") {
+        closed.add(e.chain_id as string);
+      } else if (e.type === "chain_spawned") {
+        spawned.set(e.child_chain_id as string, {
+          parent: e.parent_chain_id as string,
+          depth: e.chain_depth as number,
+        });
+      } else if (e.type === "chain_merge_failed") {
+        mergeFailed.add(e.chain_id as string);
+      }
+    }
+
+    // Collect all chain_ids from tasks.
+    const allTasks = [...state.pending_tasks, ...state.in_progress_tasks];
+    const chainIds = new Set<string>(activated.keys());
+    for (const t of allTasks) {
+      if (t.chain_id) chainIds.add(t.chain_id);
+    }
+
+    if (chainIds.size === 0) {
+      console.log("No chains.");
+      return;
+    }
+
+    const rows = Array.from(chainIds).map((cid) => {
+      const isActive = activated.has(cid) && !closed.has(cid);
+      const tasks = allTasks.filter((t) => t.chain_id === cid);
+      const currentLink = tasks.find((t) => t.status === "in_progress")?.link ?? "-";
+      const workers = tasks
+        .filter((t) => t.assigned_to_name)
+        .map((t) => t.assigned_to_name)
+        .filter(Boolean);
+      const uniqueWorkers = [...new Set(workers)];
+      const spawnInfo = spawned.get(cid);
+
+      return {
+        ChainID: cid,
+        Status: mergeFailed.has(cid)
+          ? "merge_failed"
+          : isActive
+            ? "active"
+            : "closed",
+        SpawnedFrom: spawnInfo?.parent ?? "-",
+        Depth: spawnInfo?.depth ?? "-",
+        CurrentLink: currentLink,
+        Workers: uniqueWorkers.length > 0 ? uniqueWorkers.join(", ") : "-",
+        Tasks: tasks.length,
+      };
+    });
+
+    console.table(rows);
+  });
+
+program
   .command("messages <worker>")
   .description("Display message history for a worker")
   .action(async function (this: Command, workerId: string) {
