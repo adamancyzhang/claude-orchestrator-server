@@ -7,6 +7,7 @@ import { PROTOCOL_VERSION } from "@co/contracts";
 import { runOrchestrator } from "@co/orchestrator";
 import { readState, getStateDir, type StateData } from "./state-utils.js";
 import { jsonOutput, jsonError } from "./json-output.js";
+import { createProgress } from "./progress.js";
 
 const program = new Command();
 
@@ -79,6 +80,10 @@ program
     "--headless",
     "Run without TUI — serialize state to state.json for CLI inspection",
   )
+  .option(
+    "--no-progress",
+    "Disable progress indicator",
+  )
   .action(async function (this: Command) {
     const opts = this.opts() as {
       worker: number;
@@ -87,13 +92,20 @@ program
       magicMaxChains?: number;
       enabledZookeeper?: boolean;
       headless?: boolean;
+      progress?: boolean;
     };
     const globalOpts = this.optsWithGlobals();
     const debug = Boolean(globalOpts.debug);
     const zk = (globalOpts.zookeeper as string | undefined);
     const stateDir = globalOpts.stateDir as string | undefined;
     const jsonMode = Boolean(globalOpts.json);
+    const progressDisabled = jsonMode || opts.progress === false;
+
+    const progress = createProgress("Starting orchestrator...", progressDisabled);
+    progress.start();
+
     try {
+      progress.updateMessage("Initializing orchestrator...");
       await runOrchestrator({
         zk_hosts: zk ?? process.env.ZK_HOSTS ?? "127.0.0.1:2181",
         worker_count: opts.worker,
@@ -105,10 +117,12 @@ program
         headless: Boolean(opts.headless),
         state_dir: stateDir,
       });
+      progress.stop("Orchestration completed");
       if (jsonMode) {
         outputResult({ message: "Orchestration completed" }, jsonMode);
       }
     } catch (err) {
+      progress.stop("Orchestration failed");
       outputError(jsonMode, "RUN_FAILED", err instanceof Error ? err.message : String(err));
     }
   });
