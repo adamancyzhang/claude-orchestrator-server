@@ -9,15 +9,21 @@
 // name collisions or incorrect role assignments.
 // Primary sources: packages/orchestrator/src/worktree-initializer.ts
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import { execSync } from "node:child_process";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   assignRoles,
   generateWorkerNames,
   generateFallbackNames,
+  initializeWorktrees,
   BUILTIN_NAMES,
   ROLE_PRIORITY,
   MAGIC_ROLE_PRIORITY,
 } from "../src/worktree-initializer.js";
+import { Logger } from "@co/infra";
 
 describe("assignRoles", () => {
   it("should return correct roles for count <= priority length", () => {
@@ -96,5 +102,121 @@ describe("generateFallbackNames", () => {
     const used = BUILTIN_NAMES.map((n) => `${n}2`);
     const result = generateFallbackNames(3, used);
     expect(result).toEqual(["Tom3", "Jerry3", "Lucy3"]);
+  });
+});
+
+describe("initializeWorktrees — symlink behavior", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "co-wt-test-"));
+    // Init a git repo with an initial commit (worktree add requires HEAD)
+    execSync("git init -q", { cwd: tmpDir });
+    execSync("git config user.email test@test.com", { cwd: tmpDir });
+    execSync("git config user.name Test", { cwd: tmpDir });
+    fs.writeFileSync(path.join(tmpDir, ".gitignore"), ".claude-orchestrator/\n.claude/\n");
+    execSync("git add -A", { cwd: tmpDir });
+    execSync('git commit -q -m "init"', { cwd: tmpDir });
+
+    // Create root .claude directory with a test skill
+    const rootClaude = path.join(tmpDir, ".claude");
+    fs.mkdirSync(path.join(rootClaude, "skills", "test-skill"), { recursive: true });
+    fs.writeFileSync(path.join(rootClaude, "skills", "test-skill", "SKILL.md"), "# Test Skill");
+
+    // Create template directory
+    const templateDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(path.join(templateDir, "agents"), { recursive: true });
+    fs.writeFileSync(path.join(templateDir, "agents", "identity.md"), "# Identity");
+    fs.mkdirSync(path.join(templateDir, "workflow"), { recursive: true });
+    fs.writeFileSync(
+      path.join(templateDir, "project-claude.md"),
+      "# Project for {your_name}",
+    );
+
+  });
+
+  afterEach(() => {
+    // Clean up git worktrees before removing tmpDir
+    try {
+      const wtRoot = path.join(tmpDir, ".claude-orchestrator", "worktree");
+      if (fs.existsSync(wtRoot)) {
+        for (const name of fs.readdirSync(wtRoot)) {
+          try {
+            execSync(`git worktree remove --force .claude-orchestrator/worktree/${name}`, {
+              cwd: tmpDir,
+              stdio: "pipe",
+            });
+          } catch { /* best effort */ }
+        }
+      }
+    } catch { /* ignore */ }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("should symlink .claude from root to worktree", async () => {
+    const logger = new Logger({ namespace: "test", level: "error" });
+    const configs = await initializeWorktrees({
+      project_root: tmpDir,
+      worker_count: 1,
+      template_dir: path.join(tmpDir, "templates"),
+
+      logger,
+    });
+
+    expect(configs).toHaveLength(1);
+    const wtPath = configs[0].worktree_path;
+    const wtClaude = path.join(wtPath, ".claude");
+
+    // .claude should exist as a symlink
+    expect(fs.existsSync(wtClaude)).toBe(true);
+    const stat = fs.lstatSync(wtClaude);
+    expect(stat.isSymbolicLink()).toBe(true);
+
+    // Symlink target should be the root .claude directory
+    const target = fs.readlinkSync(wtClaude);
+    expect(path.resolve(target)).toBe(path.join(tmpDir, ".claude"));
+
+    // Skills should be accessible through the symlink
+    const skillPath = path.join(wtClaude, "skills", "test-skill", "SKILL.md");
+    expect(fs.existsSync(skillPath)).toBe(true);
+    expect(fs.readFileSync(skillPath, "utf-8")).toBe("# Test Skill");
+  });
+
+  it("should NOT create .claude-orchestrator/agents/ in worktree", async () => {
+    const logger = new Logger({ namespace: "test", level: "error" });
+    const configs = await initializeWorktrees({
+      project_root: tmpDir,
+      worker_count: 1,
+      template_dir: path.join(tmpDir, "templates"),
+
+      logger,
+    });
+
+    const wtPath = configs[0].worktree_path;
+    const agentsDir = path.join(wtPath, ".claude-orchestrator", "agents");
+    expect(fs.existsSync(agentsDir)).toBe(false);
+
+    // .claude-orchestrator itself should not exist in worktree
+    const orchDir = path.join(wtPath, ".claude-orchestrator");
+    expect(fs.existsSync(orchDir)).toBe(false);
+  });
+
+  it("should still create per-worktree CLAUDE.md with placeholders replaced", async () => {
+    const logger = new Logger({ namespace: "test", level: "error" });
+    const configs = await initializeWorktrees({
+      project_root: tmpDir,
+      worker_count: 1,
+      template_dir: path.join(tmpDir, "templates"),
+
+      logger,
+    });
+
+    const wtPath = configs[0].worktree_path;
+    const claudeMd = path.join(wtPath, "CLAUDE.md");
+    expect(fs.existsSync(claudeMd)).toBe(true);
+
+    const content = fs.readFileSync(claudeMd, "utf-8");
+    expect(content).not.toContain("{your_name}");
+    expect(content).toContain(configs[0].name);
   });
 });

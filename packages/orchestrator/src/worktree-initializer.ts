@@ -13,7 +13,6 @@ import {
   type InstanceId,
   type InstanceRole,
 } from "@co/contracts";
-import { CHAIN_SKILLS } from "./init-checker.js";
 
 export interface WorktreeConfig {
   name: string;
@@ -138,7 +137,6 @@ export interface InitializeWorktreesOptions {
   project_root: string;
   worker_count: number;
   template_dir: string;
-  skills_dir: string;
   logger: ILogger;
   /**
    * When true (default), reused worktrees are reset hard to the
@@ -280,7 +278,7 @@ export async function initializeWorktrees(
 
     const instanceId = asInstanceId(randomUUID().replace(/-/g, ""));
 
-    seedWorktreeAssets(wtPath, name, role, opts.template_dir, opts.skills_dir, opts.co_root ?? null);
+    seedWorktreeAssets(wtPath, name, role, opts.template_dir, opts.co_root ?? null);
 
     configs.push({
       name,
@@ -315,40 +313,23 @@ function seedWorktreeAssets(
   name: string,
   role: InstanceRole,
   templateDir: string,
-  skillsDir: string,
   coRoot: string | null,
 ): void {
-  if (!fs.existsSync(templateDir)) return;
-
-  const agentsDst = path.join(worktreePath, ".claude-orchestrator", "agents");
-
-  // Seed identity card and per-role templates
-  for (const subdir of ["agents", "workflow"]) {
-    const srcDir = path.join(templateDir, subdir);
-    if (!fs.existsSync(srcDir)) continue;
-    fs.mkdirSync(agentsDst, { recursive: true });
-    for (const file of fs.readdirSync(srcDir, { recursive: true, encoding: "utf-8" })) {
-      const src = path.join(srcDir, file);
-      const dst = path.join(agentsDst, file);
-      if (fs.statSync(src).isDirectory()) continue;
-      fs.mkdirSync(path.dirname(dst), { recursive: true });
-      if (!fs.existsSync(dst)) fs.copyFileSync(src, dst);
-    }
+  // Symlink .claude from root to worktree so skills, settings, and
+  // other runtime assets are shared. The root's .claude directory is
+  // populated by InitChecker before worktree creation.
+  const projectRoot = path.resolve(worktreePath, "..", "..", "..");
+  const rootClaude = path.join(projectRoot, ".claude");
+  const wtClaude = path.join(worktreePath, ".claude");
+  if (fs.existsSync(rootClaude) && !fs.existsSync(wtClaude)) {
+    fs.symlinkSync(rootClaude, wtClaude);
   }
 
-  if (fs.existsSync(skillsDir)) {
-    const skillsDst = path.join(worktreePath, ".claude", "skills");
-    for (const skill of CHAIN_SKILLS) {
-      const srcSkill = path.join(skillsDir, skill, "SKILL.md");
-      const dstDir = path.join(skillsDst, skill);
-      const dstSkill = path.join(dstDir, "SKILL.md");
-      if (!fs.existsSync(srcSkill)) continue;
-      if (fs.existsSync(dstDir)) fs.rmSync(dstDir, { recursive: true, force: true });
-      fs.mkdirSync(dstDir, { recursive: true });
-      fs.copyFileSync(srcSkill, dstSkill);
-    }
-  }
+  // .claude-orchestrator/agents/ is NOT copied into worktrees.
+  // It only lives at the project root; workers resolve it via
+  // resolveAgentsDir() in child-boot.ts / in-process-supervisor.ts.
 
+  // Per-worktree CLAUDE.md with role-specific placeholders
   const teamSrc = path.join(templateDir, "project-claude.md");
   const teamDst = path.join(worktreePath, "CLAUDE.md");
   if (fs.existsSync(teamSrc) && !fs.existsSync(teamDst)) {

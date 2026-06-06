@@ -213,7 +213,6 @@ export async function runOrchestrator(
     project_root: projectRoot,
     worker_count: input.worker_count,
     template_dir: paths.template_dir,
-    skills_dir: paths.skills_dir,
     logger: logger.child("worktree"),
     magic_mode: magicMode,
     leader_instance_id: leaderId,

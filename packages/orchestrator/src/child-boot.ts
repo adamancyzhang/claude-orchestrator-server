@@ -29,8 +29,12 @@ import {
 } from "@co/worker";
 import { startParentAliveCheck } from "./child-supervisor.js";
 
+function resolveProjectRoot(worktreePath: string): string {
+  return path.resolve(worktreePath, "..", "..", "..");
+}
+
 function resolveTemplateDir(worktreePath: string): string {
-  const projectRoot = path.resolve(worktreePath, "..", "..", "..");
+  const projectRoot = resolveProjectRoot(worktreePath);
   const candidates = [
     path.join(projectRoot, "packages", "orchestrator", "dist", "templates"),
     path.join(projectRoot, "templates"),
@@ -39,6 +43,15 @@ function resolveTemplateDir(worktreePath: string): string {
     if (fs.existsSync(dir)) return dir;
   }
   return candidates[1];
+}
+
+/**
+ * Resolve .claude-orchestrator/agents/ from the project root.
+ * This directory only exists at root — worktrees do not carry a copy.
+ */
+function resolveAgentsDir(worktreePath: string): string {
+  const projectRoot = resolveProjectRoot(worktreePath);
+  return path.join(projectRoot, ".claude-orchestrator", "agents");
 }
 
 async function boot(config: ChildConfig): Promise<void> {
@@ -69,11 +82,7 @@ async function boot(config: ChildConfig): Promise<void> {
   const taskQueue = new TaskQueue({ zk });
 
   const builtinDir = resolveTemplateDir(config.worktree_path);
-  const projectAgentsDir = path.join(
-    config.worktree_path,
-    ".claude-orchestrator",
-    "agents",
-  );
+  const projectAgentsDir = resolveAgentsDir(config.worktree_path);
   const templateEngine = new TemplateEngine({
     primary_dir: projectAgentsDir,
     fallback_dir: builtinDir,

@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   asInstanceId,
@@ -123,8 +124,10 @@ export class InProcessSupervisor implements IChildSupervisor {
     logger: ILogger,
   ): { watcher: WorkerWatcher; activity_reporter: WorkerActivityReporter } {
     const builtinDir = this.opts.template_dir;
+    // Agents dir only exists at project root, not in worktrees
+    const projectRoot = path.resolve(cfg.worktree_path, "..", "..", "..");
     const projectAgentsDir = path.join(
-      cfg.worktree_path,
+      projectRoot,
       ".claude-orchestrator",
       "agents",
     );
