@@ -1,5 +1,6 @@
 export { LeaderEventBus } from "./event-bus.js";
 export { LeaderState } from "./state.js";
+export { StateWriter } from "./state-writer.js";
 export { WorkerMonitor } from "./monitor.js";
 export {
   TaskOrchestrator,
@@ -40,4 +41,5 @@ export {
   type MemoryBootstrapOptions,
   type StaleEntry,
 } from "./memory-bootstrap.js";
+export { CommandWatcher, type CommandWatcherOptions } from "./command-watcher.js";
 export { StdoutSink, StdinKeyboardSource, type TuiSink } from "./tui/stubs.js";
