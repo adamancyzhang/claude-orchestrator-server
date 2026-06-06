@@ -5,5 +5,12 @@ export default defineConfig({
     passWithNoTests: true,
     include: ["tests/**/*.test.ts"],
     exclude: ["node_modules", "dist", "tests/scratch/**"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json", "html"],
+      thresholds: {
+        lines: 80,
+      },
+    },
   },
 });
