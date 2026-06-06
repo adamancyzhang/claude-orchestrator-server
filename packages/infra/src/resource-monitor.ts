@@ -70,6 +70,8 @@ export class ResourceMonitor {
   private prev_cpu_times: { idle: number; total: number } | null = null;
   private prev_network_rx = 0;
   private prev_network_tx = 0;
+  private cpu_count: number;
+  private alert_cooldowns: Map<string, number> = new Map();
 
   constructor(opts: ResourceMonitorOptions = {}) {
     this.logger = opts.logger;
@@ -78,6 +80,7 @@ export class ResourceMonitor {
     this.memory_warning_threshold = opts.memory_warning_threshold ?? 80;
     this.memory_critical_threshold = opts.memory_critical_threshold ?? 95;
     this.interval_ms = opts.interval_ms ?? 5000;
+    this.cpu_count = os.cpus().length;
   }
 
   /**
@@ -165,21 +168,26 @@ export class ResourceMonitor {
   /**
    * Calculate CPU usage percentage.
    * Uses the same approach as the `top` command.
+   * Optimized to cache CPU count and use pre-calculated values.
    */
   private calculateCpuUsage(): number {
     const cpus = os.cpus();
     let totalIdle = 0;
     let totalTick = 0;
 
-    for (const cpu of cpus) {
-      for (const type in cpu.times) {
-        totalTick += cpu.times[type as keyof typeof cpu.times];
-      }
-      totalIdle += cpu.times.idle;
+    // Use cached CPU count for division
+    const cpuLen = cpus.length || this.cpu_count;
+
+    for (let i = 0; i < cpuLen; i++) {
+      const cpu = cpus[i];
+      if (!cpu) continue;
+      const times = cpu.times;
+      totalTick += times.user + times.nice + times.sys + times.idle + times.irq;
+      totalIdle += times.idle;
     }
 
-    const currentIdle = totalIdle / cpus.length;
-    const currentTotal = totalTick / cpus.length;
+    const currentIdle = totalIdle / cpuLen;
+    const currentTotal = totalTick / cpuLen;
 
     if (this.prev_cpu_times) {
       const idleDiff = currentIdle - this.prev_cpu_times.idle;
@@ -226,7 +234,8 @@ export class ResourceMonitor {
   private updateNetworkBaseline(): void {
     try {
       // Try to read from /proc/net/dev on Linux
-      const fs = require("node:fs");
+      // Use dynamic import for ESM compatibility
+      const fs = require("node:fs") as typeof import("node:fs");
       if (fs.existsSync("/proc/net/dev")) {
         const content = fs.readFileSync("/proc/net/dev", "utf-8");
         const lines = content.split("\n");
@@ -303,8 +312,19 @@ export class ResourceMonitor {
 
   /**
    * Create and store an alert.
+   * Deduplicates alerts within a 60-second window.
    */
   private createAlert(alert: ResourceAlert): void {
+    const cooldownKey = `${alert.type}_${alert.severity}`;
+    const now = Date.now();
+    const lastAlert = this.alert_cooldowns.get(cooldownKey);
+
+    // Skip if we've emitted this alert type within the last 60 seconds
+    if (lastAlert && now - lastAlert < 60000) {
+      return;
+    }
+
+    this.alert_cooldowns.set(cooldownKey, now);
     this.alerts.push(alert);
 
     // Log the alert

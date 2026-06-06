@@ -226,14 +226,18 @@ export class MessageBatcher<T> {
       this.flushTimer = null;
     }
 
+    // Take reference to current batch and create new empty array
+    // This avoids copying the array - we just swap references
+    const messagesToProcess = this.currentBatch;
+    this.currentBatch = [];
+
     const batch: MessageBatch<T> = {
       id: `batch-${++this.batchId}`,
-      messages: [...this.currentBatch],
+      messages: messagesToProcess,
       created_at: Date.now(),
       retry_count: 0,
     };
 
-    this.currentBatch = [];
     this.processing = true;
 
     this.logger?.debug("flushing batch", {
