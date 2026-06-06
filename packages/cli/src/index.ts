@@ -53,6 +53,10 @@ program
     "--enabled-zookeeper",
     "Use real ZooKeeper for message routing (default: in-memory)",
   )
+  .option(
+    "--headless",
+    "Run without TUI — serialize state to state.json for CLI inspection",
+  )
   .action(async function (this: Command) {
     const opts = this.opts() as {
       worker: number;
@@ -60,9 +64,11 @@ program
       magic?: boolean;
       magicMaxChains?: number;
       enabledZookeeper?: boolean;
+      headless?: boolean;
     };
     const debug = Boolean(this.optsWithGlobals().debug);
     const zk = (this.optsWithGlobals().zookeeper as string | undefined);
+    const stateDir = this.optsWithGlobals().stateDir as string | undefined;
     await runOrchestrator({
       zk_hosts: zk ?? process.env.ZK_HOSTS ?? "127.0.0.1:2181",
       worker_count: opts.worker,
@@ -71,6 +77,8 @@ program
       magic: Boolean(opts.magic),
       magic_max_chains: opts.magicMaxChains ?? null,
       enabled_zookeeper: Boolean(opts.enabledZookeeper),
+      headless: Boolean(opts.headless),
+      state_dir: stateDir,
     });
   });
 
@@ -99,7 +107,7 @@ program
 
 program
   .command("send <message>")
-  .description("Send a message to the orchestrator")
+  .description("Send a message to the orchestrator (headless mode)")
   .action(async function (this: Command, message: string) {
     const stateDir = getStateDir(this.optsWithGlobals());
     const commandsPath = path.join(stateDir, "commands.jsonl");

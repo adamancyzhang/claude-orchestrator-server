@@ -41,6 +41,7 @@ import {
   LeaderWatcher,
   MemoryBootstrap,
   MergeValidator,
+  StateWriter,
   StdinKeyboardSource,
   StdoutSink,
   TaskOrchestrator,
@@ -81,6 +82,11 @@ export interface RunInput {
   // When true, use real ZooKeeper for message routing. Default (false)
   // uses an in-memory client shared between Leader and Workers.
   enabled_zookeeper?: boolean;
+  // When true, run without TUI — serializes state to state.json and
+  // watches for commands from the CLI.
+  headless?: boolean;
+  // Directory for state.json and .leader-id. Defaults to co-root.
+  state_dir?: string;
 }
 
 export interface OrchestratorPaths {
@@ -405,7 +411,9 @@ export async function runOrchestrator(
   }
 
   let tui: null | { stop: () => Promise<void> } = null;
-  if (!deps.headless) {
+  let stateWriter: StateWriter | null = null;
+
+  if (!deps.headless && !input.headless) {
     const { TuiController } = await import("@co/leader/tui");
     const instance = new TuiController({
       state,
@@ -419,6 +427,17 @@ export async function runOrchestrator(
     });
     await instance.start();
     tui = instance;
+  } else {
+    // Headless mode: write state.json periodically
+    const stateDir = input.state_dir ?? coRoot;
+    stateWriter = new StateWriter(state, stateDir);
+    stateWriter.start();
+
+    // Write .leader-id for CLI discovery
+    const leaderIdPath = path.join(stateDir, ".leader-id");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(leaderIdPath, leaderInstance.id, "utf-8");
+    logger.info(`headless mode: state written to ${stateDir}`);
   }
 
   // Phase 4: start workers
@@ -470,6 +489,7 @@ export async function runOrchestrator(
       monitor.stop();
       taskOrch.stop();
       if (tui) await tui.stop();
+      if (stateWriter) stateWriter.stop();
       restoreConsole();
       await registry.unregister(leaderInstance.id).catch(() => undefined);
       await zk.close();
