@@ -1,11 +1,28 @@
 import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ILogger } from "@co/contracts";
 import { SSEBroadcaster } from "./sse/broadcaster.js";
 import { StateWatcher } from "./watcher.js";
 import { createRouter } from "./routes/index.js";
 import type { AuthConfig } from "./auth.js";
+
+// MIME type mappings for static files
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html",
+  ".css": "text/css",
+  ".js": "application/javascript",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+};
 
 export interface DashboardServerOptions {
   /** Port to listen on (default: 3210) */
@@ -23,6 +40,8 @@ export interface DashboardServerOptions {
     maxRequests?: number;
     windowMs?: number;
   };
+  /** Path to static files directory (default: public/) */
+  static_dir?: string;
 }
 
 export class DashboardServer {
@@ -32,6 +51,7 @@ export class DashboardServer {
   private port: number;
   private host: string;
   private state_dir: string;
+  private static_dir: string;
   private logger?: ILogger;
   private auth?: AuthConfig;
   private rateLimit?: {
@@ -46,6 +66,12 @@ export class DashboardServer {
     this.logger = opts.logger;
     this.auth = opts.auth;
     this.rateLimit = opts.rateLimit;
+
+    // Resolve static directory path
+    this.static_dir = opts.static_dir ?? path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..", "public"
+    );
 
     this.broadcaster = new SSEBroadcaster();
     this.watcher = new StateWatcher(this.state_dir, this.logger);
@@ -69,6 +95,14 @@ export class DashboardServer {
     });
 
     this.server = http.createServer((req, res) => {
+      // Try to serve static files first
+      if (req.method === "GET" && !req.url?.startsWith("/api/")) {
+        const staticResult = this.serveStatic(req, res);
+        if (staticResult) {
+          return;
+        }
+      }
+      // Fall back to API router
       router(req, res);
     });
 
@@ -77,6 +111,12 @@ export class DashboardServer {
 
     return new Promise((resolve) => {
       this.server!.listen(this.port, this.host, () => {
+        // Get the actual port (useful when port 0 is used for random port)
+        const addr = this.server!.address();
+        if (addr && typeof addr === "object") {
+          this.port = addr.port;
+        }
+
         this.logger?.info("dashboard server started", {
           host: this.host,
           port: this.port,
@@ -118,5 +158,39 @@ export class DashboardServer {
    */
   getHost(): string {
     return this.host;
+  }
+
+  /**
+   * Serve a static file from the public directory.
+   * Returns true if a file was served, false otherwise.
+   */
+  private serveStatic(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    let reqPath = req.url ?? "/";
+
+    // Default to index.html for root
+    if (reqPath === "/") {
+      reqPath = "/index.html";
+    }
+
+    // Security: prevent directory traversal
+    const normalizedPath = path.normalize(reqPath).replace(/^(\.\.[\/\\])+/, "");
+    const filePath = path.join(this.static_dir, normalizedPath);
+
+    // Check if file exists
+    try {
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        return false;
+      }
+
+      const content = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
+
+      res.writeHead(200, { "Content-Type": contentType });
+      res.end(content);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

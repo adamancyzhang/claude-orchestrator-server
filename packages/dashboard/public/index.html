@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Orchestrator Dashboard</title>
+  <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body>
+  <div class="dashboard">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-brand">
+        <h1>Claude Orchestrator</h1>
+        <span class="version">v3.0</span>
+      </div>
+      <div class="header-status">
+        <span id="connection-status" class="status-badge disconnected">Disconnected</span>
+        <span id="last-update" class="last-update">--</span>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="workers">Workers</button>
+      <button class="tab" data-tab="tasks">Tasks</button>
+      <button class="tab" data-tab="events">Events</button>
+      <button class="tab" data-tab="chains">Chains</button>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Overview Tab -->
+      <section id="tab-overview" class="tab-content active">
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Active Workers</div>
+            <div class="stat-value" id="stat-workers">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Pending Tasks</div>
+            <div class="stat-value" id="stat-pending">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">In Progress</div>
+            <div class="stat-value" id="stat-progress">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Completed</div>
+            <div class="stat-value" id="stat-completed">0</div>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>Worker Status Distribution</h3>
+            <canvas id="chart-worker-status" width="300" height="200"></canvas>
+          </div>
+          <div class="chart-card">
+            <h3>Task Status Distribution</h3>
+            <canvas id="chart-task-status" width="300" height="200"></canvas>
+          </div>
+          <div class="chart-card full-width">
+            <h3>Events Timeline</h3>
+            <canvas id="chart-events-timeline" width="600" height="150"></canvas>
+          </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="activity-card">
+          <h3>Recent Activity</h3>
+          <ul id="recent-activity" class="activity-list">
+            <li class="activity-item">Waiting for data...</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Workers Tab -->
+      <section id="tab-workers" class="tab-content">
+        <div class="table-card">
+          <h3>Worker Instances</h3>
+          <table id="workers-table" class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Role</th>
+                <th>Current Task</th>
+                <th>Last Heartbeat</th>
+                <th>Connected Since</th>
+              </tr>
+            </thead>
+            <tbody id="workers-tbody">
+              <tr><td colspan="6" class="empty-state">No workers found</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tasks Tab -->
+      <section id="tab-tasks" class="tab-content">
+        <div class="table-card">
+          <h3>Pending Tasks</h3>
+          <table id="pending-tasks-table" class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Subject</th>
+                <th>Status</th>
+                <th>Owner</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="pending-tasks-tbody">
+              <tr><td colspan="5" class="empty-state">No pending tasks</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-card">
+          <h3>In Progress Tasks</h3>
+          <table id="progress-tasks-table" class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Subject</th>
+                <th>Status</th>
+                <th>Owner</th>
+                <th>Started</th>
+              </tr>
+            </thead>
+            <tbody id="progress-tasks-tbody">
+              <tr><td colspan="5" class="empty-state">No tasks in progress</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Events Tab -->
+      <section id="tab-events" class="tab-content">
+        <div class="table-card">
+          <h3>Event History</h3>
+          <table id="events-table" class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Type</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody">
+              <tr><td colspan="3" class="empty-state">No events</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Chains Tab -->
+      <section id="tab-chains" class="tab-content">
+        <div class="table-card">
+          <h3>Audit Chains</h3>
+          <table id="chains-table" class="data-table">
+            <thead>
+              <tr>
+                <th>Chain ID</th>
+                <th>Operations</th>
+                <th>Status</th>
+                <th>Last Updated</th>
+              </tr>
+            </thead>
+            <tbody id="chains-tbody">
+              <tr><td colspan="4" class="empty-state">No chains found</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Claude Orchestrator Dashboard</span>
+      <span>API: <a href="/api/docs" target="_blank">Documentation</a></span>
+    </footer>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/charts.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
