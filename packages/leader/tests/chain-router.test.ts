@@ -499,3 +499,133 @@ describe("ChainRouter — error recovery", () => {
     expect(messageRouter.sent).toHaveLength(0);
   });
 });
+
+describe("ChainRouter — spawn_chain (D3)", () => {
+  it("spawn_chain at explore with magic_mode=true creates child chain message", async () => {
+    // Create a mock chain_audit
+    const mockChainAudit = {
+      readManifest: vi.fn().mockResolvedValue(null),
+      record: vi.fn().mockResolvedValue(undefined),
+      closeChain: vi.fn().mockResolvedValue(undefined),
+      openChain: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const { router, taskQueue, messageRouter, registry, bus } = makeRouter({
+      magic_mode: true,
+      chain_audit: mockChainAudit as any,
+    });
+    const events: LeaderEvent[] = [];
+    bus.onAny((e) => events.push(e));
+
+    registry.setInstances([
+      makeInstance({ id: asInstanceId("explorer-1"), role: "explorer", status: "idle" }),
+    ]);
+
+    // Create chain with explore link
+    const chainDef = makeChainDef("chain-spawn", ["plan", "execute", "explore"]);
+    await router.route(makeMsg({ content: chainDef, link: "plan" }));
+
+    // Simulate explore completion with spawn_chain decision
+    const spawnMsg = makeMsg({
+      content: JSON.stringify({
+        decision: "spawn_chain",
+        reason: "found new requirement",
+        next_requirement: "Implement feature X",
+      }),
+      link: "explore",
+      chain_id: "chain-spawn",
+      task_id: taskQueue.tasks[taskQueue.tasks.length - 1].id,
+      from_instance: asInstanceId("explorer-1"),
+      from_name: "Explorer1",
+    });
+    await router.route(spawnMsg);
+
+    // Should emit chain_closed for parent
+    expect(events.some((e) => e.type === "chain_closed" && e.chain_id === "chain-spawn")).toBe(true);
+
+    // Should send user_input message for child chain
+    const userInputMsg = messageRouter.sent.find(
+      (m) => m.type === "user_input" && m.spawned_from === "chain-spawn",
+    );
+    expect(userInputMsg).toBeDefined();
+    expect(userInputMsg?.content).toBe("Implement feature X");
+  });
+
+  it("spawn_chain is rejected when magic_mode=false", async () => {
+    // When magic_mode=false, ChainRouter should reject ChainDefs with explore link
+    const { router, taskQueue, messageRouter, registry, bus } = makeRouter({
+      magic_mode: false,
+    });
+    const events: LeaderEvent[] = [];
+    bus.onAny((e) => events.push(e));
+
+    registry.setInstances([
+      makeInstance({ id: asInstanceId("explorer-1"), role: "explorer", status: "idle" }),
+    ]);
+
+    // ChainDef with explore link should be rejected when magic_mode=false
+    const chainDef = makeChainDef("chain-no-spawn", ["plan", "execute", "explore"]);
+    await router.route(makeMsg({ content: chainDef, link: "plan" }));
+
+    // No tasks should be created because explore link is invalid without magic_mode
+    expect(taskQueue.tasks).toHaveLength(0);
+
+    // No messages should be sent
+    expect(messageRouter.sent).toHaveLength(0);
+  });
+});
+
+describe("ChainRouter — magic_max_chains depth limit (D4)", () => {
+  it("spawn_chain is demoted to close_chain when depth limit reached", async () => {
+    // Create a mock chain_audit that returns a manifest with chain_depth=1
+    const mockChainAudit = {
+      readManifest: vi.fn().mockResolvedValue({ chain_depth: 1 }),
+      record: vi.fn().mockResolvedValue(undefined),
+      closeChain: vi.fn().mockResolvedValue(undefined),
+      openChain: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const { router, taskQueue, messageRouter, registry, bus } = makeRouter({
+      magic_mode: true,
+      magic_max_chains: 2, // limit to 2 levels
+      chain_audit: mockChainAudit as any,
+    });
+    const events: LeaderEvent[] = [];
+    bus.onAny((e) => events.push(e));
+
+    registry.setInstances([
+      makeInstance({ id: asInstanceId("explorer-1"), role: "explorer", status: "idle" }),
+    ]);
+
+    // Create chain at depth 1 (would become depth 2 on spawn)
+    const chainDef = makeChainDef("chain-depth", ["plan", "execute", "explore"]);
+    await router.route(makeMsg({ content: chainDef, link: "plan" }));
+
+    // Simulate explore completion with spawn_chain decision
+    const spawnMsg = makeMsg({
+      content: JSON.stringify({
+        decision: "spawn_chain",
+        reason: "found new requirement",
+        next_requirement: "Implement feature Z",
+      }),
+      link: "explore",
+      chain_id: "chain-depth",
+      task_id: taskQueue.tasks[taskQueue.tasks.length - 1].id,
+      from_instance: asInstanceId("explorer-1"),
+      from_name: "Explorer1",
+    });
+    await router.route(spawnMsg);
+
+    // Should emit magic_depth_exhausted event
+    expect(events.some((e) => e.type === "magic_depth_exhausted")).toBe(true);
+
+    // Should emit chain_closed (demoted to close_chain)
+    expect(events.some((e) => e.type === "chain_closed" && e.chain_id === "chain-depth")).toBe(true);
+
+    // Should NOT send user_input message for child chain
+    const userInputMsg = messageRouter.sent.find(
+      (m) => m.type === "user_input" && m.spawned_from === "chain-depth",
+    );
+    expect(userInputMsg).toBeUndefined();
+  });
+});
