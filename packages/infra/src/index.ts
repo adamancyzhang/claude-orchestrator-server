@@ -2,6 +2,14 @@ export { ZkClient, type ZkClientOptions } from "./zk/client.js";
 export { InMemoryZkClient, type ZkTreeNode } from "./zk/in-memory-client.js";
 export { Logger, type LoggerOptions } from "./logger.js";
 export {
+  Counter,
+  Gauge,
+  Histogram,
+  MetricsCollector,
+  type AlertRule,
+  type MetricsCollectorOptions,
+} from "./metrics.js";
+export {
   execWithStreaming,
   execAndCapture,
   type ExecStreamingOptions,
