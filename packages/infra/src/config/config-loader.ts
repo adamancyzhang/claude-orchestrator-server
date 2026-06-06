@@ -2,6 +2,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   asInstanceId,
+  ConfigValidationError,
+  validateRawConfig,
   type CommandsConfig,
   type GitConfig,
   type HookCommand,
@@ -68,8 +70,14 @@ function expandHomeDir(p: string): string {
 }
 
 export function loadConfig(input: LoadConfigInput = {}): ResolvedConfig {
-  const global = readJson<RawConfig>(GLOBAL_CONFIG_FILE) ?? {};
-  const project = readJson<RawConfig>(projectConfigFile()) ?? {};
+  const globalRaw = readJson<Record<string, unknown>>(GLOBAL_CONFIG_FILE) ?? {};
+  const projectRaw = readJson<Record<string, unknown>>(projectConfigFile()) ?? {};
+
+  // Validate both config files against the Zod schema. Invalid configs
+  // throw ConfigValidationError with per-field error details so the user
+  // gets actionable feedback at startup rather than cryptic runtime errors.
+  const global = validateRawConfig(globalRaw, "global");
+  const project = validateRawConfig(projectRaw, "project");
 
   const zk: ZkConfig = {
     ...defaultZk(),

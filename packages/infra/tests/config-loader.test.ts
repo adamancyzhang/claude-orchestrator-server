@@ -396,3 +396,70 @@ describe("loadConfig — projects_root edge cases", () => {
     expect(cfg.projects_root).toBe(path.join(fakeHome, "global-projects"));
   });
 });
+
+describe("loadConfig — schema validation", () => {
+  it("throws ConfigValidationError for invalid global zookeeper hosts", () => {
+    writeGlobal({ zookeeper: { hosts: "" } });
+    expect(() => loadConfig()).toThrow("invalid entries");
+  });
+
+  it("throws ConfigValidationError for invalid project role", () => {
+    writeProject({ role: "invalid-role" });
+    expect(() => loadConfig()).toThrow("invalid entries");
+  });
+
+  it("throws ConfigValidationError for invalid hook event type", () => {
+    writeProject({
+      hooks: [{ event: "invalid_event", command: "cmd", enabled: true }],
+    });
+    expect(() => loadConfig()).toThrow("invalid entries");
+  });
+
+  it("throws ConfigValidationError for non-boolean debug in global config", () => {
+    writeGlobal({ debug: "not-a-bool" });
+    expect(() => loadConfig()).toThrow("invalid entries");
+  });
+
+  it("throws ConfigValidationError for non-boolean debug in project config", () => {
+    writeProject({ debug: 123 });
+    expect(() => loadConfig()).toThrow("invalid entries");
+  });
+
+  it("valid config with all fields passes validation", () => {
+    writeGlobal({
+      zookeeper: { hosts: "zk:2181", session_timeout_ms: 30000 },
+      commands: { claude_cli: "claude", git: "git" },
+      git: {
+        merge_target_branch: "main",
+        remote: "origin",
+        auto_commit_init_files: true,
+        auto_commit_init_files_branch: null,
+      },
+      hooks: [],
+      debug: false,
+    });
+    writeProject({
+      name: "TestProject",
+      role: "leader",
+      projects_root: "~/test-projects",
+    });
+    const cfg = loadConfig();
+    expect(cfg.name).toBe("TestProject");
+    expect(cfg.role).toBe("leader");
+  });
+
+  it("empty config files pass validation (all fields optional)", () => {
+    writeGlobal({});
+    writeProject({});
+    const cfg = loadConfig();
+    expect(cfg.zk.hosts).toBe("127.0.0.1:2181");
+  });
+
+  it("partial config files pass validation", () => {
+    writeGlobal({ zookeeper: { hosts: "zk:2181" } });
+    writeProject({ git: { remote: "upstream" } });
+    const cfg = loadConfig();
+    expect(cfg.zk.hosts).toBe("zk:2181");
+    expect(cfg.git.remote).toBe("upstream");
+  });
+});
