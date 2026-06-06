@@ -41,6 +41,7 @@ export default function App({
   const [nowMs, setNowMs] = useState(Date.now());
   const [logOffset, setLogOffset] = useState(0);
   const [teamScrollOffset, setTeamScrollOffset] = useState(0);
+  const [workerMsgsScrollOffset, setWorkerMsgsScrollOffset] = useState(0);
 
   // 1-second tick for clearing sent indicator and timestamp refresh
   useEffect(() => {
@@ -106,6 +107,7 @@ export default function App({
           (snapshot.selected_worker_index + delta + snapshot.workers.length) %
           snapshot.workers.length;
         leaderState.setSelectedWorkerIndex(next);
+        setWorkerMsgsScrollOffset(0);
       }
       return;
     }
@@ -153,7 +155,26 @@ export default function App({
       const idx = Number(input) - 1;
       if (idx < snapshot.workers.length) {
         leaderState.setSelectedWorkerIndex(idx);
+        setWorkerMsgsScrollOffset(0);
       }
+      return;
+    }
+
+    // Alt+Up/Alt+Down: scroll worker messages panel
+    if (key.meta && key.upArrow) {
+      setWorkerMsgsScrollOffset((o) => Math.min(o + 1, 50));
+      return;
+    }
+    if (key.meta && key.downArrow) {
+      setWorkerMsgsScrollOffset((o) => Math.max(o - 1, 0));
+      return;
+    }
+    if (key.meta && key.pageUp) {
+      setWorkerMsgsScrollOffset((o) => Math.min(o + 5, 50));
+      return;
+    }
+    if (key.meta && key.pageDown) {
+      setWorkerMsgsScrollOffset((o) => Math.max(o - 5, 0));
       return;
     }
 
@@ -207,6 +228,7 @@ export default function App({
   const logH = 11;    // border(2) + title(1) + sep(1) + events(7)
   const MIN_MSGS = 6; // border(2) + title(1) + sep(1) + status(1) + history(1)
   const msgsH = Math.max(MIN_MSGS, contentRows - teamH - tasksH - logH);
+  const msgsMaxVisible = Math.max(1, msgsH - 4); // border(2) + title(1) + sep(1)
 
   const pendingMax = Math.max(1, tasksH - 4);   // 3 items at height 7
   const inProgressMax = Math.max(1, tasksH - 4);
@@ -250,6 +272,8 @@ export default function App({
       >
         <WorkerMessagesPanel
           worker={snapshot.workers[snapshot.selected_worker_index]}
+          scrollOffset={workerMsgsScrollOffset}
+          maxVisible={msgsMaxVisible}
         />
       </Box>
 

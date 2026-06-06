@@ -90,8 +90,12 @@ export class ChildSupervisor implements IChildSupervisor {
       origin_branch: this.opts.origin_branch ?? null,
     };
     const child = fork(this.opts.child_module_path, [JSON.stringify(env)], {
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    // Drain child stdout/stderr to prevent buffer deadlock.
+    // Worker output flows through the message routing system to the TUI.
+    child.stdout?.resume();
+    child.stderr?.resume();
     child.on("exit", (code) => {
       if (this.shuttingDown) return;
       const retries = this.restartCounts.get(cfg.name) ?? 0;

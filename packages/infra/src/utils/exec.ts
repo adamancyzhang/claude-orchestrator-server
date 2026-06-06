@@ -132,7 +132,9 @@ export async function execAndCapture(
     let stderr = "";
     child.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
     child.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
-    child.on("exit", (code) =>
+    // Use 'close' instead of 'exit' to avoid a race condition where the
+    // exit event fires before all data has been read from stdout/stderr.
+    child.on("close", (code) =>
       resolve({ exit_code: code ?? -1, stdout, stderr }),
     );
     child.on("error", (err) =>

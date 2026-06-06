@@ -241,6 +241,23 @@ describe("LeaderState — message history", () => {
     state.apply({ type: "stream_chunk", instance_id: w.id, chunk: "world" });
     expect(state.workers[0].current_message).toBe("hello\nworld");
   });
+
+  it("stream_chunk caps current_message at 2000 chars, preserving tail", () => {
+    const state = new LeaderState();
+    const w = makeInstance("w");
+    state.apply({ type: "worker_joined", instance: w });
+
+    // Build a message that exceeds 2000 chars via repeated chunks
+    const chunk = "x".repeat(100);
+    for (let i = 0; i < 30; i++) {
+      state.apply({ type: "stream_chunk", instance_id: w.id, chunk });
+    }
+    // 30 * 100 = 3000 chars, plus 29 newlines = 3029 total.
+    const msg = state.workers[0].current_message!;
+    expect(msg.length).toBeLessThanOrEqual(2000);
+    // Tail should be preserved: the last chunk's content ends with "xxx..."
+    expect(msg.endsWith("x".repeat(100))).toBe(true);
+  });
 });
 
 describe("LeaderState — events ring buffer", () => {

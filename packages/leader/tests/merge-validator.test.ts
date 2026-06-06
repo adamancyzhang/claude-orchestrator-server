@@ -126,7 +126,8 @@ function git(args: string[], cwd: string = repoDir): string {
 
 function initRepo(): void {
   repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "merge-validator-"));
-  git(["init", "-b", "main"]);
+  git(["init"]);
+  git(["checkout", "-b", "main"]);
   git(["config", "user.email", "test@example.com"]);
   git(["config", "user.name", "Test"]);
   // Disable signing / hooks / GPG that the host env might force on.

@@ -64,7 +64,8 @@ function writeFile(name: string, body: string): void {
 
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), "co-rebase-"));
-  gitNoOut(["init", "-q", "-b", "main"]);
+  gitNoOut(["init", "-q"]);
+  gitNoOut(["checkout", "-b", "main"]);
   gitNoOut(["config", "user.email", "test@example.com"]);
   gitNoOut(["config", "user.name", "Test"]);
   gitNoOut(["config", "commit.gpgsign", "false"]);

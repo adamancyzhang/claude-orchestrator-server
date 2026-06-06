@@ -43,6 +43,11 @@ const HIGH_FREQ_ACTIONS: ReadonlySet<WorkerAction> = new Set([
   "text",
 ]);
 
+// Maximum characters for current_message to prevent unbounded growth from
+// accumulated stream_chunk events. Messages exceeding this are truncated to
+// the tail, preserving the most recent content.
+const CURRENT_MESSAGE_MAX_CHARS = 2000;
+
 const LINK_TO_ROLE: Record<string, InstanceRole> = {
   plan: "planner",
   execute: "executor",
@@ -246,6 +251,11 @@ export class LeaderState implements ILeaderStateView {
             sw.current_message += "\n" + event.chunk;
           } else {
             sw.current_message = event.chunk;
+          }
+          // Truncate to tail when exceeding cap to prevent unbounded growth
+          // from many stream_chunk events (e.g., long file reads, build output).
+          if (sw.current_message.length > CURRENT_MESSAGE_MAX_CHARS) {
+            sw.current_message = sw.current_message.slice(-CURRENT_MESSAGE_MAX_CHARS);
           }
           sw.current_message_time = new Date().toISOString();
         }

@@ -37,7 +37,8 @@ function git(args: string[], cwd: string = repoDir): string {
 beforeEach(() => {
   repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "co-commit-"));
   projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "co-commit-projects-"));
-  git(["init", "-b", "main"]);
+  git(["init"]);
+  git(["checkout", "-b", "main"]);
   git(["config", "user.email", "t@example.com"]);
   git(["config", "user.name", "t"]);
   git(["config", "commit.gpgsign", "false"]);

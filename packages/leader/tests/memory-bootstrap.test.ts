@@ -206,7 +206,8 @@ function initEmptyRepoWithTrackedFile(
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
   const opts = { cwd: dir, encoding: "utf-8" as const };
-  execFileSync("git", ["init", "-b", "main"], opts);
+  execFileSync("git", ["init"], opts);
+  execFileSync("git", ["checkout", "-b", "main"], opts);
   execFileSync("git", ["config", "user.email", "t@e.com"], opts);
   execFileSync("git", ["config", "user.name", "t"], opts);
   execFileSync("git", ["config", "commit.gpgsign", "false"], opts);

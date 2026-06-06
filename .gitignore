@@ -17,3 +17,5 @@ sessions/
 test-workspace/
 countlines-cli/
 evals
+
+.claude

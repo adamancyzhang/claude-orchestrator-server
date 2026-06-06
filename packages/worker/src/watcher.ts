@@ -747,7 +747,7 @@ export class WorkerWatcher {
     await this.opts.message_router.dismiss(this.opts.instance_id, msg.id);
     this.opts.logger.info("message processed", { log_path: logPath });
 
-    void ClaudeRunner.buildIdentityPrompt; // keep reference for runtime hint
+
   }
 
   private workerIdentity(): WorkerIdentity {
