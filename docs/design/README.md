@@ -7,6 +7,7 @@ The Claude Orchestrator Server is a system designed to manage and coordinate mul
 - **v0.1 (Alpha)**: CLI headless mode functional, basic benchmarks passing.
 - **v1.0 (Beta)**: Focus on stability, test coverage, and production readiness.
 - **v2.0 (Production)**: Full feature set, documentation, and enterprise-grade reliability.
+- **v3.0 (Enterprise)**: Advanced monitoring, plugin system, cloud deployment.
 
 ## Roadmap
 
@@ -20,6 +21,12 @@ The Claude Orchestrator Server is a system designed to manage and coordinate mul
 - **Timeline**: Sprint 3 & 4
 - **Key Themes**: E2E Testing, Monitoring, `--json` Flag, Config Validation
 
+### v3.0 - Enterprise Scale
+**Goal:** Scale for enterprise deployments with advanced monitoring, plugin support, and cloud capabilities.
+- **Timeline**: Sprint 5 & 6
+- **Key Themes**: Performance, Monitoring Dashboard, Plugin System, Cloud Deployment
+
 ## Directory Structure
-- `v1.0/` - Current version requirements and specs
-- `v2.0/` - Next version requirements and specs
+- `v1.0/` - Foundation & Stability requirements
+- `v2.0/` - Production Readiness requirements
+- `v3.0/` - Enterprise Scale requirements
