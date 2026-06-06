@@ -12,8 +12,26 @@ docs/
 ├── tui.md                 ← TUI 布局参考
 ├── daily-log/             ← 每日工作日志
 │   └── YYYY-MM-DD/
-│       ├── work-log.md    ← 当日工作记录（证据链格式）
-│       └── *.md           ← 其他当日文档
+│       ├── team-lead/
+│       │   └── work-log.md
+│       ├── dev-1/
+│       │   └── work-log.md
+│       ├── dev-2/
+│       │   └── work-log.md
+│       ├── dev-3/
+│       │   └── work-log.md
+│       ├── architect/
+│       │   └── work-log.md
+│       ├── verifier/
+│       │   └── work-log.md
+│       ├── qa-engineer/
+│       │   └── work-log.md
+│       ├── team-coach/
+│       │   └── work-log.md
+│       ├── tdd-guardian/
+│       │   └── work-log.md
+│       └── product-manager/
+│           └── work-log.md
 └── plans/                 ← 迭代计划
     └── YYYY-MM-DD/
         └── iteration-N-*.md  ← 迭代计划（按序号排列）
@@ -23,39 +41,47 @@ docs/
 
 ## 工作日志规范（daily-log/）
 
-### 文件命名
-- 目录：`YYYY-MM-DD`（如 `2026-06-07`）
-- 主文件：`work-log.md`
+### 目录结构
+- 按日期：`YYYY-MM-DD/`（如 `2026-06-07/`）
+- 按成员：每个团队成员一个子目录
+- 每个成员的 `work-log.md` 记录该成员当日工作
+
+### 成员目录列表
+
+| 成员 | 目录 | 记录内容 |
+|------|------|----------|
+| team-lead | `team-lead/` | 规划、协调、决策 |
+| dev-1 | `dev-1/` | 编码、测试、提交 |
+| dev-2 | `dev-2/` | 编码、测试、提交 |
+| dev-3 | `dev-3/` | 编码、测试、提交 |
+| architect | `architect/` | 架构审查 |
+| verifier | `verifier/` | 签章验证 |
+| qa-engineer | `qa-engineer/` | 质量验证 |
+| team-coach | `team-coach/` | 协作检查 |
+| tdd-guardian | `tdd-guardian/` | 全量测试 |
+| product-manager | `product-manager/` | 产品规划 |
 
 ### work-log.md 结构
 
 ```markdown
-# 工作日志 YYYY-MM-DD
+# [成员名] 工作日志 YYYY-MM-DD
 
-## 当日目标
-- [ ] 目标1
-- [ ] 目标2
+## 任务列表
 
-## 证据链
-
-### [成员名] — [任务描述]
+### [任务描述]
 - **Task:** #XX
 - **Commit:** <hash>
 - **变更文件:**
   - `path/to/file.ts` — 变更说明
 - **测试结果:** x/y 通过
 - **验证:** 通过/待验证/❌ 失败
-
-## 关键决策
-## 遗留问题
-## 明日计划
 ```
 
 ### 记录规则
 
 | 规则 | 说明 |
 |------|------|
-| **每个成员独立记录** | 每个 dev/verifier/architect 的工作单独一节 |
+| **按身份记录** | 每个成员在自己的目录下记录工作 |
 | **必须有 commit hash** | 无 commit 的工作（如纯审查）注明"无（纯审查）" |
 | **变更文件具体到文件级** | 不要写"修改了 leader 包"，要写具体文件路径 |
 | **测试结果写明数量** | 不要写"测试通过"，要写"6/6 通过" |
@@ -119,7 +145,7 @@ docs/
 
 ### 团队成员职责
 - 完成任务后立即报告 commit hash 和变更文件
-- 不要自行创建日志文件，由 team-lead 统一记录
+- 在自己的目录下记录工作日志
 
 ### 归档规则
 - 超过 7 天的日志不再主动维护
