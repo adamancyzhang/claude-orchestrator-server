@@ -201,6 +201,7 @@ claude-orchestrator tasks
 | `tasks` | Display pending and in-progress tasks |
 | `events [--tail <n>]` | Display event log (default: last 20) |
 | `messages <worker>` | Display message history for a worker |
+| `chains` | Display active and completed chains |
 | `wait --task <id> [--timeout <s>]` | Poll state until a task completes |
 
 All headless commands accept `--state-dir <dir>` (default: `.claude-orchestrator/state`).
