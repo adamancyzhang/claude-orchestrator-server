@@ -1,4 +1,4 @@
-import type { ILogger } from "@co/contracts";
+import type { ILogger, IMetricsCollector } from "@co/contracts";
 
 /**
  * A simple counter that tracks monotonic increasing values.
@@ -28,6 +28,68 @@ export class Counter {
    */
   format(): string {
     return `# HELP ${this.name} ${this.help}\n# TYPE ${this.name} counter\n${this.name} ${this.value}`;
+  }
+}
+
+/**
+ * A labeled counter that tracks monotonic increasing values per label combination.
+ */
+export class LabeledCounter {
+  private readonly values = new Map<string, number>();
+
+  constructor(
+    private readonly name: string,
+    private readonly help: string,
+    private readonly labelNames: string[],
+  ) {}
+
+  inc(labels: Record<string, string>, delta = 1): void {
+    const key = this.labelKey(labels);
+    this.values.set(key, (this.values.get(key) ?? 0) + delta);
+  }
+
+  getValue(labels: Record<string, string>): number {
+    return this.values.get(this.labelKey(labels)) ?? 0;
+  }
+
+  private labelKey(labels: Record<string, string>): string {
+    return this.labelNames
+      .map((n) => `${n}=${labels[n] ?? ""}`)
+      .join(",");
+  }
+
+  /**
+   * Render all label combinations in Prometheus text format.
+   */
+  format(): string {
+    const lines: string[] = [
+      `# HELP ${this.name} ${this.help}`,
+      `# TYPE ${this.name} counter`,
+    ];
+    for (const [key, value] of this.values) {
+      const labelParts = key.split(",").map((p) => {
+        const [n, v] = p.split("=");
+        return `${n}="${v}"`;
+      });
+      lines.push(`${this.name}{${labelParts.join(", ")}} ${value}`);
+    }
+    return lines.join("\n");
+  }
+
+  /**
+   * Get all recorded label combinations and their values.
+   */
+  getAll(): Array<{ labels: Record<string, string>; value: number }> {
+    const result: Array<{ labels: Record<string, string>; value: number }> = [];
+    for (const [key, value] of this.values) {
+      const labels: Record<string, string> = {};
+      for (const part of key.split(",")) {
+        const [n, v] = part.split("=");
+        labels[n] = v;
+      }
+      result.push({ labels, value });
+    }
+    return result;
   }
 }
 
@@ -130,19 +192,41 @@ export interface MetricsCollectorOptions {
  * Central metrics collector for the orchestrator. Tracks key performance
  * indicators and exports them in Prometheus text format.
  *
+ * Implements IMetricsCollector from @co/contracts.
+ *
  * Usage:
- *   const metrics = new MetricsCollector({ logger });
- *   metrics.taskCreated.inc();
+ *   const metrics = new PrometheusMetricsCollector({ logger });
+ *   metrics.tasksDispatched.inc({ link: "execute" });
  *   metrics.taskDuration.observe(2.5);
  *   console.log(metrics.format());
  */
-export class MetricsCollector {
-  // --- Task metrics ---
+export class PrometheusMetricsCollector implements IMetricsCollector {
+  // --- Task metrics (architect-specified) ---
+  readonly tasksDispatched = new LabeledCounter(
+    "co_tasks_dispatched_total",
+    "Total tasks dispatched",
+    ["link"],
+  );
+  readonly tasksCompleted = new LabeledCounter(
+    "co_tasks_completed_total",
+    "Total tasks completed",
+    ["link", "outcome"],
+  );
+  readonly taskDuration = new Histogram(
+    "co_task_duration_seconds",
+    "Task execution duration in seconds",
+  );
+
+  // --- Worker metrics (architect-specified) ---
+  readonly workerHeartbeatSecondsSince = new Gauge(
+    "co_worker_heartbeat_seconds_since",
+    "Seconds since last worker heartbeat",
+  );
+
+  // --- Additional task metrics ---
   readonly tasksCreated = new Counter("co_tasks_created_total", "Total tasks created");
-  readonly tasksCompleted = new Counter("co_tasks_completed_total", "Total tasks completed");
   readonly tasksFailed = new Counter("co_tasks_failed_total", "Total tasks failed");
   readonly tasksRetried = new Counter("co_tasks_retried_total", "Total tasks retried");
-  readonly taskDuration = new Histogram("co_task_duration_seconds", "Task execution duration in seconds");
   readonly pendingTasks = new Gauge("co_pending_tasks", "Number of pending tasks");
   readonly claimedTasks = new Gauge("co_claimed_tasks", "Number of claimed tasks");
 
@@ -226,11 +310,13 @@ export class MetricsCollector {
 
     // Collect all metric instances
     const metrics: Array<{ format: () => string }> = [
-      this.tasksCreated,
+      this.tasksDispatched,
       this.tasksCompleted,
+      this.taskDuration,
+      this.workerHeartbeatSecondsSince,
+      this.tasksCreated,
       this.tasksFailed,
       this.tasksRetried,
-      this.taskDuration,
       this.pendingTasks,
       this.claimedTasks,
       this.chainsActivated,
@@ -265,8 +351,9 @@ export class MetricsCollector {
     return {
       uptime_seconds: this.getUptimeSeconds(),
       tasks: {
+        dispatched: this.tasksDispatched.getAll(),
+        completed: this.tasksCompleted.getAll(),
         created: this.tasksCreated.getValue(),
-        completed: this.tasksCompleted.getValue(),
         failed: this.tasksFailed.getValue(),
         retried: this.tasksRetried.getValue(),
         pending: this.pendingTasks.getValue(),
@@ -284,6 +371,7 @@ export class MetricsCollector {
         left: this.workersLeft.getValue(),
         active: this.activeWorkers.getValue(),
         heartbeats: this.workerHeartbeats.getValue(),
+        heartbeat_seconds_since: this.workerHeartbeatSecondsSince.getValue(),
       },
       messages: {
         sent: this.messagesSent.getValue(),
@@ -299,3 +387,8 @@ export class MetricsCollector {
     };
   }
 }
+
+/**
+ * @deprecated Use PrometheusMetricsCollector instead.
+ */
+export const MetricsCollector = PrometheusMetricsCollector;

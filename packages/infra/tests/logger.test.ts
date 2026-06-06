@@ -185,3 +185,65 @@ describe("Logger — child", () => {
     expect(typeof child.child).toBe("function");
   });
 });
+
+describe("Logger — JSON format", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+
+  it("outputs valid JSON when format is 'json'", () => {
+    const logger = new Logger({ namespace: "test", format: "json" });
+    logger.info("hello");
+    expect(logSpy).toHaveBeenCalledOnce();
+    const output = logSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.level).toBe("info");
+    expect(parsed.ns).toBe("test");
+    expect(parsed.msg).toBe("hello");
+    expect(parsed.ts).toBeDefined();
+  });
+
+  it("includes context fields in JSON output", () => {
+    const logger = new Logger({ namespace: "test", format: "json" });
+    logger.info("with ctx", { key: "value", num: 42 });
+    const output = logSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.key).toBe("value");
+    expect(parsed.num).toBe(42);
+  });
+
+  it("child logger inherits JSON format", () => {
+    const parent = new Logger({ namespace: "parent", format: "json" });
+    const child = parent.child("child");
+    child.info("from child");
+    const output = logSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(output);
+    expect(parsed.ns).toBe("parent/child");
+    expect(parsed.msg).toBe("from child");
+  });
+
+  it("JSON format uses appropriate console method per level", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const logger = new Logger({ namespace: "test", format: "json" });
+    logger.warn("w");
+    logger.error("e");
+
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledOnce();
+    const warnOutput = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    const errorOutput = JSON.parse(errorSpy.mock.calls[0][0] as string);
+    expect(warnOutput.level).toBe("warn");
+    expect(errorOutput.level).toBe("error");
+
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+});

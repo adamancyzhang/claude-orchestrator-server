@@ -16,3 +16,12 @@ export const noopLogger: ILogger = {
   error: () => {},
   child: () => noopLogger,
 };
+
+// --- Metrics interfaces ---
+
+export interface IMetricsCollector {
+  /** Export all metrics in Prometheus text exposition format. */
+  format(): string;
+  /** Create a snapshot of all metrics as a plain object. */
+  snapshot(): Record<string, unknown>;
+}

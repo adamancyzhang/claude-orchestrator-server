@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   Counter,
+  LabeledCounter,
   Gauge,
   Histogram,
+  PrometheusMetricsCollector,
   MetricsCollector,
   type AlertRule,
 } from "../src/metrics.js";
@@ -146,33 +148,119 @@ describe("Histogram", () => {
   });
 });
 
+describe("LabeledCounter", () => {
+  it("starts at zero for all labels", () => {
+    const c = new LabeledCounter("test_labeled", "Test help", ["link"]);
+    expect(c.getValue({ link: "execute" })).toBe(0);
+  });
+
+  it("increments per label combination", () => {
+    const c = new LabeledCounter("test_labeled", "Test help", ["link"]);
+    c.inc({ link: "execute" });
+    c.inc({ link: "execute" });
+    c.inc({ link: "verify" });
+    expect(c.getValue({ link: "execute" })).toBe(2);
+    expect(c.getValue({ link: "verify" })).toBe(1);
+  });
+
+  it("supports multiple labels", () => {
+    const c = new LabeledCounter("test_labeled", "Test help", ["link", "outcome"]);
+    c.inc({ link: "execute", outcome: "success" });
+    c.inc({ link: "execute", outcome: "failure" });
+    expect(c.getValue({ link: "execute", outcome: "success" })).toBe(1);
+    expect(c.getValue({ link: "execute", outcome: "failure" })).toBe(1);
+  });
+
+  it("increments by custom delta", () => {
+    const c = new LabeledCounter("test_labeled", "Test help", ["link"]);
+    c.inc({ link: "execute" }, 5);
+    expect(c.getValue({ link: "execute" })).toBe(5);
+  });
+
+  it("formats in Prometheus text format with labels", () => {
+    const c = new LabeledCounter("co_tasks_completed_total", "Total tasks completed", ["link", "outcome"]);
+    c.inc({ link: "execute", outcome: "success" }, 3);
+    c.inc({ link: "verify", outcome: "success" }, 2);
+    const output = c.format();
+    expect(output).toContain("# HELP co_tasks_completed_total Total tasks completed");
+    expect(output).toContain("# TYPE co_tasks_completed_total counter");
+    expect(output).toContain('co_tasks_completed_total{link="execute", outcome="success"} 3');
+    expect(output).toContain('co_tasks_completed_total{link="verify", outcome="success"} 2');
+  });
+
+  it("getAll returns all label combinations", () => {
+    const c = new LabeledCounter("test_labeled", "Test help", ["link"]);
+    c.inc({ link: "execute" }, 3);
+    c.inc({ link: "verify" }, 2);
+    const all = c.getAll();
+    expect(all).toHaveLength(2);
+    expect(all).toContainEqual({ labels: { link: "execute" }, value: 3 });
+    expect(all).toContainEqual({ labels: { link: "verify" }, value: 2 });
+  });
+});
+
 describe("MetricsCollector", () => {
-  let collector: MetricsCollector;
+  let collector: PrometheusMetricsCollector;
 
   beforeEach(() => {
-    collector = new MetricsCollector();
+    collector = new PrometheusMetricsCollector();
   });
 
   it("initializes all metrics at zero", () => {
     const snap = collector.snapshot();
     expect(snap.tasks.created).toBe(0);
-    expect(snap.tasks.completed).toBe(0);
+    expect(snap.tasks.completed).toEqual([]);
+    expect(snap.tasks.dispatched).toEqual([]);
     expect(snap.tasks.failed).toBe(0);
     expect(snap.chains.activated).toBe(0);
     expect(snap.workers.active).toBe(0);
     expect(snap.errors).toBe(0);
   });
 
+  it("tracks architect-specified labeled task metrics", () => {
+    collector.tasksDispatched.inc({ link: "execute" });
+    collector.tasksDispatched.inc({ link: "execute" });
+    collector.tasksDispatched.inc({ link: "verify" });
+    collector.tasksCompleted.inc({ link: "execute", outcome: "success" });
+    collector.tasksCompleted.inc({ link: "execute", outcome: "failure" });
+    collector.taskDuration.observe(2.5);
+
+    const snap = collector.snapshot();
+    expect(snap.tasks.dispatched).toContainEqual({ labels: { link: "execute" }, value: 2 });
+    expect(snap.tasks.dispatched).toContainEqual({ labels: { link: "verify" }, value: 1 });
+    expect(snap.tasks.completed).toContainEqual({ labels: { link: "execute", outcome: "success" }, value: 1 });
+    expect(snap.tasks.completed).toContainEqual({ labels: { link: "execute", outcome: "failure" }, value: 1 });
+    expect(snap.tasks.duration.count).toBe(1);
+    expect(snap.tasks.duration.sum).toBe(2.5);
+  });
+
+  it("tracks worker heartbeat seconds since", () => {
+    collector.workerHeartbeatSecondsSince.set(45);
+    const snap = collector.snapshot();
+    expect(snap.workers.heartbeat_seconds_since).toBe(45);
+  });
+
+  it("formats architect-specified metrics in Prometheus format", () => {
+    collector.tasksDispatched.inc({ link: "plan" });
+    collector.tasksCompleted.inc({ link: "plan", outcome: "success" });
+
+    const output = collector.format();
+    expect(output).toContain('co_tasks_dispatched_total{link="plan"} 1');
+    expect(output).toContain('co_tasks_completed_total{link="plan", outcome="success"} 1');
+    expect(output).toContain("co_task_duration_seconds");
+    expect(output).toContain("co_worker_heartbeat_seconds_since");
+  });
+
   it("tracks task metrics", () => {
     collector.tasksCreated.inc(3);
-    collector.tasksCompleted.inc(2);
+    collector.tasksCompleted.inc({ link: "execute", outcome: "success" }, 2);
     collector.tasksFailed.inc(1);
     collector.taskDuration.observe(1.5);
     collector.taskDuration.observe(2.5);
 
     const snap = collector.snapshot();
     expect(snap.tasks.created).toBe(3);
-    expect(snap.tasks.completed).toBe(2);
+    expect(snap.tasks.completed).toContainEqual({ labels: { link: "execute", outcome: "success" }, value: 2 });
     expect(snap.tasks.failed).toBe(1);
     expect(snap.tasks.duration.count).toBe(2);
     expect(snap.tasks.duration.sum).toBe(4);
@@ -262,7 +350,7 @@ describe("MetricsCollector — alerts", () => {
       error: vi.fn(),
       child: vi.fn(),
     };
-    const collector = new MetricsCollector({ logger });
+    const collector = new PrometheusMetricsCollector({ logger });
 
     collector.addAlertRule({
       name: "high_error_rate",
@@ -294,7 +382,7 @@ describe("MetricsCollector — alerts", () => {
       error: vi.fn(),
       child: vi.fn(),
     };
-    const collector = new MetricsCollector({ logger });
+    const collector = new PrometheusMetricsCollector({ logger });
 
     collector.addAlertRule({
       name: "high_pending",
@@ -321,7 +409,7 @@ describe("MetricsCollector — alerts", () => {
       error: vi.fn(),
       child: vi.fn(),
     };
-    const collector = new MetricsCollector({ logger });
+    const collector = new PrometheusMetricsCollector({ logger });
 
     collector.addAlertRule({
       name: "test_alert",
@@ -343,7 +431,7 @@ describe("MetricsCollector — alerts", () => {
       error: vi.fn(),
       child: vi.fn(),
     };
-    const collector = new MetricsCollector({ logger });
+    const collector = new PrometheusMetricsCollector({ logger });
 
     collector.addAlertRule({
       name: "alert_a",

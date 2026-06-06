@@ -1,10 +1,12 @@
 export { ZkClient, type ZkClientOptions } from "./zk/client.js";
 export { InMemoryZkClient, type ZkTreeNode } from "./zk/in-memory-client.js";
-export { Logger, type LoggerOptions } from "./logger.js";
+export { Logger, type LoggerOptions, type LogFormat } from "./logger.js";
 export {
   Counter,
+  LabeledCounter,
   Gauge,
   Histogram,
+  PrometheusMetricsCollector,
   MetricsCollector,
   type AlertRule,
   type MetricsCollectorOptions,
