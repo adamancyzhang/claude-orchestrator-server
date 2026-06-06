@@ -1,165 +1,165 @@
 # CLAUDE.md
 
-项目特定指令。行为准则参见全局 `~/.claude/CLAUDE.md`。
+Project-specific instructions. For behavioral guidelines, see global `~/.claude/CLAUDE.md`.
 
 ---
 
 ## 1. Team Management
 
-本项目使用 agent team 协作开发。
+This project uses an agent team for development.
 
-### 团队成员
+### Team Members
 
-| 成员 | 角色 | 职责范围 | 禁止事项 |
-|------|------|----------|----------|
-| team-lead | 规划调度 | 任务规划、分配、协调、验收 | 不写代码、不跑测试 |
-| product-manager | 产品规划 | 需求定义、优先级排序、路线图 | 不写代码、不做架构决策 |
-| dev-1/2/3 | 开发者 | 编码、作用域内测试、提交 | 不跑全量测试、不改 .claude/ |
-| architect | 架构审查 | 层边界审查、设计决策 | 不改代码、不做代码风格审查 |
-| qa-engineer | 质量验证 | 作用域内测试、边界条件检查 | 不跑全量测试、不改代码 |
-| tdd-guardian | 测试执行 | 按指令运行全量测试、报告结果 | 不定义测试标准、不改代码 |
-| verifier | 签字确认 | 验证 commit、变更、测试覆盖 | 不改代码、不给无证据的 PASS |
-| context-monitor | 上下文监控 | 监控团队上下文使用率 | 不改代码、不分配任务 |
-| team-coach | 协作纪律 | 执行协作规范检查、记录违规 | 不改代码、不分配任务 |
+| Member | Role | Scope | Prohibited |
+|--------|------|-------|------------|
+| team-lead | Planning & coordination | Task planning, assignment, verification | No code, no tests |
+| product-manager | Product planning | Requirements, priorities, roadmap | No code, no architecture decisions |
+| dev-1/2/3 | Developer | Code, scoped tests, commits | No full tests, no .claude/ changes |
+| architect | Architecture review | Layer boundaries, design decisions | No code, no style reviews |
+| qa-engineer | Quality verification | Scoped tests, boundary checks | No full tests, no code changes |
+| tdd-guardian | Test discipline | Run full tests on command, report results | No test standards, no code changes |
+| verifier | Sign-off | Verify commits, changes, test coverage | No code, no unverified PASS |
+| context-monitor | Context monitoring | Monitor team context usage | No code, no task assignment |
+| team-coach | Collaboration discipline | Check compliance, record violations | No code, no task assignment |
 
-### 团队恢复流程（新会话时）
+### Team Recovery (New Session)
 
-1. 读取 `.claude/agents/` 目录下所有 agent 定义文件
-2. 清理旧团队配置：将 `~/.claude/teams/orch-dev/config.json` 的 members 只保留 team-lead
-3. 为每个成员调用 Agent 工具，将 `.claude/agents/<role>.md` 的**原始内容**（去掉 YAML frontmatter）直接作为 prompt 参数传入，不要翻译或转录
-4. 设置 `team_name: "orch-dev"`, `mode: "bypassPermissions"`, `run_in_background: true`
-5. 等待所有成员上线后发送消息验证规则是否加载正确
+1. Read all agent definitions from `.claude/agents/`
+2. Clean old team config: keep only team-lead in `~/.claude/teams/orch-dev/config.json` members
+3. For each member, call Agent tool with `.claude/agents/<role>.md` content (remove YAML frontmatter) as prompt
+4. Set `team_name: "orch-dev"`, `mode: "bypassPermissions"`, `run_in_background: true`
+5. Wait for all members to come online, then verify rules are loaded
 
-### 关键约束
+### Key Constraints
 
-- `.claude/agents/*.md` 是 agent 定义的唯一来源，内容为英文
-- spawn 时必须将文件原始内容去掉 frontmatter 后直接传入 prompt，不要翻译、转录或改写
-- 团队配置路径：`~/.claude/teams/orch-dev/config.json`
-- 开发者上限 3 个（dev-1/2/3），避免修改冲突
+- `.claude/agents/*.md` is the only source for agent definitions (content in English)
+- When spawning, pass file content directly without translation
+- Team config path: `~/.claude/teams/orch-dev/config.json`
+- Max 3 developers (dev-1/2/3) to avoid conflicts
 
-### 文件访问边界（铁律）
+### File Access Boundaries (Iron Rules)
 
-| 规则 | 说明 |
-|------|------|
-| **工作区限制** | 除 team-lead 外，所有 agent 只能访问项目工作区内的文件 |
-| **禁止访问系统文件** | 不得访问 `~/.claude/`、`/tmp/`、或其他系统目录 |
-| **禁止访问 agent 收件箱** | 不得读取 `~/.claude/teams/orch-dev/inboxes/` 中的内容 |
-| **team-lead 特权** | 只有 team-lead 可访问团队配置和 agent 定义文件 |
+| Rule | Description |
+|------|-------------|
+| **Workspace limit** | All agents except team-lead can only access files within project workspace |
+| **No system files** | Cannot access `~/.claude/`, `/tmp/`, or other system directories |
+| **No agent inboxes** | Cannot read `~/.claude/teams/orch-dev/inboxes/` |
+| **team-lead privilege** | Only team-lead can access team config and agent definition files |
 
-**项目工作区路径：** `/mnt/c/Users/adama/Documents/projects/claude-orchestrator-server`
-
----
-
-## 2. 团队协作规范（铁律）
-
-### 2.1 测试纪律（反测试泥沼）
-
-**核心原则：测试是手段，不是目的。**
-
-| 规则 | 说明 | 违规后果 |
-|------|------|----------|
-| **禁止全量测试** | dev/qa-engineer 只能运行作用域内测试：`cd packages/<pkg> && npx vitest run` | 立即终止任务 |
-| **全量测试需授权** | 只有 tdd-guardian 可运行 `pnpm test`，且必须由 team-lead 明确指令 | 未授权运行视为违规 |
-| **测试不是验证** | 测试通过 ≠ 功能正确。必须对照预期结果验证 | verifier 不给无证据 PASS |
-| **禁止重复测试** | 同一测试在同一会话中运行超过 3 次即为泥沼 | team-lead 应终止并重新规划 |
-
-### 2.2 任务纪律
-
-| 规则 | 说明 |
-|------|------|
-| **先规划后执行** | 任务必须先记录在 `docs/plans/` 再分配 |
-| **单一职责** | 每个任务只做一件事，不要混合多个目标 |
-| **及时报告** | 完成后立即报告 commit hash + 变更文件 + 测试结果 |
-| **遇阻即停** | 遇到不清楚的问题立即停止并询问 team-lead |
-| **不自行扩展** | 不要做任务范围之外的事情 |
-
-### 2.3 协作纪律
-
-| 规则 | 说明 |
-|------|------|
-| **角色边界** | 每个角色只做职责范围内的事，越权即违规 |
-| **不代替决策** | dev 不做架构决策，architect 不写代码 |
-| **证据链** | 所有工作必须有 commit hash 作为证据 |
-| **签章流程** | 所有开发者工作必须经过 verifier 签章 |
-
-### 2.4 team-coach 职责（执行者，非建议者）
-
-team-coach 是**协作纪律的执行者**，职责：
-
-1. **检查合规**：每次任务完成后检查是否遵守协作规范
-2. **记录违规**：发现违规立即记录并报告 team-lead
-3. **不提建议**：只报告事实（谁、什么时间、什么违规），不提供改进建议
-4. **不定义规则**：规则由 team-lead 制定，team-coach 只执行检查
+**Project workspace:** `/mnt/c/Users/adama/Documents/projects/claude-orchestrator-server`
 
 ---
 
-## 3. 工作记录规范
+## 2. Collaboration Rules (Iron Rules)
 
-详细规范参见 `docs/CLAUDE.md`。
+### 2.1 Testing Discipline (Anti-Test Mud)
 
-### 核心要求
+**Core principle: Testing is a means, not an end.**
 
-| 项目 | 要求 |
-|------|------|
-| **日志位置** | `docs/daily-log/YYYY-MM-DD/work-log.md` |
-| **计划位置** | `docs/plans/YYYY-MM-DD/iteration-N-*.md` |
-| **证据链** | 每个工作记录必须包含：Task #、Commit、变更文件、测试结果、验证状态 |
-| **成员独立记录** | 每个 dev/verifier/architect 的工作单独一节 |
-| **序号连续** | iteration-0, iteration-1, iteration-2... 不跳号 |
+| Rule | Description | Consequence |
+|------|-------------|-------------|
+| **No full tests** | dev/qa-engineer only run scoped tests: `cd packages/<pkg> && npx vitest run` | Immediate task termination |
+| **Full tests need authorization** | Only tdd-guardian can run `pnpm test`, must be explicitly instructed | Unauthorized run = violation |
+| **Tests ≠ verification** | Tests passing ≠ correct. Must verify against expected outcomes | verifier won't give unverified PASS |
+| **No repeated tests** | Same test run > 3 times in session = mud | team-lead should terminate and replan |
 
-### team-lead 职责
+### 2.2 Task Discipline
 
-- 每次会话开始检查未完成的日志
-- 每次会话结束更新当日记录
-- 确保所有任务都有文档记录
-- 任务必须先记录在 plans/ 再分配
+| Rule | Description |
+|------|-------------|
+| **Plan before execute** | Tasks must be recorded in `docs/plans/` before assignment |
+| **Single responsibility** | Each task does one thing only |
+| **Report immediately** | Report commit hash + changed files + test results on completion |
+| **Stop when blocked** | Stop immediately and ask team-lead when unclear |
+| **No scope creep** | Don't do work outside task scope |
+
+### 2.3 Collaboration Discipline
+
+| Rule | Description |
+|------|-------------|
+| **Role boundaries** | Each role only does its scope, overstepping = violation |
+| **No decision substitution** | dev doesn't make architecture decisions, architect doesn't write code |
+| **Evidence chain** | All work must have commit hash as evidence |
+| **Sign-off flow** | All developer work must go through verifier sign-off |
+
+### 2.4 team-coach Role (Enforcer, Not Advisor)
+
+team-coach is the enforcer of collaboration discipline:
+
+1. **Check compliance** after each task completion
+2. **Record violations** immediately and report to team-lead
+3. **Report facts only** (who, when, what violation), no improvement suggestions
+4. **Don't define rules** - rules are set by team-lead, team-coach only checks
 
 ---
 
-## 4. Compact Instructions（上下文压缩指南）
+## 3. Work Documentation
 
-当上下文使用率超过 80% 时，按以下优先级保留信息：
+See `docs/CLAUDE.md` for detailed standards.
 
-### 必须保留（不可丢失）
+### Core Requirements
 
-1. **当前任务状态**：TaskList 中所有 in_progress 和 pending 任务
-2. **团队成员状态**：谁在做什么，最近的 commit hash
-3. **关键决策**：本轮迭代的重要技术决策
-4. **未完成工作**：待分配的任务列表
+| Item | Requirement |
+|------|-------------|
+| **Log location** | `docs/daily-log/YYYY-MM-DD/work-log.md` |
+| **Plan location** | `docs/plans/YYYY-MM-DD/iteration-N-*.md` |
+| **Evidence chain** | Each record must include: Task #, Commit, Changed files, Test results, Verification status |
+| **Member records** | Each dev/verifier/architect has separate section |
+| **Sequential numbering** | iteration-0, iteration-1, iteration-2... no gaps |
 
-### 可以压缩
+### team-lead Responsibilities
 
-1. **已完成任务详情**：只保留 commit hash 和摘要，删除详细过程
-2. **测试输出**：只保留通过/失败数量，删除完整输出
-3. **代码审查详情**：只保留结论（PASS/FAIL），删除审查过程
-4. **日志历史**：只保留最近 2 天的日志，旧日志归档
+- Check unfinished logs at session start
+- Update daily records at session end
+- Ensure all tasks have documentation
+- Tasks must be recorded in plans/ before assignment
 
-### 压缩格式
+---
+
+## 4. Compact Instructions (Context Compression)
+
+When context usage exceeds 80%, preserve by priority:
+
+### Must Preserve (Cannot Lose)
+
+1. **Current task status**: All in_progress and pending tasks from TaskList
+2. **Team member status**: Who's doing what, recent commit hashes
+3. **Key decisions**: Important technical decisions from this iteration
+4. **Unfinished work**: Pending task list
+
+### Can Compress
+
+1. **Completed task details**: Keep only commit hash and summary
+2. **Test output**: Keep only pass/fail counts
+3. **Code review details**: Keep only conclusion (PASS/FAIL)
+4. **Log history**: Keep only last 2 days
+
+### Compression Format
 
 ```markdown
-## 压缩摘要（YYYY-MM-DD）
+## Compressed Summary (YYYY-MM-DD)
 
-### 已完成（本轮）
-- #XX 任务名 — commit: abc1234
+### Completed (This Round)
+- #XX task name — commit: abc1234
 
-### 进行中
-- #YY 任务名 — 负责人: dev-1 — 状态: 进行中
+### In Progress
+- #YY task name — owner: dev-1 — status: in progress
 
-### 待处理
-- #ZZ 任务名 — 优先级: 高
+### Pending
+- #ZZ task name — priority: high
 
-### 关键决策
-- 决策1: 描述
-- 决策2: 描述
+### Key Decisions
+- Decision 1: description
+- Decision 2: description
 
-### 团队状态
-- dev-1: 工作中（Task #YY）
-- dev-2: 空闲
-- dev-3: 工作中（Task #ZZ）
+### Team Status
+- dev-1: working (Task #YY)
+- dev-2: idle
+- dev-3: working (Task #ZZ)
 ```
 
-### 压缩触发条件
+### Compression Triggers
 
-- 上下文使用率 > 80%：立即压缩
-- 每完成 5 个任务：检查是否需要压缩
-- 会话超过 30 分钟：检查是否需要压缩
+- Context usage > 80%: compress immediately
+- Every 5 tasks completed: check if compression needed
+- Session > 30 minutes: check if compression needed
