@@ -27,14 +27,13 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// Note: execWithStreaming wraps the command in `sh -c "exec ..."`. Since `sh`
-// is always available, `child.on('error')` is unreachable through that path;
-// the command-not-found case is delivered as a non-zero exit code from the
-// shell. The execAndCapture suite below covers the direct-spawn-error path
-// where spawn_error must be populated.
+// Note: execWithStreaming now spawns the command directly (no shell wrapper).
+// When the command binary is not found, `child.on('error')` fires and
+// spawn_error is populated. The execAndCapture suite below also covers the
+// direct-spawn-error path.
 
 describe("execWithStreaming", () => {
-  it("returns spawn_error=undefined when the shell wrapper itself starts (success path)", async () => {
+  it("returns spawn_error=undefined when the command starts (success path)", async () => {
     const result = await execWithStreaming({
       command: "true",
       prompt: "",
@@ -54,6 +53,29 @@ describe("execWithStreaming", () => {
       quiet: true,
     });
     expect(fs.statSync(path.dirname(deepLog)).isDirectory()).toBe(true);
+  });
+
+  it("populates spawn_error when the binary cannot be found", async () => {
+    const result = await execWithStreaming({
+      command: "/definitely/nonexistent/binary/xyzzy",
+      prompt: "",
+      log_path: logPath,
+      quiet: true,
+    });
+    expect(result.exit_code).toBe(-1);
+    expect(result.spawn_error).toBeTruthy();
+    expect(typeof result.spawn_error).toBe("string");
+  });
+
+  it("appends output to the log file", async () => {
+    await execWithStreaming({
+      command: "echo",
+      prompt: "hello world",
+      log_path: logPath,
+      quiet: true,
+    });
+    const content = fs.readFileSync(logPath, "utf-8");
+    expect(content).toContain("hello world");
   });
 });
 

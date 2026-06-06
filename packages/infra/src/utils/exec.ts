@@ -2,9 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-function escapeShell(s: string): string {
-  return s.replace(/'/g, "'\\''");
-}
 
 export interface ExecStreamingOptions {
   command: string;
@@ -50,29 +47,32 @@ export async function execWithStreaming(
 ): Promise<ExecStreamingResult> {
   await fs.promises.mkdir(path.dirname(opts.log_path), { recursive: true });
 
-  let flags = "--output-format stream-json --verbose";
+  const args: string[] = [
+    "--output-format",
+    "stream-json",
+    "--verbose",
+  ];
   if (opts.system_prompt) {
-    flags += ` --append-system-prompt '${escapeShell(opts.system_prompt)}'`;
+    args.push("--append-system-prompt", opts.system_prompt);
   }
   if (opts.resume_session_id) {
-    flags += ` --resume '${escapeShell(opts.resume_session_id)}'`;
+    args.push("--resume", opts.resume_session_id);
   }
   if (opts.fork_session) {
-    flags += " --fork-session";
+    args.push("--fork-session");
   }
-
-  const shellCmd = `exec ${opts.command} ${flags} -p '${escapeShell(opts.prompt)}' | tee -a '${escapeShell(opts.log_path)}'`;
+  args.push("-p", opts.prompt);
 
   if (!opts.quiet) {
     const msgPreview =
       opts.prompt.length > 100 ? opts.prompt.slice(0, 100) + "..." : opts.prompt;
-    console.log(
-      `\n[Exec] ${opts.command} -p '${msgPreview}' | tee -a '${opts.log_path}'`,
-    );
+    console.log(`\n[Exec] ${opts.command} ${args.join(" ")}`);
   }
 
   return new Promise((resolve) => {
-    const child = spawn("sh", ["-c", shellCmd], {
+    const logStream = fs.createWriteStream(opts.log_path, { flags: "a" });
+
+    const child = spawn(opts.command, args, {
       cwd: opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env },
@@ -82,8 +82,9 @@ export async function execWithStreaming(
     let sessionId: string | null = null;
 
     child.stdout?.on("data", (d: Buffer) => {
+      if (!opts.quiet) process.stdout.write(d);
+      logStream.write(d);
       const text = d.toString();
-      if (!opts.quiet) process.stdout.write(text);
       partial += text;
       const lines = partial.split("\n");
       partial = lines.pop() ?? "";
@@ -104,16 +105,20 @@ export async function execWithStreaming(
         if (!sessionId) sessionId = tryExtractSessionId(partial);
         opts.on_line?.(partial);
       }
-      resolve({ exit_code: code ?? -1, session_id: sessionId });
+      logStream.end(() => {
+        resolve({ exit_code: code ?? -1, session_id: sessionId });
+      });
     });
 
-    child.on("error", (err) =>
-      resolve({
-        exit_code: -1,
-        session_id: null,
-        spawn_error: String(err),
-      }),
-    );
+    child.on("error", (err) => {
+      logStream.end(() => {
+        resolve({
+          exit_code: -1,
+          session_id: null,
+          spawn_error: String(err),
+        });
+      });
+    });
   });
 }
 
