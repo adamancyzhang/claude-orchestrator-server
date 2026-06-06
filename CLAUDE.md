@@ -37,6 +37,17 @@
 - 团队配置路径：`~/.claude/teams/orch-dev/config.json`
 - 开发者上限 3 个（dev-1/2/3），避免修改冲突
 
+### 文件访问边界（铁律）
+
+| 规则 | 说明 |
+|------|------|
+| **工作区限制** | 除 team-lead 外，所有 agent 只能访问项目工作区内的文件 |
+| **禁止访问系统文件** | 不得访问 `~/.claude/`、`/tmp/`、或其他系统目录 |
+| **禁止访问 agent 收件箱** | 不得读取 `~/.claude/teams/orch-dev/inboxes/` 中的内容 |
+| **team-lead 特权** | 只有 team-lead 可访问团队配置和 agent 定义文件 |
+
+**项目工作区路径：** `/mnt/c/Users/adama/Documents/projects/claude-orchestrator-server`
+
 ---
 
 ## 2. 团队协作规范（铁律）
