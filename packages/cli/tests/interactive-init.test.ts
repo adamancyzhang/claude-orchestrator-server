@@ -87,4 +87,112 @@ describe("displayNextSteps", () => {
 
     consoleSpy.mockRestore();
   });
+
+  it("displays shell completion instructions", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    displayNextSteps("/path/to/config.json");
+
+    const output = consoleSpy.mock.calls.map(c => String(c[0])).join("\n");
+    expect(output).toContain("completion");
+
+    consoleSpy.mockRestore();
+  });
+
+  it("displays help command", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    displayNextSteps("/path/to/config.json");
+
+    const output = consoleSpy.mock.calls.map(c => String(c[0])).join("\n");
+    expect(output).toContain("--help");
+
+    consoleSpy.mockRestore();
+  });
+});
+
+describe("runInteractiveInit — edge cases", () => {
+  it("handles nested directory creation", async () => {
+    const nestedDir = path.join(tempDir, "a", "b", "c");
+    const result = await runInteractiveInit({
+      defaults: true,
+      cwd: nestedDir,
+    });
+
+    expect(result.success).toBe(true);
+    const configPath = path.join(nestedDir, ".claude-orchestrator", "config.json");
+    expect(fs.existsSync(configPath)).toBe(true);
+  });
+
+  it("config file contains valid JSON", async () => {
+    const result = await runInteractiveInit({
+      defaults: true,
+      cwd: tempDir,
+    });
+
+    expect(result.success).toBe(true);
+    const configPath = path.join(tempDir, ".claude-orchestrator", "config.json");
+    const content = fs.readFileSync(configPath, "utf-8");
+    expect(() => JSON.parse(content)).not.toThrow();
+  });
+
+  it("config file has correct structure", async () => {
+    const result = await runInteractiveInit({
+      defaults: true,
+      cwd: tempDir,
+    });
+
+    expect(result.success).toBe(true);
+    const configPath = path.join(tempDir, ".claude-orchestrator", "config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+
+    // Should have all expected keys
+    expect(config).toHaveProperty("name");
+    expect(config).toHaveProperty("zk_hosts");
+    expect(config).toHaveProperty("worker_count");
+  });
+
+  it("existing config preserves original content", async () => {
+    const configDir = path.join(tempDir, ".claude-orchestrator");
+    fs.mkdirSync(configDir, { recursive: true });
+    const originalConfig = { name: "original", custom_key: "custom_value" };
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify(originalConfig),
+      "utf-8",
+    );
+
+    const result = await runInteractiveInit({
+      defaults: true,
+      cwd: tempDir,
+    });
+
+    expect(result.success).toBe(true);
+    // File should still contain original content (not overwritten)
+    const config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf-8"));
+    expect(config.name).toBe("original");
+    expect(config.custom_key).toBe("custom_value");
+  });
+
+  it("returns config_path in result", async () => {
+    const result = await runInteractiveInit({
+      defaults: true,
+      cwd: tempDir,
+    });
+
+    expect(result.config_path).toBeDefined();
+    expect(result.config_path).toContain(".claude-orchestrator");
+    expect(result.config_path).toContain("config.json");
+  });
+
+  it("returns appropriate message on success", async () => {
+    const result = await runInteractiveInit({
+      defaults: true,
+      cwd: tempDir,
+    });
+
+    expect(result.message).toBeDefined();
+    expect(typeof result.message).toBe("string");
+    expect(result.message.length).toBeGreaterThan(0);
+  });
 });
