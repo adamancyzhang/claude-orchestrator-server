@@ -65,7 +65,7 @@ export class TaskRecovery {
           worker_id: record.instance_id,
           payload: { phase: "orphan_recovery" },
         })
-        .catch(() => undefined);
+        .catch((err) => this.logger.debug("chain audit record failed", { event: "worker_left", task_id: record.task_id, error: String(err) }));
     }
     if (retryCount > MAX_RETRIES) {
       this.logger.warn("orphan retry exhausted", {
@@ -97,7 +97,7 @@ export class TaskRecovery {
             worker_id: record.instance_id,
             payload: { reason: "max retries exceeded", retry_count: retryCount },
           })
-          .catch(() => undefined);
+          .catch((err) => this.logger.debug("chain audit record failed", { event: "task_failed", task_id: record.task_id, error: String(err) }));
       }
       throw new OrphanRetryExhaustedError(record.task_id, MAX_RETRIES);
     }
@@ -117,7 +117,7 @@ export class TaskRecovery {
             worker_id: record.instance_id,
             payload: { retry_count: retryCount },
           })
-          .catch(() => undefined);
+          .catch((err) => this.logger.debug("chain audit record failed", { event: "task_recovered", task_id: newTask.id, error: String(err) }));
       }
     } catch (err) {
       this.logger.error("orphan retry failed", {

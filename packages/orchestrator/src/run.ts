@@ -55,6 +55,7 @@ import {
   type IChildSupervisor,
 } from "./child-supervisor.js";
 import { InProcessSupervisor } from "./in-process-supervisor.js";
+import { GracefulShutdown } from "./graceful-shutdown.js";
 import {
   InitChecker,
   createGlobalConfigStep,
@@ -489,27 +490,57 @@ export async function runOrchestrator(
   await Promise.resolve(supervisor.start(workerConfigsForSupervisor));
 
   // Phase 5: wait for shutdown
+  const gracefulShutdown = new GracefulShutdown({
+    timeout_ms: 30_000,
+    logger: logger.child("shutdown"),
+  });
+
+  // Register shutdown phases in order of priority
+  gracefulShutdown.addPhase("stop accepting new tasks", async () => {
+    // TaskOrchestrator.stop() prevents new tasks from being dispatched
+    taskOrch.stop();
+  });
+
+  gracefulShutdown.addPhase("shutdown workers", async () => {
+    await supervisor.shutdown();
+  });
+
+  gracefulShutdown.addPhase("stop watchers and monitors", async () => {
+    leaderWatcher.stop();
+    monitor.stop();
+  });
+
+  gracefulShutdown.addPhase("stop TUI or state writer", async () => {
+    if (tui) await tui.stop();
+    if (stateWriter) stateWriter.stop();
+    if (commandWatcher) commandWatcher.stop();
+  });
+
+  gracefulShutdown.addPhase("restore console and cleanup registry", async () => {
+    restoreConsole();
+    await registry.unregister(leaderInstance.id).catch((err) => logger.debug("registry unregister failed", { instance_id: leaderInstance.id, error: String(err) }));
+  });
+
+  gracefulShutdown.addPhase("close ZK connection", async () => {
+    await zk.close();
+  });
+
+  // Wait for shutdown to complete
   await new Promise<void>((resolve) => {
-    let cleanedUp = false;
-    const cleanup = async () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      await supervisor.shutdown();
-      leaderWatcher.stop();
-      monitor.stop();
-      taskOrch.stop();
-      if (tui) await tui.stop();
-      if (stateWriter) stateWriter.stop();
-      if (commandWatcher) commandWatcher.stop();
-      restoreConsole();
-      await registry.unregister(leaderInstance.id).catch(() => undefined);
-      await zk.close();
-      resolve();
+    const onShutdownComplete = () => resolve();
+
+    // Register signal handlers that trigger shutdown
+    const onSignal = () => {
+      gracefulShutdown.shutdown().then(onShutdownComplete);
     };
-    process.once("SIGINT", () => void cleanup());
-    process.once("SIGTERM", () => void cleanup());
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+
+    // Method 2: shutdown_signal dependency (used by tests)
     if (deps.shutdown_signal) {
-      void deps.shutdown_signal.then(() => cleanup());
+      void deps.shutdown_signal.then(() => {
+        gracefulShutdown.shutdown().then(onShutdownComplete);
+      });
     }
   });
 }

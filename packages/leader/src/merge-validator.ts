@@ -90,7 +90,7 @@ export class MergeValidator {
           link: (commit.task_link as TaskLink) || null,
           payload: { sha: commit.sha, branch: commit.branch, mode },
         })
-        .catch(() => undefined);
+        .catch((err) => this.opts.logger.debug("chain audit record failed", { event: "merge_validation_started", error: String(err) }));
     }
     const mainBranch =
       this.opts.merge_target_branch ??
@@ -194,7 +194,7 @@ export class MergeValidator {
             mode,
           },
         })
-        .catch(() => undefined);
+        .catch((err) => this.opts.logger.debug("chain audit record failed", { event: "merge_validation_completed", error: String(err) }));
     }
 
     return decision;

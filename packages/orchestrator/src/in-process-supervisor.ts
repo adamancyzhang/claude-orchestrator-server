@@ -113,7 +113,7 @@ export class InProcessSupervisor implements IChildSupervisor {
     for (const r of this.registered) {
       r.watcher.stop();
       r.activity_reporter.stop();
-      await this.registry.unregister(r.instance.id).catch(() => undefined);
+      await this.registry.unregister(r.instance.id).catch((err) => this.opts.logger.debug("registry unregister failed", { instance_id: r.instance.id, error: String(err) }));
     }
     this.registered.length = 0;
   }

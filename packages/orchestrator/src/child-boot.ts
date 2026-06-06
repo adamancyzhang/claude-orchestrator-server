@@ -199,7 +199,7 @@ async function boot(config: ChildConfig): Promise<void> {
       clearInterval(aliveCheck);
       watcher.stop();
       activityReporter.stop();
-      await registry.unregister(instance.id).catch(() => undefined);
+      await registry.unregister(instance.id).catch((err) => logger.debug("registry unregister failed", { instance_id: instance.id, error: String(err) }));
       await zk.close();
       resolve();
     };

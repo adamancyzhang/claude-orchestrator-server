@@ -4,6 +4,7 @@ import type {
   ClaimRecord,
   IEventBus,
   ITaskQueue,
+  ILogger,
   LeaderEvent,
   TaskId,
 } from "@co/contracts";
@@ -18,6 +19,7 @@ export class TaskOrchestrator {
     private readonly queue: ITaskQueue,
     private readonly bus: IEventBus<LeaderEvent>,
     private readonly chain_audit?: ChainAudit,
+    private readonly logger?: ILogger,
   ) {}
 
   async start(): Promise<void> {
@@ -68,7 +70,7 @@ export class TaskOrchestrator {
               task_id: r.task_id,
               worker_id: r.instance_id,
             })
-            .catch(() => undefined);
+            .catch((err) => this.logger?.debug("chain audit record failed", { event: "task_claimed", task_id: r.task_id, error: String(err) }));
         }
       }
     }
@@ -89,7 +91,7 @@ export class TaskOrchestrator {
               task_id: prev.task_id,
               worker_id: prev.instance_id,
             })
-            .catch(() => undefined);
+            .catch((err) => this.logger?.debug("chain audit record failed", { event: "task_completed", task_id: prev.task_id, error: String(err) }));
         }
       }
     }
