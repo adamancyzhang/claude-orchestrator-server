@@ -48,3 +48,9 @@ export {
   type HealthMonitorOptions,
   type WorkerHealthStatus,
 } from "./health-monitor.js";
+export {
+  LoadBalancer,
+  type LoadBalancerOptions,
+  type WorkerLoad,
+  type LoadBalancerStats,
+} from "./load-balancer.js";
