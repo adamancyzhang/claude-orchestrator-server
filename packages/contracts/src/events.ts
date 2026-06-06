@@ -145,6 +145,14 @@ export type LeaderEvent =
       detail: string;
       next: string | null;
       timestamp: string;
+    }
+  // Health monitor detected a worker heartbeat timeout.
+  | {
+      type: "worker_health_timeout";
+      instance_id: InstanceId;
+      name: string;
+      last_heartbeat: string | null;
+      seconds_since_heartbeat: number;
     };
 
 export type LeaderEventType = LeaderEvent["type"];

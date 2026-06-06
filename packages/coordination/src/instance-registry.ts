@@ -85,7 +85,11 @@ export class InstanceRegistry implements IInstanceRegistry {
     );
     if (!data) return;
     const current = parseInstance(decode<Record<string, unknown>>(data.data));
-    const merged = parseInstance({ ...current, ...patch });
+    const merged = parseInstance({
+      ...current,
+      ...patch,
+      last_heartbeat: utcNow(),
+    });
     await this.zk.setData(
       zkPaths.instance(instanceId, this.paths),
       encode(merged),

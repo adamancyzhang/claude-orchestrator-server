@@ -84,18 +84,31 @@ export interface WorkerWatcherOptions {
    * by tests that do not care about activity.
    */
   activity_reporter?: WorkerActivityReporter;
+  /**
+   * Interval in milliseconds between periodic heartbeats. Defaults to 10 seconds.
+   */
+  heartbeat_interval_ms?: number;
 }
+
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000; // 10 seconds
 
 export class WorkerWatcher {
   private stopped = false;
   private readonly inFlight = new Set<string>();
   private readonly chainLinks: readonly TaskLink[];
+  private heartbeat_timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly opts: WorkerWatcherOptions) {
     this.chainLinks = chainLinksFor(opts.magic_mode);
   }
 
   async start(): Promise<void> {
+    // Start periodic heartbeat
+    const interval = this.opts.heartbeat_interval_ms ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.heartbeat_timer = setInterval(() => {
+      void this.sendHeartbeat();
+    }, interval);
+
     await this.opts.message_router.waitForMessage(
       this.opts.instance_id,
       (msg) => {
@@ -109,6 +122,23 @@ export class WorkerWatcher {
 
   stop(): void {
     this.stopped = true;
+    if (this.heartbeat_timer) {
+      clearInterval(this.heartbeat_timer);
+      this.heartbeat_timer = null;
+    }
+  }
+
+  private async sendHeartbeat(): Promise<void> {
+    if (this.stopped) return;
+    try {
+      await this.opts.registry.heartbeat(this.opts.instance_id, {
+        status: this.inFlight.size > 0 ? "busy" : "idle",
+      });
+    } catch (err) {
+      this.opts.logger.warn("periodic heartbeat failed", {
+        error: String(err),
+      });
+    }
   }
 
   private async processMessage(msg: Message): Promise<void> {

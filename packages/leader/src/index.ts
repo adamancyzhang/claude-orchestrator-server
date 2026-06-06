@@ -43,3 +43,8 @@ export {
 } from "./memory-bootstrap.js";
 export { CommandWatcher, type CommandWatcherOptions } from "./command-watcher.js";
 export { StdoutSink, StdinKeyboardSource, type TuiSink } from "./tui/stubs.js";
+export {
+  HealthMonitor,
+  type HealthMonitorOptions,
+  type WorkerHealthStatus,
+} from "./health-monitor.js";

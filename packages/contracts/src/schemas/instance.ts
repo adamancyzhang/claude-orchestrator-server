@@ -20,6 +20,7 @@ export const InstanceSchema = z.object({
   status: InstanceStatusSchema.default("idle"),
   current_task_id: z.string().transform(asTaskId).nullable().default(null),
   connected_since: z.string(),
+  last_heartbeat: z.string().nullable().default(null),
   work_dir: z.string().nullable().default(null),
   worktree_name: z.string().transform(asWorktreeName).nullable().default(null),
   worktree_path: z.string().nullable().default(null),
