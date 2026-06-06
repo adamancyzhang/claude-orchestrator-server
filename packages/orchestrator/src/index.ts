@@ -22,6 +22,11 @@ export {
   type IChildSupervisor,
 } from "./child-supervisor.js";
 export {
+  GracefulShutdown,
+  type ShutdownOptions,
+  type ShutdownPhase,
+} from "./graceful-shutdown.js";
+export {
   InitChecker,
   createGlobalConfigStep,
   createUserClaudeMdStep,
