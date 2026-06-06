@@ -47,7 +47,7 @@ export class TemplateEngine implements ITemplateEngine {
     const body = this.load(name);
     let out = body;
     for (const [key, value] of Object.entries(vars)) {
-      out = out.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+      out = out.replaceAll(`{{${key}}}`, value);
     }
     return out;
   }

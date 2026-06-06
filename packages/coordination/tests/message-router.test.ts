@@ -1,9 +1,10 @@
 // CORE-RETENTION
 // Locks in: MessageRouter.send delivers to the recipient's inbox path with
 // optional v0.7 fields (upstream_commits / spawned_from / next_requirement)
-// forwarded verbatim, poll marks unread messages as read, waitForMessage
-// fires the callback for both pre-existing and newly arrived messages, and
-// dismiss removes a message from the inbox. send() requires `to_instance`.
+// forwarded verbatim, poll returns unread messages without marking them,
+// ack marks a message as read after processing, waitForMessage fires the
+// callback for both pre-existing and newly arrived messages and acks them,
+// and dismiss removes a message from the inbox. send() requires `to_instance`.
 // Critical because: every inter-Worker hop and every chain dispatch goes
 // through this surface; a silent drop of upstream_commits would break the
 // per-link rebase contract and corrupt the chain's commit history.
@@ -49,12 +50,13 @@ describe("MessageRouter.send", () => {
     const received = await router.poll(BOB);
     expect(received).toHaveLength(1);
     expect(received[0]?.content).toBe("hi bob");
-    // poll returns the message as it was at observation time (unread); the
-    // read flag is flipped in ZK so subsequent polls see read=true.
+    // poll returns unread messages without marking them as read.
     expect(received[0]?.read).toBe(false);
 
+    // After ack, the message is marked as read and excluded from future polls.
+    await router.ack(BOB, received[0]!.id);
     const second = await router.poll(BOB);
-    expect(second[0]?.read).toBe(true);
+    expect(second).toHaveLength(0);
   });
 
   it("forwards upstream_commits / spawned_from / next_requirement when present", async () => {
@@ -120,7 +122,7 @@ describe("MessageRouter.poll", () => {
     expect(msgs.map((m) => m.content)).toEqual(["first", "second"]);
   });
 
-  it("on the second poll, messages report read=true (state was persisted)", async () => {
+  it("poll does not mark messages as read; ack persists the read flag", async () => {
     const zk = await makeZk();
     const router = new MessageRouter({ zk });
     await router.send({
@@ -132,8 +134,13 @@ describe("MessageRouter.poll", () => {
     });
     const first = await router.poll(BOB);
     expect(first[0]?.read).toBe(false);
+    // Second poll without ack still returns the message (unread).
     const second = await router.poll(BOB);
-    expect(second[0]?.read).toBe(true);
+    expect(second[0]?.read).toBe(false);
+    // After ack, the message is marked read and excluded from polls.
+    await router.ack(BOB, first[0]!.id);
+    const third = await router.poll(BOB);
+    expect(third).toHaveLength(0);
   });
 });
 

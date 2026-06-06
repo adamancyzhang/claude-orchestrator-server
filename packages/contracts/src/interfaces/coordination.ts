@@ -58,6 +58,7 @@ export interface IMessageRouter {
     instanceId: InstanceId,
     cb: (msg: Message) => void,
   ): Promise<void>;
+  ack(instanceId: InstanceId, messageId: string): Promise<void>;
   dismiss(instanceId: InstanceId, messageId: string): Promise<void>;
 }
 

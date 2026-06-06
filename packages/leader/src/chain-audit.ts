@@ -423,8 +423,16 @@ export class ChainAudit {
         magic_mode: parsed.magic_mode ?? false,
       };
       return manifest;
-    } catch {
-      return null;
+    } catch (err: unknown) {
+      if (
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return null;
+      }
+      throw err;
     }
   }
 

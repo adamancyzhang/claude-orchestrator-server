@@ -98,14 +98,20 @@ export class ChildSupervisor implements IChildSupervisor {
     child.stderr?.resume();
     child.on("exit", (code) => {
       if (this.shuttingDown) return;
+      if (code === 0 || code === null) {
+        // Successful exit (or killed by signal) — reset restart counter
+        // so future crashes get fresh retries.
+        this.restartCounts.delete(cfg.name);
+        return;
+      }
       const retries = this.restartCounts.get(cfg.name) ?? 0;
-      if (code !== 0 && code !== null && retries < MAX_RESTARTS) {
+      if (retries < MAX_RESTARTS) {
         this.restartCounts.set(cfg.name, retries + 1);
         this.opts.logger.warn(`worker ${cfg.name} exited (${code}); restart ${retries + 1}/${MAX_RESTARTS}`);
         const replacement = this.spawn(cfg);
         const idx = this.children.indexOf(child);
         if (idx !== -1) this.children[idx] = replacement;
-      } else if (code !== 0) {
+      } else {
         this.opts.logger.error(`worker ${cfg.name} exited (${code}) after max restarts`);
       }
     });

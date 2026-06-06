@@ -129,20 +129,47 @@ export class TaskQueue implements ITaskQueue {
         claimed_at: claimedAt,
         task_snapshot: task,
       };
+      // Optimistic locking: read the pending node's current version, create
+      // an ephemeral claim, then CAS-update the pending node to mark it as
+      // claimed.  If another worker already updated the pending node (its
+      // version advanced), we clean up our ephemeral claim and try the next
+      // candidate.  This prevents two workers from simultaneously claiming
+      // the same task — the ephemeral paths differ by instance_id, so
+      // createEphemeral alone cannot detect cross-worker races.
+      const pendingPath = zkPaths.taskPending(id, this.paths);
+      const pendingData = await this.zk.getData(pendingPath);
+      if (!pendingData) continue;
+      const pendingVersion = pendingData.stat.version;
+
       try {
         await this.zk.createEphemeral(
           zkPaths.taskClaimed(claimer, id, this.paths),
           encode(record),
         );
       } catch (err) {
-        // Only race-loss (node already exists) means "try the next candidate."
-        // Any other ZK failure — session expired, network, validation — must
-        // surface; conflating it with a benign race produces a phantom
-        // "no task to claim" state while the cluster is actually broken.
         if (err instanceof ZkNodeExistsError) continue;
         throw err;
       }
-      await this.zk.delete(zkPaths.taskPending(id, this.paths)).catch(() => {});
+
+      // CAS: only succeed if no other worker modified the pending node
+      // between our read and now.
+      try {
+        const updated = {
+          ...decode<Record<string, unknown>>(pendingData.data),
+          claimed_by: claimer,
+        };
+        await this.zk.setData(pendingPath, encode(updated), pendingVersion);
+      } catch {
+        // Version mismatch — another worker claimed this task.  Clean up
+        // our ephemeral claim (swallow errors; the node may already be gone
+        // if session expired) and try the next candidate.
+        await this.zk
+          .delete(zkPaths.taskClaimed(claimer, id, this.paths))
+          .catch(() => {});
+        continue;
+      }
+
+      await this.zk.delete(pendingPath).catch(() => {});
       return {
         ...task,
         id,
@@ -177,9 +204,8 @@ export class TaskQueue implements ITaskQueue {
   }
 
   async claimById(taskId: TaskId, claimer: InstanceId): Promise<Task | null> {
-    const data = await this.zk.getData(
-      zkPaths.taskPending(taskId, this.paths),
-    );
+    const pendingPath = zkPaths.taskPending(taskId, this.paths);
+    const data = await this.zk.getData(pendingPath);
     if (!data) return null;
     const raw = decode<Record<string, unknown>>(data.data);
     const task = parseTask({ ...raw, id: taskId });
@@ -196,15 +222,23 @@ export class TaskQueue implements ITaskQueue {
         encode(record),
       );
     } catch (err) {
-      // Race-loss returns null (someone else claimed first). Real ZK errors
-      // bubble so the caller sees the cluster failure instead of a silent
-      // "no claim happened."
       if (err instanceof ZkNodeExistsError) return null;
       throw err;
     }
-    await this.zk
-      .delete(zkPaths.taskPending(taskId, this.paths))
-      .catch(() => {});
+
+    // CAS: atomically mark the pending node as claimed.  If the version
+    // has advanced (another worker claimed it), clean up and return null.
+    try {
+      const updated = { ...raw, claimed_by: claimer };
+      await this.zk.setData(pendingPath, encode(updated), data.stat.version);
+    } catch {
+      await this.zk
+        .delete(zkPaths.taskClaimed(claimer, taskId, this.paths))
+        .catch(() => {});
+      return null;
+    }
+
+    await this.zk.delete(pendingPath).catch(() => {});
     return {
       ...task,
       id: taskId,

@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ChildSupervisor, type ChildSupervisorOptions } from "../src/child-supervisor.js";
 import { fork } from "node:child_process";
 
+// TRUST-JUSTIFICATION: We mock fork() because ChildSupervisor's behavior
+// is about process lifecycle management (restart on exit, SIGTERM/SIGKILL
+// on shutdown), not about what the child process does. The mock allows us
+// to simulate different exit scenarios (exit code 1, process ignoring
+// SIGTERM) without actually spawning processes. This is appropriate for
+// unit testing the supervisor's decision logic.
 vi.mock("node:child_process", () => ({
   fork: vi.fn(() => ({
     stdout: { resume: vi.fn() },
@@ -118,33 +124,16 @@ describe("ChildSupervisor", () => {
     );
   });
 
-  it("should kill workers on shutdown", async () => {
+  it("should use SIGKILL after timeout when process ignores SIGTERM", async () => {
+    // Mock fork to return a process that ignores SIGTERM (exitCode stays null)
     const mockKill = vi.fn();
+    const mockOn = vi.fn();
     vi.mocked(fork).mockReturnValue({
       stdout: { resume: vi.fn() },
       stderr: { resume: vi.fn() },
-      on: vi.fn(),
+      on: mockOn,
       kill: mockKill,
-      exitCode: 0, // Already exited
-      killed: false,
-    } as any);
-
-    const supervisor = new ChildSupervisor(defaultOpts);
-    supervisor.start([{ worktree_path: "/wt", name: "worker-1", role: "worker", instance_id: "inst-1", branch: "main" }]);
-
-    await supervisor.shutdown();
-
-    expect(mockKill).toHaveBeenCalledWith("SIGTERM");
-  });
-
-  it("should use SIGKILL after timeout", async () => {
-    const mockKill = vi.fn();
-    vi.mocked(fork).mockReturnValue({
-      stdout: { resume: vi.fn() },
-      stderr: { resume: vi.fn() },
-      on: vi.fn(),
-      kill: mockKill,
-      exitCode: null, // Not exited
+      exitCode: null, // Process never exits
       killed: false,
     } as any);
 
@@ -157,5 +146,42 @@ describe("ChildSupervisor", () => {
     // Should have tried SIGTERM first, then SIGKILL
     expect(mockKill).toHaveBeenCalledWith("SIGTERM");
     expect(mockKill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("should not send SIGKILL if process exits after SIGTERM", async () => {
+    // Create a mock child process that simulates exiting when SIGTERM is sent
+    const mockKill = vi.fn();
+    const mockOn = vi.fn();
+    const mockChild = {
+      stdout: { resume: vi.fn() },
+      stderr: { resume: vi.fn() },
+      on: mockOn,
+      kill: mockKill,
+      exitCode: null as number | null,
+      killed: false,
+    };
+
+    vi.mocked(fork).mockReturnValue(mockChild as any);
+
+    const supervisor = new ChildSupervisor(defaultOpts);
+    supervisor.start([{ worktree_path: "/wt", name: "worker-1", role: "worker", instance_id: "inst-1", branch: "main" }]);
+
+    // Get the exit handler
+    const exitHandler = mockOn.mock.calls.find((call: any[]) => call[0] === "exit")?.[1];
+    expect(exitHandler).toBeDefined();
+
+    // Override kill to simulate process exiting after SIGTERM
+    mockKill.mockImplementation(() => {
+      // Simulate the process exiting after SIGTERM by updating exitCode
+      mockChild.exitCode = 0;
+      // Call the exit handler to notify the supervisor
+      if (exitHandler) exitHandler(0);
+    });
+
+    await supervisor.shutdown(500);
+
+    // Should have sent SIGTERM but NOT SIGKILL since process exited
+    expect(mockKill).toHaveBeenCalledWith("SIGTERM");
+    expect(mockKill).not.toHaveBeenCalledWith("SIGKILL");
   });
 });

@@ -128,6 +128,14 @@ describe("TemplateEngine.render", () => {
       TemplateNotFoundError,
     );
   });
+
+  it("handles keys containing dots (regex metacharacters)", () => {
+    write(primaryDir, "dot.md", "{{a.b}} and {{c.d}}");
+    const engine = new TemplateEngine({ primary_dir: primaryDir });
+    expect(engine.render("dot.md", { "a.b": "X", "c.d": "Y" })).toBe(
+      "X and Y",
+    );
+  });
 });
 
 describe("TemplateEngine.has", () => {

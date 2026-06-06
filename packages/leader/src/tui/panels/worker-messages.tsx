@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Box, Text as InkText } from "ink";
 import type { WorkerActivityEntry, WorkerInfo } from "@co/contracts";
 
@@ -30,7 +31,7 @@ export default function WorkerMessagesPanel({ worker, scrollOffset, maxVisible }
 
   // Build the list of content rows for the scrollable section.
   // Structure: [working-status, activity-header, activity-entries..., message-header, message-entries...]
-  type ContentRow = { key: string; element: React.ReactNode };
+  type ContentRow = { key: string; element: ReactNode };
   const rows: ContentRow[] = [];
 
   if (isWorking) {

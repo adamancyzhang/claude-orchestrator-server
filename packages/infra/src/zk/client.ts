@@ -119,8 +119,10 @@ export class ZkClient implements IZkClient {
       this.stateListener = (...args: unknown[]) => {
         const s = args[0] as number;
         if (s === State.SYNC_CONNECTED) {
+          // Don't set _state here — the "connected" event handler below
+          // sets it only after mkdirp completes, preventing callers from
+          // observing "connected" before ensure_paths actually exist.
           const wasReconnecting = this._state !== "connected";
-          this._state = "connected";
           if (wasReconnecting) this.emit("reconnected");
         } else if (s === State.EXPIRED) {
           this._state = "expired";

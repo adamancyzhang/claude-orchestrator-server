@@ -109,14 +109,7 @@ export class MessageRouter implements IMessageRouter {
       if (!data) continue;
       const raw = decode<Record<string, unknown>>(data.data);
       const msg = parseMessage({ ...raw, id });
-      if (!msg.read) {
-        const updated = { ...raw, id, read: true };
-        await this.zk.setData(
-          zkPaths.message(instanceId, asMessageId(id), this.paths),
-          encode(updated),
-        );
-      }
-      out.push(msg);
+      if (!msg.read) out.push(msg);
     }
     return out;
   }
@@ -132,6 +125,7 @@ export class MessageRouter implements IMessageRouter {
     for (const m of initial) {
       seen.add(m.id);
       cb(m);
+      await this.ack(instanceId, m.id);
     }
     await this.zk.watchChildren(dir, async () => {
       const msgs = await this.poll(instanceId);
@@ -139,8 +133,23 @@ export class MessageRouter implements IMessageRouter {
         if (seen.has(m.id)) continue;
         seen.add(m.id);
         cb(m);
+        await this.ack(instanceId, m.id);
       }
     });
+  }
+
+  async ack(instanceId: InstanceId, messageId: string): Promise<void> {
+    const data = await this.zk.getData(
+      zkPaths.message(instanceId, asMessageId(messageId), this.paths),
+    );
+    if (!data) return;
+    const raw = decode<Record<string, unknown>>(data.data);
+    if (raw.read) return;
+    const updated = { ...raw, read: true };
+    await this.zk.setData(
+      zkPaths.message(instanceId, asMessageId(messageId), this.paths),
+      encode(updated),
+    );
   }
 
   async dismiss(instanceId: InstanceId, messageId: string): Promise<void> {
