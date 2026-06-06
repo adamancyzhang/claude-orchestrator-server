@@ -10,27 +10,36 @@
 docs/
 ├── CLAUDE.md              ← 本文件（文档规范）
 ├── tui.md                 ← TUI 布局参考
-├── daily-log/             ← 每日工作日志
-│   └── YYYY-MM-DD/
-│       ├── team-lead/
-│       │   └── work-log.md
-│       ├── dev-1/
-│       │   └── work-log.md
-│       ├── dev-2/
-│       │   └── work-log.md
-│       ├── dev-3/
-│       │   └── work-log.md
-│       ├── architect/
-│       │   └── work-log.md
-│       ├── verifier/
-│       │   └── work-log.md
-│       ├── qa-engineer/
-│       │   └── work-log.md
-│       ├── team-coach/
-│       │   └── work-log.md
-│       ├── tdd-guardian/
-│       │   └── work-log.md
-│       └── product-manager/
+├── daily-log/             ← 每日工作日志（按成员→日期）
+│   ├── team-lead/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── dev-1/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── dev-2/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── dev-3/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── architect/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── verifier/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── qa-engineer/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── team-coach/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   ├── tdd-guardian/
+│   │   └── YYYY-MM-DD/
+│   │       └── work-log.md
+│   └── product-manager/
+│       └── YYYY-MM-DD/
 │           └── work-log.md
 └── plans/                 ← 迭代计划
     └── YYYY-MM-DD/
@@ -42,8 +51,8 @@ docs/
 ## 工作日志规范（daily-log/）
 
 ### 目录结构
+- 按成员：`{member}/`（如 `dev-1/`）
 - 按日期：`YYYY-MM-DD/`（如 `2026-06-07/`）
-- 按成员：每个团队成员一个子目录
 - 每个成员的 `work-log.md` 记录该成员当日工作
 
 ### 成员目录列表
