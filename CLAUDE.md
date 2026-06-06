@@ -19,7 +19,6 @@ This project uses an agent team for development.
 | qa-engineer | Quality verification | Scoped tests, boundary checks | No full tests, no code changes |
 | tdd-guardian | Test discipline | Run full tests on command, report results | No test standards, no code changes |
 | verifier | Sign-off | Verify commits, changes, test coverage | No code, no unverified PASS |
-| context-monitor | Context monitoring | Monitor team context usage | No code, no task assignment |
 | team-coach | Collaboration discipline | Check compliance, record violations | No code, no task assignment |
 
 ### Team Recovery (New Session)
