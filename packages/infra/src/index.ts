@@ -45,3 +45,14 @@ export {
   type WorktreeEntry,
   type LoadConfigInput,
 } from "./config/config-loader.js";
+export {
+  MessageBatcher,
+  type MessageBatcherOptions,
+  type BatchMessage,
+  type MessageBatch,
+  type BatchProcessor,
+} from "./message-batcher.js";
+export {
+  BatchedMessageRouter,
+  type BatchedMessageRouterOptions,
+} from "./batched-message-router.js";
