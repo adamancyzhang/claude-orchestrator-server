@@ -8,6 +8,7 @@ import { runOrchestrator } from "@co/orchestrator";
 import { readState, getStateDir, type StateData } from "./state-utils.js";
 import { jsonOutput, jsonError } from "./json-output.js";
 import { createProgress } from "./progress.js";
+import { runInteractiveInit, displayNextSteps } from "./interactive-init.js";
 
 const program = new Command();
 
@@ -45,44 +46,69 @@ function outputError(jsonMode: boolean, code: string, message: string): void {
 
 program
   .name("claude-orchestrator")
-  .description("Multi-agent orchestration CLI (in-memory or ZooKeeper)")
+  .description(`Multi-agent orchestration CLI for Claude
+A multi-agent orchestration system that coordinates multiple Claude instances
+to work on complex tasks through a pipeline of planning, execution, verification,
+and review stages.
+
+Quick Start:
+  $ claude-orchestrator init          # Set up configuration
+  $ claude-orchestrator run           # Start orchestration
+  $ claude-orchestrator status        # Check orchestrator state
+
+For more information, visit: https://github.com/adamancyzhang/claude-orchestrator-server`)
   .version(`0.7.0 (protocol ${PROTOCOL_VERSION})`)
-  .option("-z, --zookeeper <hosts>", "ZooKeeper connection string (env: ZK_HOSTS)")
-  .option("-d, --debug", "Enable debug mode")
-  .option("--state-dir <dir>", "State directory path (default: .claude-orchestrator/state)")
-  .option("--json", "Output in JSON format");
+  .option("-z, --zookeeper <hosts>", "ZooKeeper connection string (env: ZK_HOSTS). Use 'in-memory' for local testing without ZooKeeper.")
+  .option("-d, --debug", "Enable debug mode with verbose logging output")
+  .option("--state-dir <dir>", "State directory path (default: .claude-orchestrator/state). Stores orchestrator state, commands, and task history.")
+  .option("--json", "Output in JSON format for machine-readable responses. All commands support this flag.");
 
 program
   .command("run")
-  .description("One-shot orchestration: setup environment, start TUI, fork Workers")
+  .description(`Start a one-shot orchestration session
+Sets up the environment, starts the terminal UI (TUI), and forks worker
+processes to handle tasks through the pipeline. Workers automatically
+claim tasks, execute them, and report results back to the leader.
+
+The orchestration pipeline follows this flow:
+  Plan → Execute → Verify → Review → Accept
+
+Each stage is handled by a specialized worker role. The leader coordinates
+the flow and ensures tasks move through the pipeline correctly.
+
+Examples:
+  $ claude-orchestrator run                          # Start with defaults
+  $ claude-orchestrator run --worker 8               # Use 8 workers
+  $ claude-orchestrator run --magic                  # Enable autonomous mode
+  $ claude-orchestrator run --headless               # Run without TUI
+  $ claude-orchestrator run -y                       # Skip prompts`)
   .option(
     "--worker <n>",
-    "Number of Workers (must be >= 6)",
+    "Number of Workers to spawn (must be >= 6). Each worker handles a specific role in the pipeline.",
     parseIntOption(6, "worker"),
     6,
   )
   .option(
     "--magic",
-    "Enable autonomous loop (Explorer + spawn_chain). The 6th worker is " +
-      "assigned the explorer role and the chain gains an explore link.",
+    "Enable autonomous loop mode with Explorer role. The 6th worker becomes an Explorer that can spawn new chains for parallel task execution.",
   )
   .option(
     "--magic-max-chains <m>",
-    "Hard cap on chain_forest depth (env: CO_MAGIC_MAX_CHAINS). Omit for unlimited.",
+    "Hard cap on chain_forest depth (env: CO_MAGIC_MAX_CHAINS). Limits how many nested chains can be spawned. Omit for unlimited depth.",
     parseIntOption(1, "magic-max-chains"),
   )
-  .option("-y, --yes", "Skip interactive prompts, auto-approve based on history")
+  .option("-y, --yes", "Skip interactive prompts and auto-approve based on history. Useful for automated pipelines.")
   .option(
     "--enabled-zookeeper",
-    "Use real ZooKeeper for message routing (default: in-memory)",
+    "Use real ZooKeeper for message routing (default: in-memory). Required for multi-machine deployments.",
   )
   .option(
     "--headless",
-    "Run without TUI — serialize state to state.json for CLI inspection",
+    "Run without TUI — serialize state to state.json for CLI inspection. Ideal for background execution and CI/CD pipelines.",
   )
   .option(
     "--no-progress",
-    "Disable progress indicator",
+    "Disable progress indicator. Useful when piping output or in CI environments.",
   )
   .action(async function (this: Command) {
     const opts = this.opts() as {
@@ -129,7 +155,14 @@ program
 
 program
   .command("config")
-  .description("Show current configuration")
+  .description(`Display current configuration settings
+Shows the active configuration including ZooKeeper connection, project
+settings, and command aliases. Useful for debugging configuration issues
+and verifying settings before starting orchestration.
+
+Examples:
+  $ claude-orchestrator config            # Show config in human-readable format
+  $ claude-orchestrator config --json     # Show config as JSON`)
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const zk = (globalOpts.zookeeper as string | undefined);
@@ -151,11 +184,62 @@ program
     outputResult(data, jsonMode);
   });
 
+program
+  .command("init")
+  .description(`Initialize configuration with interactive wizard
+Guides you through setting up the orchestrator configuration including:
+  - Project name and description
+  - ZooKeeper connection settings
+  - Worker roles and counts
+  - Git repository settings
+  - Hook scripts for task lifecycle events
+
+The wizard creates a .claude-orchestrator/config.yaml file in your project.
+
+Examples:
+  $ claude-orchestrator init              # Interactive setup
+  $ claude-orchestrator init --defaults   # Use all default values`)
+  .option("--defaults", "Use default values without prompting. Quick setup for testing.")
+  .action(async function (this: Command) {
+    const opts = this.opts() as { defaults?: boolean };
+    const globalOpts = this.optsWithGlobals();
+    const jsonMode = Boolean(globalOpts.json);
+
+    try {
+      const result = await runInteractiveInit({
+        defaults: Boolean(opts.defaults),
+        cwd: process.cwd(),
+      });
+
+      if (jsonMode) {
+        outputResult({
+          success: result.success,
+          config_path: result.config_path,
+          message: result.message,
+        }, jsonMode);
+      } else if (result.success && result.config_path) {
+        displayNextSteps(result.config_path);
+      }
+    } catch (err) {
+      outputError(jsonMode, "INIT_FAILED", err instanceof Error ? err.message : String(err));
+    }
+  });
+
 // --- State inspection commands ---
 
 program
   .command("send <message>")
-  .description("Send a message to the orchestrator (headless mode)")
+  .description(`Send a message to the orchestrator in headless mode
+Appends a command to the commands.jsonl file that the orchestrator monitors.
+Only works when the orchestrator is running in headless mode (--headless flag).
+
+Messages are processed in order and can include task requests, status queries,
+or control commands.
+
+Examples:
+  $ claude-orchestrator send "Fix the authentication bug"
+  $ claude-orchestrator send "Show me the current tasks"
+  $ claude-orchestrator send --json "Status check"`)
   .action(async function (this: Command, message: string) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
@@ -177,7 +261,18 @@ program
 
 program
   .command("status")
-  .description("Display full orchestrator state")
+  .description(`Display full orchestrator state
+Shows comprehensive information about the running orchestrator including:
+  - Connected workers and their status
+  - Pending and in-progress tasks
+  - Recent events and activity
+  - Chain execution status
+
+This is the primary command for monitoring orchestrator health and progress.
+
+Examples:
+  $ claude-orchestrator status            # Show state in human-readable format
+  $ claude-orchestrator status --json     # Show state as JSON for scripting`)
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
@@ -192,7 +287,19 @@ program
 
 program
   .command("workers")
-  .description("Display workers table")
+  .description(`Display connected workers
+Shows a table of all connected worker instances with their:
+  - Worker ID and name
+  - Current status (idle/busy)
+  - Assigned task (if any)
+  - Worker role (planner, executor, verifier, etc.)
+  - Worktree name
+
+Useful for monitoring worker health and task distribution.
+
+Examples:
+  $ claude-orchestrator workers           # Show workers table
+  $ claude-orchestrator workers --json    # Show workers as JSON`)
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
