@@ -504,6 +504,261 @@ program
     outputError(jsonMode, "TIMEOUT", "Timeout waiting for condition.");
   });
 
+// --- Shell completion ---
+
+program
+  .command("completion")
+  .description("Generate shell completion scripts")
+  .argument("[shell]", "Shell type: bash, zsh, or fish", "bash")
+  .option("--install", "Install completion script automatically")
+  .action(async function (this: Command, shell: string) {
+    const globalOpts = this.optsWithGlobals();
+    const jsonMode = Boolean(globalOpts.json);
+    const opts = this.opts() as { install?: boolean };
+
+    const validShells = ["bash", "zsh", "fish"];
+    if (!validShells.includes(shell)) {
+      outputError(jsonMode, "INVALID_SHELL", `Invalid shell type: ${shell}. Must be one of: ${validShells.join(", ")}`);
+    }
+
+    const script = generateCompletionScript(shell);
+
+    if (opts.install) {
+      try {
+        const installPath = getCompletionInstallPath(shell);
+        const dir = path.dirname(installPath);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(installPath, script, "utf-8");
+        outputResult({
+          message: `Completion script installed to ${installPath}`,
+          shell,
+          install_path: installPath,
+          instructions: getCompletionInstructions(shell),
+        }, jsonMode);
+      } catch (err) {
+        outputError(jsonMode, "INSTALL_FAILED", `Failed to install completion script: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      outputResult({ shell, script }, jsonMode);
+    }
+  });
+
+function generateCompletionScript(shell: string): string {
+  const commandName = "claude-orchestrator";
+
+  switch (shell) {
+    case "bash":
+      return `#!/bin/bash
+# Bash completion for ${commandName}
+_${commandName.replace(/-/g, "_")}_completions() {
+  local cur prev commands
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+
+  commands="run config send status workers tasks events chains messages wait completion"
+
+  if [[ \${cur} == -* ]] ; then
+    COMPREPLY=( $(compgen -W "--worker --magic --magic-max-chains --yes --enabled-zookeeper --headless --no-progress --json --zookeeper --debug --state-dir --help --version" -- \${cur}) )
+    return 0
+  fi
+
+  if [[ \${COMP_CWORD} -eq 1 ]] ; then
+    COMPREPLY=( $(compgen -W "\${commands}" -- \${cur}) )
+    return 0
+  fi
+
+  case "\${COMP_WORDS[1]}" in
+    completion)
+      COMPREPLY=( $(compgen -W "bash zsh fish --install" -- \${cur}) )
+      ;;
+    events)
+      COMPREPLY=( $(compgen -W "--tail" -- \${cur}) )
+      ;;
+    wait)
+      COMPREPLY=( $(compgen -W "--task --chain --timeout" -- \${cur}) )
+      ;;
+  esac
+
+  return 0
+}
+complete -F _${commandName.replace(/-/g, "_")}_completions ${commandName}
+`;
+
+    case "zsh":
+      return `#compdef ${commandName}
+
+# Zsh completion for ${commandName}
+_${commandName.replace(/-/g, "_")}_completions() {
+  local -a commands
+  commands=(
+    'run:One-shot orchestration: setup environment, start TUI, fork Workers'
+    'config:Show current configuration'
+    'send:Send a message to the orchestrator (headless mode)'
+    'status:Display full orchestrator state'
+    'workers:Display workers table'
+    'tasks:Display pending and in-progress tasks'
+    'events:Display event log'
+    'chains:Display active and completed chains'
+    'messages:Display message history for a worker'
+    'wait:Poll state.json until a condition is met'
+    'completion:Generate shell completion scripts'
+  )
+
+  _arguments -C \\
+    '--worker[Number of Workers (must be >= 6)]:number' \\
+    '--magic[Enable autonomous loop]' \\
+    '--magic-max-chains[Hard cap on chain_forest depth]:number' \\
+    '-y[Skip interactive prompts]' \\
+    '--yes[Skip interactive prompts]' \\
+    '--enabled-zookeeper[Use real ZooKeeper for message routing]' \\
+    '--headless[Run without TUI]' \\
+    '--no-progress[Disable progress indicator]' \\
+    '--json[Output in JSON format]' \\
+    '-z[ZooKeeper connection string]:hosts' \\
+    '--zookeeper[ZooKeeper connection string]:hosts' \\
+    '-d[Enable debug mode]' \\
+    '--debug[Enable debug mode]' \\
+    '--state-dir[State directory path]:dir' \\
+    '1:command:->commands' \\
+    '*::arg:->args' && return
+
+  case $state in
+    commands)
+      _describe 'command' commands
+      ;;
+    args)
+      case $words[1] in
+        completion)
+          _arguments \\
+            '1:shell:(bash zsh fish)' \\
+            '--install[Install completion script automatically]'
+          ;;
+        events)
+          _arguments '--tail[Number of recent events to show]:number'
+          ;;
+        wait)
+          _arguments \\
+            '--task[Wait for task to complete]:task id' \\
+            '--chain[Wait for chain to close]:chain id' \\
+            '--timeout[Timeout in seconds]:seconds'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_${commandName.replace(/-/g, "_")}_completions "$@"
+`;
+
+    case "fish":
+      return `# Fish completion for ${commandName}
+
+function __${commandName.replace(/-/g, "_")}_no_subcommand
+  set -l cmd (commandline -opc)
+  if test (count $cmd) -eq 1
+    return 0
+  end
+  return 1
+end
+
+function __${commandName.replace(/-/g, "_")}_using_command
+  set -l cmd (commandline -opc)
+  set -l found 0
+  for arg in $cmd
+    switch $arg
+      case $argv[1]
+        set found 1
+    end
+  end
+  test $found -eq 1
+end
+
+complete -c ${commandName} -f
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a run -d 'One-shot orchestration'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a config -d 'Show current configuration'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a send -d 'Send a message to the orchestrator'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a status -d 'Display full orchestrator state'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a workers -d 'Display workers table'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a tasks -d 'Display pending and in-progress tasks'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a events -d 'Display event log'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a chains -d 'Display active and completed chains'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a messages -d 'Display message history for a worker'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a wait -d 'Poll state.json until a condition is met'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_no_subcommand -a completion -d 'Generate shell completion scripts'
+
+# Global options
+complete -c ${commandName} -s z -l zookeeper -d 'ZooKeeper connection string'
+complete -c ${commandName} -s d -l debug -d 'Enable debug mode'
+complete -c ${commandName} -l state-dir -d 'State directory path'
+complete -c ${commandName} -l json -d 'Output in JSON format'
+
+# Run options
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l worker -d 'Number of Workers'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l magic -d 'Enable autonomous loop'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l magic-max-chains -d 'Hard cap on chain_forest depth'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -s y -l yes -d 'Skip interactive prompts'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l enabled-zookeeper -d 'Use real ZooKeeper'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l headless -d 'Run without TUI'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l no-progress -d 'Disable progress indicator'
+
+# Events options
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:events -l tail -d 'Number of recent events to show'
+
+# Wait options
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:wait -l task -d 'Wait for task to complete'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:wait -l chain -d 'Wait for chain to close'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:wait -l timeout -d 'Timeout in seconds'
+
+# Completion options
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:completion -a 'bash zsh fish' -d 'Shell type'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:completion -l install -d 'Install completion script automatically'
+`;
+
+    default:
+      throw new Error(`Unsupported shell: ${shell}`);
+  }
+}
+
+function getCompletionInstallPath(shell: string): string {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
+
+  switch (shell) {
+    case "bash":
+      return path.join(home, ".bash_completion.d", "claude-orchestrator");
+    case "zsh":
+      return path.join(home, ".zsh", "completions", "_claude-orchestrator");
+    case "fish":
+      return path.join(home, ".config", "fish", "completions", "claude-orchestrator.fish");
+    default:
+      throw new Error(`Unsupported shell: ${shell}`);
+  }
+}
+
+function getCompletionInstructions(shell: string): string {
+  switch (shell) {
+    case "bash":
+      return `To enable completion, add the following to your ~/.bashrc or ~/.bash_profile:
+  source ~/.bash_completion.d/claude-orchestrator
+
+Or run:
+  echo 'source ~/.bash_completion.d/claude-orchestrator' >> ~/.bashrc`;
+    case "zsh":
+      return `To enable completion, ensure your $fpath includes the completions directory:
+  fpath=(~/.zsh/completions $fpath)
+  autoload -Uz compinit && compinit
+
+Or run:
+  echo 'fpath=(~/.zsh/completions $fpath)' >> ~/.zshrc
+  echo 'autoload -Uz compinit && compinit' >> ~/.zshrc`;
+    case "fish":
+      return `Completion is automatically enabled for fish.
+The script has been installed to ~/.config/fish/completions/`;
+    default:
+      return "";
+  }
+}
+
 program.parseAsync().catch((err) => {
   const jsonMode = program.opts().json;
   if (jsonMode) {
