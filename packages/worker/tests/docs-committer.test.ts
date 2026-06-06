@@ -166,17 +166,14 @@ describe("WorkerDocsCommitter — error handling", () => {
     await expect(committer.commitIfChanged(makeCtx())).rejects.toThrow("worker-commit-message.md");
   });
 
-  it("returns null on git commit failure (best-effort)", async () => {
+  it("commits successfully with custom runner message", async () => {
     const docsDir = path.join(repoDir, "docs", "Tom");
     fs.mkdirSync(docsDir, { recursive: true });
     fs.writeFileSync(path.join(docsDir, "c.md"), "c\n");
 
-    // Runner generates message but then git commit will fail
-    // because we'll make the msg file read-only after generation
     const runner = fakeRunner("feat: test\n");
     const { committer } = makeCommitter({ runner });
 
-    // The commit should succeed with the runner
     const sha = await committer.commitIfChanged(makeCtx());
     expect(sha).toBeDefined();
   });

@@ -9,9 +9,19 @@ import { readState, getStateDir, type StateData } from "./state-utils.js";
 
 const program = new Command();
 
+function parseIntOption(min: number, label: string) {
+  return (raw: string) => {
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < min) {
+      throw new Error(`\`--${label}\` must be an integer >= ${min}`);
+    }
+    return n;
+  };
+}
+
 program
   .name("claude-orchestrator")
-  .description("Multi-agent orchestration CLI backed by ZooKeeper")
+  .description("Multi-agent orchestration CLI (in-memory or ZooKeeper)")
   .version(`0.7.0 (protocol ${PROTOCOL_VERSION})`)
   .option("-z, --zookeeper <hosts>", "ZooKeeper connection string (env: ZK_HOSTS)")
   .option("-d, --debug", "Enable debug mode")
@@ -23,13 +33,7 @@ program
   .option(
     "--worker <n>",
     "Number of Workers (must be >= 6)",
-    (raw) => {
-      const n = parseInt(raw, 10);
-      if (!Number.isFinite(n) || n < 6) {
-        throw new Error("`--worker` must be an integer >= 6");
-      }
-      return n;
-    },
+    parseIntOption(6, "worker"),
     6,
   )
   .option(
@@ -40,13 +44,7 @@ program
   .option(
     "--magic-max-chains <m>",
     "Hard cap on chain_forest depth (env: CO_MAGIC_MAX_CHAINS). Omit for unlimited.",
-    (raw) => {
-      const n = parseInt(raw, 10);
-      if (!Number.isFinite(n) || n < 1) {
-        throw new Error("`--magic-max-chains` must be a positive integer");
-      }
-      return n;
-    },
+    parseIntOption(1, "magic-max-chains"),
   )
   .option("-y, --yes", "Skip interactive prompts, auto-approve based on history")
   .option(

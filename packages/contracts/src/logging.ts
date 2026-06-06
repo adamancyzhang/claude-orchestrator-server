@@ -7,3 +7,12 @@ export interface ILogger {
   error(msg: string, ctx?: Record<string, unknown>): void;
   child(namespace: string): ILogger;
 }
+
+/** No-op logger for tests and silent operation. */
+export const noopLogger: ILogger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  child: () => noopLogger,
+};
