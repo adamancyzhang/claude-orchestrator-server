@@ -5,6 +5,7 @@ import type { ILogger } from "@co/contracts";
 import { SSEBroadcaster } from "./sse/broadcaster.js";
 import { StateWatcher } from "./watcher.js";
 import { createRouter } from "./routes/index.js";
+import type { AuthConfig } from "./auth.js";
 
 export interface DashboardServerOptions {
   /** Port to listen on (default: 3210) */
@@ -15,6 +16,13 @@ export interface DashboardServerOptions {
   state_dir: string;
   /** Logger instance */
   logger?: ILogger;
+  /** Authentication configuration */
+  auth?: AuthConfig;
+  /** Rate limiting configuration */
+  rateLimit?: {
+    maxRequests?: number;
+    windowMs?: number;
+  };
 }
 
 export class DashboardServer {
@@ -25,12 +33,19 @@ export class DashboardServer {
   private host: string;
   private state_dir: string;
   private logger?: ILogger;
+  private auth?: AuthConfig;
+  private rateLimit?: {
+    maxRequests?: number;
+    windowMs?: number;
+  };
 
   constructor(opts: DashboardServerOptions) {
     this.port = opts.port ?? 3210;
     this.host = opts.host ?? "127.0.0.1";
     this.state_dir = opts.state_dir;
     this.logger = opts.logger;
+    this.auth = opts.auth;
+    this.rateLimit = opts.rateLimit;
 
     this.broadcaster = new SSEBroadcaster();
     this.watcher = new StateWatcher(this.state_dir, this.logger);
@@ -45,7 +60,13 @@ export class DashboardServer {
    * Start the dashboard server.
    */
   async start(): Promise<void> {
-    const router = createRouter(this.state_dir, this.broadcaster, this.logger);
+    const router = createRouter({
+      state_dir: this.state_dir,
+      broadcaster: this.broadcaster,
+      logger: this.logger,
+      auth: this.auth,
+      rateLimit: this.rateLimit,
+    });
 
     this.server = http.createServer((req, res) => {
       router(req, res);
