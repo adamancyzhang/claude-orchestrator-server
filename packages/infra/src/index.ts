@@ -1,5 +1,10 @@
 export { ZkClient, type ZkClientOptions } from "./zk/client.js";
 export { InMemoryZkClient, type ZkTreeNode } from "./zk/in-memory-client.js";
+export {
+  ConnectionPool,
+  type ConnectionPoolOptions,
+  type PoolStats,
+} from "./zk/connection-pool.js";
 export { Logger, type LoggerOptions, type LogFormat } from "./logger.js";
 export {
   Counter,
