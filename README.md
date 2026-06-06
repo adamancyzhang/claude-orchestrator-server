@@ -93,7 +93,7 @@ Strict one-directional layering enforced by `dependency-cruiser`:
 | 4a | `@co/leader` | EventBus, State, ChainRouter, MergeValidator, Recovery, TaskOrchestrator, TUI (React/Ink v7, 7 panels) | contracts, runtime, coordination |
 | 4b | `@co/worker` | WorkerWatcher (8-step pipeline), SelfEvaluator, CommitChecker | contracts, runtime, coordination |
 | 5 | `@co/orchestrator` | `runOrchestrator()` 5-phase startup, `InitChecker`, `WorktreeInitializer`, `ChildSupervisor` | contracts, infra, runtime, coordination, leader, worker |
-| 6 | `@co/cli` | `commander` entry point: `run` + `config` commands | contracts, infra, coordination, orchestrator |
+| 6 | `@co/cli` | `commander` entry point: `run` + `config` + headless state commands | contracts, infra, coordination, orchestrator |
 
 Leader (4a) and Worker (4b) are at the same layer and **must not import each other**; they communicate only through the `@co/coordination` interfaces.
 
@@ -172,14 +172,59 @@ claude-orchestrator run --worker 6 --magic --magic-max-chains 10
 
 ## CLI Commands
 
+### Interactive Mode
+
 | Command | Description |
 |---------|-------------|
 | `run --worker <n>` | One-shot orchestration: InitChecker, worktree creation, Leader TUI, fork N Workers |
 | `config` | Print resolved configuration (commands, hooks, protocol version) |
 
+### Headless Mode
+
+Run without TUI by adding `--headless` to the `run` command. State is serialized to `state.json` for CLI inspection.
+
+```bash
+# Start in headless mode
+claude-orchestrator run --worker 6 --headless
+
+# Inspect state from another terminal
+claude-orchestrator status
+claude-orchestrator workers
+claude-orchestrator tasks
+```
+
+| Command | Description |
+|---------|-------------|
+| `send <message>` | Send a message to the orchestrator (appends to `commands.jsonl`) |
+| `status` | Display full orchestrator state |
+| `workers` | Display workers table |
+| `tasks` | Display pending and in-progress tasks |
+| `events [--tail <n>]` | Display event log (default: last 20) |
+| `messages <worker>` | Display message history for a worker |
+| `wait --task <id> [--timeout <s>]` | Poll state until a task completes |
+
+All headless commands accept `--state-dir <dir>` (default: `.claude-orchestrator/state`).
+
+### Common Workflows
+
+```bash
+# Monitor orchestrator in real-time
+watch -n 2 'claude-orchestrator workers'
+
+# Wait for a specific task to complete
+claude-orchestrator wait --task task-42 --timeout 120
+
+# View recent events
+claude-orchestrator events --tail 50
+
+# Check worker message history
+claude-orchestrator messages worker-1
+```
+
 Common flags:
 - `-d, --debug` — enable debug logging
 - `-y, --yes` (run only) — skip interactive `InitChecker` prompts
+- `--headless` (run only) — serialize state for CLI inspection
 
 ---
 
