@@ -36,6 +36,7 @@ import {
 import {
   ChainAudit,
   ChainRouter,
+  CommandWatcher,
   LeaderEventBus,
   LeaderState,
   LeaderWatcher,
@@ -412,6 +413,7 @@ export async function runOrchestrator(
 
   let tui: null | { stop: () => Promise<void> } = null;
   let stateWriter: StateWriter | null = null;
+  let commandWatcher: CommandWatcher | null = null;
 
   if (!deps.headless && !input.headless) {
     const { TuiController } = await import("@co/leader/tui");
@@ -428,10 +430,18 @@ export async function runOrchestrator(
     await instance.start();
     tui = instance;
   } else {
-    // Headless mode: write state.json periodically
+    // Headless mode: write state.json periodically and watch for commands
     const stateDir = input.state_dir ?? coRoot;
     stateWriter = new StateWriter(state, stateDir, leaderInstance.id);
     stateWriter.start();
+
+    commandWatcher = new CommandWatcher({
+      stateDir,
+      messageRouter,
+      leaderId: leaderInstance.id,
+      leaderName: leaderInstance.name,
+    });
+    await commandWatcher.start();
 
     // Write .leader-id for CLI discovery
     const leaderIdPath = path.join(stateDir, ".leader-id");
@@ -490,6 +500,7 @@ export async function runOrchestrator(
       taskOrch.stop();
       if (tui) await tui.stop();
       if (stateWriter) stateWriter.stop();
+      if (commandWatcher) commandWatcher.stop();
       restoreConsole();
       await registry.unregister(leaderInstance.id).catch(() => undefined);
       await zk.close();
