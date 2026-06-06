@@ -597,10 +597,21 @@ Examples:
 
 program
   .command("wait")
-  .description("Poll state.json until a condition is met")
-  .option("--task <id>", "Wait for task to complete")
-  .option("--chain <id>", "Wait for chain to close")
-  .option("--timeout <s>", "Timeout in seconds", "30")
+  .description(`Poll state.json until a condition is met
+Waits for a specific task to complete or a chain to close. Useful for
+scripting and automation where you need to wait for orchestration to
+finish before proceeding.
+
+The command polls the state file every second until the condition is
+met or the timeout is reached.
+
+Examples:
+  $ claude-orchestrator wait --task task-123           # Wait for task to complete
+  $ claude-orchestrator wait --chain chain-456         # Wait for chain to close
+  $ claude-orchestrator wait --task task-123 --timeout 60  # Wait with 60s timeout`)
+  .option("--task <id>", "Wait for the specified task to complete or be removed from in_progress")
+  .option("--chain <id>", "Wait for the specified chain to emit a chain_closed event")
+  .option("--timeout <s>", "Timeout in seconds (default: 30)", "30")
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
@@ -658,9 +669,20 @@ program
 
 program
   .command("completion")
-  .description("Generate shell completion scripts")
-  .argument("[shell]", "Shell type: bash, zsh, or fish", "bash")
-  .option("--install", "Install completion script automatically")
+  .description(`Generate shell completion scripts
+Creates tab-completion scripts for bash, zsh, or fish shells. These scripts
+enable automatic command and option completion when pressing Tab.
+
+Use the --install flag to automatically install the script to the
+appropriate location for your shell.
+
+Examples:
+  $ claude-orchestrator completion bash           # Output bash completion script
+  $ claude-orchestrator completion zsh            # Output zsh completion script
+  $ claude-orchestrator completion fish           # Output fish completion script
+  $ claude-orchestrator completion bash --install # Install bash completion`)
+  .argument("[shell]", "Shell type: bash, zsh, or fish (default: bash)", "bash")
+  .option("--install", "Install completion script automatically to the appropriate directory")
   .action(async function (this: Command, shell: string) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
