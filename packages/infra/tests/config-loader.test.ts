@@ -287,3 +287,112 @@ describe("save/load round-trips", () => {
     expect(cfg.role).toBe("leader");
   });
 });
+
+describe("loadConfig — edge cases", () => {
+  it("throws when global config file is malformed JSON", () => {
+    const configDir = path.join(fakeHome, ".claude-orchestrator");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, "config.json"), "{invalid json", "utf-8");
+
+    expect(() => loadConfig()).toThrow();
+  });
+
+  it("throws when project config file is malformed JSON", () => {
+    const configDir = path.join(fakeCwd, ".claude-orchestrator");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, "config.json"), "not json at all", "utf-8");
+
+    expect(() => loadConfig()).toThrow();
+  });
+
+  it("returns defaults when config files do not exist", () => {
+    const cfg = loadConfig();
+    expect(cfg.zk.hosts).toBe("127.0.0.1:2181");
+    expect(cfg.hooks).toEqual([]);
+    expect(cfg.init_status).toEqual([]);
+  });
+
+  it("cli_debug overrides project.debug=true", () => {
+    writeProject({ debug: true });
+    expect(loadConfig({ cli_debug: false }).debug).toBe(false);
+  });
+
+  it("session_timeout_ms is preserved from global config", () => {
+    writeGlobal({ zookeeper: { session_timeout_ms: 60000 } });
+    const cfg = loadConfig();
+    expect(cfg.zk.session_timeout_ms).toBe(60000);
+  });
+
+  it("session_timeout_ms is overridden by project config", () => {
+    writeGlobal({ zookeeper: { session_timeout_ms: 60000 } });
+    writeProject({ zookeeper: { session_timeout_ms: 15000 } });
+    const cfg = loadConfig();
+    expect(cfg.zk.session_timeout_ms).toBe(15000);
+  });
+
+  it("instance_id from project config is loaded", () => {
+    writeProject({ instance_id: "custom-id-123" });
+    const cfg = loadConfig();
+    expect(cfg.instance_id).toBe("custom-id-123");
+  });
+
+  it("name from project config is loaded", () => {
+    writeProject({ name: "TestProject" });
+    const cfg = loadConfig();
+    expect(cfg.name).toBe("TestProject");
+  });
+
+  it("role from project config is loaded", () => {
+    writeProject({ role: "leader" });
+    const cfg = loadConfig();
+    expect(cfg.role).toBe("leader");
+  });
+
+  it("auto_commit_init_files defaults to true", () => {
+    const cfg = loadConfig();
+    expect(cfg.git.auto_commit_init_files).toBe(true);
+  });
+
+  it("auto_commit_init_files can be disabled in project config", () => {
+    writeProject({ git: { auto_commit_init_files: false } });
+    const cfg = loadConfig();
+    expect(cfg.git.auto_commit_init_files).toBe(false);
+  });
+
+  it("auto_commit_init_files_branch defaults to null", () => {
+    const cfg = loadConfig();
+    expect(cfg.git.auto_commit_init_files_branch).toBeNull();
+  });
+
+  it("remote defaults to 'origin'", () => {
+    const cfg = loadConfig();
+    expect(cfg.git.remote).toBe("origin");
+  });
+
+  it("merge_target_branch defaults to null", () => {
+    const cfg = loadConfig();
+    expect(cfg.git.merge_target_branch).toBeNull();
+  });
+});
+
+describe("loadConfig — projects_root edge cases", () => {
+  it("defaults to ~/.claude-orchestrator/projects when no config set", () => {
+    const cfg = loadConfig();
+    expect(cfg.projects_root).toBe(
+      path.join(fakeHome, ".claude-orchestrator", "projects"),
+    );
+  });
+
+  it("project config overrides global projects_root", () => {
+    writeGlobal({ projects_root: "~/global-projects" });
+    writeProject({ projects_root: "~/project-projects" });
+    const cfg = loadConfig();
+    expect(cfg.projects_root).toBe(path.join(fakeHome, "project-projects"));
+  });
+
+  it("global projects_root is used when project not set", () => {
+    writeGlobal({ projects_root: "~/global-projects" });
+    const cfg = loadConfig();
+    expect(cfg.projects_root).toBe(path.join(fakeHome, "global-projects"));
+  });
+});
