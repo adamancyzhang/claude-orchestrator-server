@@ -343,7 +343,17 @@ Examples:
 
 program
   .command("tasks")
-  .description("Display pending and in-progress tasks")
+  .description(`Display pending and in-progress tasks
+Shows all tasks in the system, organized by queue:
+  - Pending: Tasks waiting to be claimed by workers
+  - In Progress: Tasks currently being executed
+
+Each task shows its ID, status, link type, and description.
+Useful for tracking pipeline progress and identifying bottlenecks.
+
+Examples:
+  $ claude-orchestrator tasks             # Show tasks table
+  $ claude-orchestrator tasks --json      # Show tasks as JSON`)
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
@@ -391,8 +401,21 @@ program
 
 program
   .command("events")
-  .description("Display event log")
-  .option("--tail <n>", "Number of recent events to show", "20")
+  .description(`Display event log
+Shows recent orchestrator events including:
+  - Worker join/leave events
+  - Task lifecycle events (created, claimed, completed, failed)
+  - Chain activation and completion
+  - Message routing events
+
+Events are displayed in chronological order with timestamps.
+Useful for debugging and understanding orchestrator behavior.
+
+Examples:
+  $ claude-orchestrator events            # Show last 20 events
+  $ claude-orchestrator events --tail 50  # Show last 50 events
+  $ claude-orchestrator events --json     # Show events as JSON`)
+  .option("--tail <n>", "Number of recent events to show (default: 20)", "20")
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
@@ -428,7 +451,19 @@ program
 
 program
   .command("chains")
-  .description("Display active and completed chains")
+  .description(`Display active and completed chains
+Shows all task chains (pipelines) and their current status:
+  - Active chains currently being processed
+  - Completed chains that have finished
+  - Failed chains with merge conflicts
+
+Each chain shows its ID, status, current stage, assigned workers,
+and task count. Chains represent the full lifecycle of a complex task
+that passes through multiple pipeline stages.
+
+Examples:
+  $ claude-orchestrator chains            # Show chains table
+  $ claude-orchestrator chains --json     # Show chains as JSON`)
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
@@ -521,7 +556,15 @@ program
 
 program
   .command("messages <worker>")
-  .description("Display message history for a worker")
+  .description(`Display message history for a specific worker
+Shows the message history for the specified worker ID. Messages include
+task assignments, status updates, and completion reports.
+
+Use the 'workers' command to see available worker IDs.
+
+Examples:
+  $ claude-orchestrator messages worker-1       # Show messages for worker-1
+  $ claude-orchestrator messages worker-1 --json # Show messages as JSON`)
   .action(async function (this: Command, workerId: string) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
