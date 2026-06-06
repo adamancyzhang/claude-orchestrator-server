@@ -1,65 +1,167 @@
 # CLAUDE.md
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+项目特定指令。行为准则参见全局 `~/.claude/CLAUDE.md`。
 
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+## 1. Team Management
+
+本项目使用 agent team 协作开发。
+
+### 团队成员
+
+| 成员 | 角色 | 职责范围 | 禁止事项 |
+|------|------|----------|----------|
+| team-lead | 规划调度 | 任务规划、分配、协调、验收 | 不写代码、不跑测试 |
+| product-manager | 产品规划 | 需求定义、优先级排序、路线图 | 不写代码、不做架构决策 |
+| dev-1/2/3 | 开发者 | 编码、作用域内测试、提交 | 不跑全量测试、不改 .claude/ |
+| architect | 架构审查 | 层边界审查、设计决策 | 不改代码、不做代码风格审查 |
+| qa-engineer | 质量验证 | 作用域内测试、边界条件检查 | 不跑全量测试、不改代码 |
+| tdd-guardian | 测试执行 | 按指令运行全量测试、报告结果 | 不定义测试标准、不改代码 |
+| verifier | 签字确认 | 验证 commit、变更、测试覆盖 | 不改代码、不给无证据的 PASS |
+| context-monitor | 上下文监控 | 监控团队上下文使用率 | 不改代码、不分配任务 |
+| team-coach | 协作纪律 | 执行协作规范检查、记录违规 | 不改代码、不分配任务 |
+
+### 团队恢复流程（新会话时）
+
+1. 读取 `.claude/agents/` 目录下所有 agent 定义文件
+2. 清理旧团队配置：将 `~/.claude/teams/orch-dev/config.json` 的 members 只保留 team-lead
+3. 为每个成员调用 Agent 工具，将 `.claude/agents/<role>.md` 的**原始内容**（去掉 YAML frontmatter）直接作为 prompt 参数传入，不要翻译或转录
+4. 设置 `team_name: "orch-dev"`, `mode: "bypassPermissions"`, `run_in_background: true`
+5. 等待所有成员上线后发送消息验证规则是否加载正确
+
+### 关键约束
+
+- `.claude/agents/*.md` 是 agent 定义的唯一来源，内容为英文
+- spawn 时必须将文件原始内容去掉 frontmatter 后直接传入 prompt，不要翻译、转录或改写
+- 团队配置路径：`~/.claude/teams/orch-dev/config.json`
+- 开发者上限 3 个（dev-1/2/3），避免修改冲突
+
+---
+
+## 2. 团队协作规范（铁律）
+
+### 2.1 测试纪律（反测试泥沼）
+
+**核心原则：测试是手段，不是目的。**
+
+| 规则 | 说明 | 违规后果 |
+|------|------|----------|
+| **禁止全量测试** | dev/qa-engineer 只能运行作用域内测试：`cd packages/<pkg> && npx vitest run` | 立即终止任务 |
+| **全量测试需授权** | 只有 tdd-guardian 可运行 `pnpm test`，且必须由 team-lead 明确指令 | 未授权运行视为违规 |
+| **测试不是验证** | 测试通过 ≠ 功能正确。必须对照预期结果验证 | verifier 不给无证据 PASS |
+| **禁止重复测试** | 同一测试在同一会话中运行超过 3 次即为泥沼 | team-lead 应终止并重新规划 |
+
+### 2.2 任务纪律
+
+| 规则 | 说明 |
+|------|------|
+| **先规划后执行** | 任务必须先记录在 `docs/plans/` 再分配 |
+| **单一职责** | 每个任务只做一件事，不要混合多个目标 |
+| **及时报告** | 完成后立即报告 commit hash + 变更文件 + 测试结果 |
+| **遇阻即停** | 遇到不清楚的问题立即停止并询问 team-lead |
+| **不自行扩展** | 不要做任务范围之外的事情 |
+
+### 2.3 协作纪律
+
+| 规则 | 说明 |
+|------|------|
+| **角色边界** | 每个角色只做职责范围内的事，越权即违规 |
+| **不代替决策** | dev 不做架构决策，architect 不写代码 |
+| **证据链** | 所有工作必须有 commit hash 作为证据 |
+| **签章流程** | 所有开发者工作必须经过 verifier 签章 |
+
+### 2.4 team-coach 职责（执行者，非建议者）
+
+team-coach 是**协作纪律的执行者**，职责：
+
+1. **检查合规**：每次任务完成后检查是否遵守协作规范
+2. **记录违规**：发现违规立即记录并报告 team-lead
+3. **不提建议**：只报告事实（谁、什么时间、什么违规），不提供改进建议
+4. **不定义规则**：规则由 team-lead 制定，team-coach 只执行检查
+
+---
+
+## 3. 工作记录规范
+
+每日工作记录保存在 `docs/daily-log/YYYY-MM-DD/work-log.md`，采用**证据链**格式：
+
+```markdown
+# 工作日志 YYYY-MM-DD
+
+## 当日目标
+- [ ] 目标1
+
+## 证据链
+
+### [成员名] — [任务描述]
+- **Commit:** <hash>
+- **变更文件:**
+  - `path/to/file.ts` — 变更说明
+- **测试结果:** x/y 通过
+- **验证:** 通过/待验证
+
+## 关键决策
+## 遗留问题
+## 明日计划
+```
+
+**要求：**
+- 每个成员的每项工作必须有 commit hash 作为证据
+- 变更文件列表要具体到文件级别
+- 测试结果要写明通过/失败数量
+- team-lead 负责汇总，但每个成员的报告是证据来源
+
+重要计划保存在 `docs/plans/YYYY-MM-DD/<plan-name>.md`。
+
+team-lead 每次会话开始检查未完成的日志，结束时更新当日记录。
+
+---
+
+## 4. Compact Instructions（上下文压缩指南）
+
+当上下文使用率超过 80% 时，按以下优先级保留信息：
+
+### 必须保留（不可丢失）
+
+1. **当前任务状态**：TaskList 中所有 in_progress 和 pending 任务
+2. **团队成员状态**：谁在做什么，最近的 commit hash
+3. **关键决策**：本轮迭代的重要技术决策
+4. **未完成工作**：待分配的任务列表
+
+### 可以压缩
+
+1. **已完成任务详情**：只保留 commit hash 和摘要，删除详细过程
+2. **测试输出**：只保留通过/失败数量，删除完整输出
+3. **代码审查详情**：只保留结论（PASS/FAIL），删除审查过程
+4. **日志历史**：只保留最近 2 天的日志，旧日志归档
+
+### 压缩格式
+
+```markdown
+## 压缩摘要（YYYY-MM-DD）
+
+### 已完成（本轮）
+- #XX 任务名 — commit: abc1234
+
+### 进行中
+- #YY 任务名 — 负责人: dev-1 — 状态: 进行中
+
+### 待处理
+- #ZZ 任务名 — 优先级: 高
+
+### 关键决策
+- 决策1: 描述
+- 决策2: 描述
+
+### 团队状态
+- dev-1: 工作中（Task #YY）
+- dev-2: 空闲
+- dev-3: 工作中（Task #ZZ）
+```
+
+### 压缩触发条件
+
+- 上下文使用率 > 80%：立即压缩
+- 每完成 5 个任务：检查是否需要压缩
+- 会话超过 30 分钟：检查是否需要压缩
