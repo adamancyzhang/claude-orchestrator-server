@@ -70,12 +70,16 @@ export class LeaderWatcher {
     to_instance?: string | null;
     to_name?: string | null;
   }): Promise<void> {
-    this.bus.emit({
-      type: "message_received",
-      from: msg.from_instance,
-      message_id: msg.id as never,
-      content: msg.content,
-    });
+    // worker_activity messages are observability-only; skip message_received
+    // to avoid displaying raw JSON batch payloads in the event log.
+    if (msg.type !== "worker_activity") {
+      this.bus.emit({
+        type: "message_received",
+        from: msg.from_instance,
+        message_id: msg.id as never,
+        content: msg.content,
+      });
+    }
 
     if (msg.from_instance !== this.leader_id && msg.type === "direct") {
       this.bus.emit({
