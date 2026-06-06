@@ -186,6 +186,10 @@ program
     const stateDir = getStateDir(this.optsWithGlobals());
     const state = readState(stateDir);
     const tail = parseInt(this.opts().tail, 10);
+    if (!Number.isFinite(tail) || tail < 1) {
+      console.error("--tail must be a positive integer");
+      process.exit(1);
+    }
     const events = state.events.slice(-tail);
     if (events.length === 0) {
       console.log("No events.");
@@ -256,8 +260,12 @@ program
           console.log("Specify --task or --chain to wait for.");
           return;
         }
-      } catch {
-        // State file may not exist yet, continue polling
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("State file not found")) {
+          // State file may not exist yet, continue polling
+        } else {
+          throw err;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
