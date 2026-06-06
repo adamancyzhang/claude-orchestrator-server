@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export interface StateData {
+  version: number;
   workers: Array<{
     id: string;
     name: string;
@@ -48,7 +49,11 @@ export function readState(stateDir: string): StateData {
     throw new Error(`State file not found: ${statePath}. Is the orchestrator running?`);
   }
   const raw = fs.readFileSync(statePath, "utf-8");
-  return JSON.parse(raw) as StateData;
+  const data = JSON.parse(raw) as StateData;
+  if (data.version !== 1) {
+    throw new Error(`Unsupported state version: ${data.version}. Expected version 1.`);
+  }
+  return data;
 }
 
 export function getStateDir(globalOpts: { stateDir?: string }): string {
