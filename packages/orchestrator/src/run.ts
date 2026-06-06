@@ -17,6 +17,7 @@ import {
 import {
   InMemoryZkClient,
   Logger,
+  PrometheusMetricsCollector,
   ZkClient,
   captureConsoleToFile,
   loadConfig,
@@ -284,7 +285,30 @@ export async function runOrchestrator(
   const bus = new LeaderEventBus();
   deps.on_leader_bus?.(bus);
   const state = new LeaderState();
-  bus.onAny((event) => state.apply(event));
+
+  // Initialize metrics collector and wire it to the event bus so all
+  // system events automatically update counters/gauges/histograms.
+  const metrics = new PrometheusMetricsCollector({ logger: logger.child("metrics") });
+
+  // Wire event bus to metrics collection
+  bus.onAny((event) => {
+    state.apply(event);
+    collectMetrics(metrics, event);
+  });
+
+  // Register default alert rules
+  metrics.addAlertRule({
+    name: "high_error_rate",
+    description: "Error count exceeds threshold",
+    check: () => metrics.errorsTotal.getValue() > 10,
+    severity: "critical",
+  });
+  metrics.addAlertRule({
+    name: "worker_disconnected",
+    description: "More workers left than joined",
+    check: () => metrics.workersLeft.getValue() > metrics.workersJoined.getValue(),
+    severity: "warning",
+  });
 
   const templateEngine = new TemplateEngine({
     primary_dir: path.join(paths.template_dir, "agents"),
@@ -448,6 +472,10 @@ export async function runOrchestrator(
     const leaderIdPath = path.join(stateDir, ".leader-id");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(leaderIdPath, leaderInstance.id, "utf-8");
+
+    // Export metrics in Prometheus text format for scraping
+    const metricsPath = path.join(stateDir, "metrics.prom");
+    fs.writeFileSync(metricsPath, metrics.format(), "utf-8");
     logger.info(`headless mode: state written to ${stateDir}`);
   }
 
@@ -543,6 +571,67 @@ export async function runOrchestrator(
       });
     }
   });
+}
+
+/**
+ * Collect metrics from LeaderEvent bus events. Called for every event
+ * emitted on the bus to keep PrometheusMetricsCollector in sync with
+ * the system state.
+ */
+function collectMetrics(
+  metrics: PrometheusMetricsCollector,
+  event: import("@co/contracts").LeaderEvent,
+): void {
+  switch (event.type) {
+    case "worker_joined":
+      metrics.workersJoined.inc();
+      metrics.activeWorkers.inc();
+      break;
+    case "worker_left":
+      metrics.workersLeft.inc();
+      metrics.activeWorkers.dec();
+      break;
+    case "task_created":
+      metrics.tasksCreated.inc();
+      metrics.pendingTasks.inc();
+      break;
+    case "task_claimed":
+      metrics.pendingTasks.dec();
+      metrics.claimedTasks.inc();
+      break;
+    case "task_completed":
+      metrics.tasksCompleted.inc({ link: "unknown", outcome: "success" });
+      metrics.claimedTasks.dec();
+      break;
+    case "task_failed":
+      metrics.tasksFailed.inc();
+      metrics.claimedTasks.dec();
+      metrics.errorsTotal.inc();
+      break;
+    case "task_recovered":
+      metrics.tasksRetried.inc();
+      metrics.recoveriesTotal.inc();
+      break;
+    case "chain_activated":
+      metrics.chainsActivated.inc();
+      metrics.activeChains.inc();
+      break;
+    case "chain_closed":
+      metrics.chainsClosed.inc();
+      metrics.activeChains.dec();
+      break;
+    case "message_sent":
+      metrics.messagesSent.inc();
+      break;
+    case "message_received":
+      metrics.messagesProcessed.inc();
+      break;
+    case "worker_activity":
+      if (event.action === "phase_start" || event.action === "phase_end") {
+        metrics.workerHeartbeats.inc();
+      }
+      break;
+  }
 }
 
 function ensureGitRepo(projectRoot: string, logger: ILogger): void {
