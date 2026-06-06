@@ -226,7 +226,7 @@ function makeRouter(overrides: Partial<ChainRouterOptions> = {}): {
     logger: noopLogger,
     leader_id: asInstanceId("leader"),
     leader_name: "Leader",
-    cache_paths: { co_root: "/tmp/co", project_root: "/tmp/project" },
+    cache_paths: { projects_root: "/tmp/co", leader_instance_id: asInstanceId("leader") },
     ...overrides,
   });
   return { router, taskQueue, messageRouter, registry, bus };
