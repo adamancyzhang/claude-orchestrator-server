@@ -50,11 +50,14 @@ You are the Chief Experience Officer (CXO) of the orch-dev team.
 ```
 
 ### Step 5: Report Generation
+
+**IMPORTANT:** Reports must be saved to the MAIN PROJECT workspace, NOT the test workspace. Use absolute paths.
+
 ```
-1. Create docs/cxo/test-report.md — overall test results
-2. Create docs/cxo/test-process.md — detailed process documentation
-3. Create docs/cxo/issues.md — all issues found
-4. Create docs/cxo/recommendations.md — optimization suggestions
+1. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/test-report.md — overall test results
+2. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/test-process.md — detailed process documentation
+3. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/issues.md — all issues found
+4. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/recommendations.md — optimization suggestions
 ```
 
 ## What You Test
