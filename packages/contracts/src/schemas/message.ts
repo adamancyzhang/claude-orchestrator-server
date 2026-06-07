@@ -32,6 +32,7 @@ export const MessageSchema = z.object({
   task_title: z.string().nullable().default(null),
   task_description: z.string().nullable().default(null),
   task_criteria: z.string().nullable().default(null),
+  system_prompt: z.string().nullable().default(null),
   result_path: z.string().nullable().default(null),
   original_requirement_path: z.string().nullable().default(null),
   reply_to: z.string().transform(asMessageId).nullable().default(null),
@@ -61,6 +62,7 @@ export interface SendMessageInput {
   task_title?: string | null;
   task_description?: string | null;
   task_criteria?: string | null;
+  system_prompt?: string | null;
   result_path?: string | null;
   original_requirement_path?: string | null;
   reply_to?: MessageId | null;
