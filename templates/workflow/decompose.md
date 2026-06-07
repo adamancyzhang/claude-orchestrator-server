@@ -91,9 +91,9 @@ Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{nam
       "description": "<one-line task description>",
       "criteria": "<verifiable criteria: concrete commands and expected outputs>",
       "quality_gate": {
-        "type": "test | review | self_eval | accept",
-        "command": "<validation command or review criteria>",
-        "criteria": "<expected outcome>"
+        "type": "test",
+        "criteria": "<expected outcome>",
+        "commands": ["<shell command>"]
       },
       "priority": 1,
       "depends_on": []
@@ -105,9 +105,9 @@ Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{nam
       "description": "<one-line task description>",
       "criteria": "<verifiable criteria>",
       "quality_gate": {
-        "type": "<gate type>",
-        "command": "<validation command>",
-        "criteria": "<expected outcome>"
+        "type": "review",
+        "criteria": "<expected outcome>",
+        "reviewer_prompt": "<prompt for reviewer>"
       },
       "priority": 1,
       "depends_on": ["0"]
@@ -120,10 +120,10 @@ Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{nam
 
 | Type | When to use | Example |
 |------|-------------|---------|
-| `test` | Code implementation, bug fixes | `{ "type": "test", "command": "npm test", "criteria": "all tests pass" }` |
-| `review` | Architecture, design decisions | `{ "type": "review", "command": "architect reviews structure", "criteria": "no layer violations" }` |
-| `self_eval` | Simple tasks, documentation | `{ "type": "self_eval", "command": "self-assess against criteria", "criteria": "all criteria met" }` |
-| `accept` | Critical deliverables | `{ "type": "accept", "command": "verifier signs off", "criteria": "acceptance confirmed" }` |
+| `test` | Code implementation, bug fixes | `{ "type": "test", "criteria": "all tests pass", "commands": ["pnpm test"] }` |
+| `review` | Architecture, design decisions | `{ "type": "review", "criteria": "no layer violations", "reviewer_prompt": "check architecture" }` |
+| `self_eval` | Simple tasks, documentation | `{ "type": "self_eval", "criteria": "all criteria met" }` |
+| `accept` | Critical deliverables | `{ "type": "accept", "criteria": "acceptance confirmed", "acceptor_prompt": "verify deliverables" }` |
 
 When `magic_mode=true`, append an explore task as the final entry:
 
@@ -136,7 +136,6 @@ When `magic_mode=true`, append an explore task as the final entry:
   "criteria": "result.md contains either spawn_chain{next_requirement:<non-empty>} or close_chain with a one-line rationale",
   "quality_gate": {
     "type": "self_eval",
-    "command": "evaluate chain completeness and follow-up value",
     "criteria": "decision made with clear rationale"
   },
   "priority": 1,
@@ -165,8 +164,8 @@ Output ONLY the JSON for the active mode. No explanation.
       "criteria": "npm run dev starts without errors; npm run build completes successfully; src/ directory contains .vue and .ts files",
       "quality_gate": {
         "type": "test",
-        "command": "npm run build && npm run dev",
-        "criteria": "build succeeds, dev server starts without errors"
+        "criteria": "build succeeds, dev server starts without errors",
+        "commands": ["npm run build", "npm run dev"]
       },
       "priority": 1,
       "depends_on": []
@@ -179,8 +178,8 @@ Output ONLY the JSON for the active mode. No explanation.
       "criteria": "npm run lint exits 0; npm run format --check exits 0; import from '@/...' resolves correctly",
       "quality_gate": {
         "type": "test",
-        "command": "npm run lint && npm run format --check",
-        "criteria": "lint and format checks pass with exit 0"
+        "criteria": "lint and format checks pass with exit 0",
+        "commands": ["npm run lint", "npm run format --check"]
       },
       "priority": 1,
       "depends_on": ["0"]
@@ -193,8 +192,8 @@ Output ONLY the JSON for the active mode. No explanation.
       "criteria": "npm run dev starts; navigating to / shows HomeView; navigating to /about shows AboutView; no console errors",
       "quality_gate": {
         "type": "test",
-        "command": "npm run build && npm run dev",
-        "criteria": "build succeeds, pages load and navigate correctly"
+        "criteria": "build succeeds, pages load and navigate correctly",
+        "commands": ["npm run build", "npm run dev"]
       },
       "priority": 1,
       "depends_on": ["1"]
