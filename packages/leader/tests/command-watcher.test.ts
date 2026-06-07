@@ -120,8 +120,9 @@ describe("CommandWatcher", () => {
     await waitDebounce();
     expect(router.sent).toHaveLength(1);
     expect(router.sent[0].content).toBe("hello");
-    expect(router.sent[0].type).toBe("direct");
+    expect(router.sent[0].type).toBe("user_input");
     expect(router.sent[0].from_instance).toBe(LEADER_ID);
+    expect(router.sent[0].to_instance).toBe(LEADER_ID);
 
     watcher.stop();
   });

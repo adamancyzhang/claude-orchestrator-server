@@ -113,10 +113,10 @@ export class CommandWatcher {
 
     if (parsed.type === "send" && typeof parsed.content === "string") {
       const input: SendMessageInput = {
-        type: "direct",
+        type: "user_input",
         from_instance: this.leaderId,
         from_name: this.leaderName,
-        to_instance: null,
+        to_instance: this.leaderId,
         content: parsed.content,
       };
 
