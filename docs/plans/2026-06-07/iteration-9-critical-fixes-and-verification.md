@@ -3,7 +3,7 @@
 ## Status
 - **Overall:** in_progress
 - **Progress:** 16/19 tasks completed
-- **Last Updated:** 2026-06-07 14:19
+- **Last Updated:** 2026-06-07 17:36
 
 ## 目标
 1. 修复 CXO 发现的 2 个 CRITICAL 问题（orchestrator 挂死、send 不触发任务）
@@ -14,8 +14,8 @@
 
 - [x] Task 1: 修复 orchestrator `run` 命令挂死问题 (CXO CRITICAL) — commit: d37a9d4
 - [x] Task 2: 修复 `send` 命令不触发任务创建问题 (CXO CRITICAL) — 无需修复，send 正常，问题在 decompose
-- [ ] Task 3: 验证 Leader 动态 ChainDef 生成 (iteration-8 遗留)
-- [ ] Task 4: 验证 Worker 自动领取任务 (iteration-8 遗留) — FAIL: decompose 输出 markdown 非 JSON
+- [x] Task 3: 验证 Leader 动态 ChainDef 生成 (iteration-8 遗留) — PASS（testing-1 真机测试通过）
+- [ ] Task 4: 验证 Worker 自动领取任务 (iteration-8 遗留) — testing-2 多次重试，部分成功（任务创建+dispatch 有时不触发，模型行为不一致）
 - [x] Task 5: 验证质量门自动触发 (iteration-8 遗留) — PASS（单元测试通过，E2E 被 decompose bug 阻塞）
 - [x] Task 6: 验证追溯链记录 (iteration-8 遗留) — PASS with gaps（成功路径完整，失败/断连缺失 audit 记录）
 - [x] Task 7: 执行复盘流程改进 (HIGH/MEDIUM) — commit: 1ff6135
