@@ -50,3 +50,15 @@
   4. Concurrent safety — uses mutex when provided, skips when not
   5. Scope isolation — only commits files in docs/<worker_name>/
 - **验证:** ✅ 已签章
+
+## Task #3: Real-time Metrics Visualization
+- **Commit:** 043c6e2
+- **Changed files:** ws-server.ts, chart-data.ts, historical-query.ts, index.ts, server.ts, realtime.test.ts
+- **Test results:** 121/121 passed
+- **Verification:** qa-engineer PASS, architect PASS
+
+## Task #5: Historical Data Management
+- **Commit:** d1771f0 + 62e29e2
+- **Changed files:** historical-data.ts, historical-data.test.ts, index.ts
+- **Test results:** 11/11 passed
+- **Verification:** pending
