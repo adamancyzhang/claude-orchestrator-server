@@ -301,12 +301,16 @@ export class LoadBalancer {
     // Sort by load score (ascending - lower is better)
     const sorted = [...workers].sort((a, b) => a.load_score - b.load_score);
 
-    // Add some randomness to prevent thundering herd
-    // Pick from top 3 candidates if available
-    const topCandidates = sorted.slice(0, Math.min(3, sorted.length));
-    const randomIndex = Math.floor(Math.random() * topCandidates.length);
-
-    const best = topCandidates[randomIndex];
+    // Add some randomness to prevent thundering herd, but only when
+    // there are multiple candidates that are close in load score.
+    // With fewer than 3 candidates, always pick the lowest loaded.
+    let best: WorkerLoad;
+    if (sorted.length >= 3) {
+      const topCandidates = sorted.slice(0, 3);
+      best = topCandidates[Math.floor(Math.random() * topCandidates.length)];
+    } else {
+      best = sorted[0];
+    }
     this.logger?.debug("load balancer selected worker", {
       instance_id: best.instance_id,
       name: best.name,

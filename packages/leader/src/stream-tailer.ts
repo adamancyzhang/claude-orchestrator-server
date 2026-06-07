@@ -46,8 +46,12 @@ export class StreamTailer {
         return;
       }
 
+      if (stat.size < this.lastPosition) {
+        // File was truncated — reset position and read from the beginning.
+        this.lastPosition = 0;
+      }
+
       if (stat.size <= this.lastPosition) {
-        if (stat.size < this.lastPosition) this.lastPosition = 0;
         return;
       }
 

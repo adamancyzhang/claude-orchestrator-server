@@ -101,11 +101,11 @@ describe("StreamTailer", () => {
     expect(lines).toContain("original");
 
     // Simulate truncation by overwriting with shorter content.
-    writeFileSync(filePath, "truncated\n");
+    writeFileSync(filePath, "short\n");
     await waitPoll();
 
     // The tailer should read the new content from position 0.
-    expect(lines).toContain("truncated");
+    expect(lines).toContain("short");
 
     tailer.stop();
   });
