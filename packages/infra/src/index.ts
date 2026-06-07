@@ -72,3 +72,10 @@ export {
   type MemoryOptimizerOptions,
   type OptimizationResult,
 } from "./memory-optimizer.js";
+export {
+  HistoricalData,
+  type MetricDataPoint,
+  type HistoricalQuery,
+  type HistoricalDataOptions,
+  type Granularity,
+} from "./historical-data.js";
