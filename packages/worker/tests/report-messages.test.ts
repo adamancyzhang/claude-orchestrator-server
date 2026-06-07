@@ -38,6 +38,7 @@ import {
   sendForcedFeedbackReport,
   type WorkerIdentity,
 } from "../src/report-messages.js";
+import type { QualityGateResult } from "../src/quality-gate.js";
 
 const IDENTITY: WorkerIdentity = {
   instance_id: asInstanceId("worker-x"),
@@ -175,6 +176,78 @@ describe("buildCompletionBody", () => {
     expect(body.startsWith("free-text evaluator output")).toBe(true);
     expect(body).toContain(`Commit: ${commit.sha.slice(0, 7)} - ${commit.message}`);
     expect(body).toContain("Docs commit: 1111111");
+  });
+
+  it("merges quality_gate_result into JSON evaluator output when provided", () => {
+    const gateResult: QualityGateResult = {
+      passed: true,
+      gate_type: "test",
+      message: "all tests passed",
+    };
+    const body = buildCompletionBody({
+      evalContent: '{"decision":"activate_next"}',
+      commit: null,
+      docsSha: null,
+      worktreeBranch: "br",
+      qualityGateResult: gateResult,
+    });
+    const parsed = JSON.parse(body);
+    expect(parsed.quality_gate_result).toEqual({
+      type: "test",
+      passed: true,
+      details: "all tests passed",
+      requires_async: false,
+    });
+  });
+
+  it("includes requires_async=true for review gates", () => {
+    const gateResult: QualityGateResult = {
+      passed: true,
+      gate_type: "review",
+      message: "Review pending: check architecture",
+      requires_async: true,
+    };
+    const body = buildCompletionBody({
+      evalContent: '{"decision":"activate_next"}',
+      commit: null,
+      docsSha: null,
+      worktreeBranch: "br",
+      qualityGateResult: gateResult,
+    });
+    const parsed = JSON.parse(body);
+    expect(parsed.quality_gate_result.requires_async).toBe(true);
+    expect(parsed.quality_gate_result.type).toBe("review");
+  });
+
+  it("omits quality_gate_result when not provided", () => {
+    const body = buildCompletionBody({
+      evalContent: '{"decision":"activate_next"}',
+      commit: null,
+      docsSha: null,
+      worktreeBranch: "br",
+    });
+    const parsed = JSON.parse(body);
+    expect(parsed.quality_gate_result).toBeUndefined();
+  });
+
+  it("merges quality_gate_result alongside commit fields", () => {
+    const gateResult: QualityGateResult = {
+      passed: false,
+      gate_type: "test",
+      message: "Command failed: npm test\nExit code: 1",
+    };
+    const body = buildCompletionBody({
+      evalContent: '{"decision":"needs_revision"}',
+      commit,
+      docsSha: "abc123",
+      worktreeBranch: "br",
+      qualityGateResult: gateResult,
+    });
+    const parsed = JSON.parse(body);
+    expect(parsed.commit).toBeDefined();
+    expect(parsed.commits).toBeDefined();
+    expect(parsed.quality_gate_result.passed).toBe(false);
+    expect(parsed.quality_gate_result.details).toContain("Command failed");
   });
 });
 

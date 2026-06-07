@@ -8,6 +8,7 @@ import type {
   TaskLink,
 } from "@co/contracts";
 import type { CommitResult } from "./commit-checker.js";
+import type { QualityGateResult } from "./quality-gate.js";
 
 export interface WorkerIdentity {
   instance_id: InstanceId;
@@ -33,9 +34,10 @@ export function buildCompletionBody(args: {
   commit: CommitResult | null;
   docsSha: string | null;
   worktreeBranch: string;
+  qualityGateResult?: QualityGateResult;
 }): string {
-  const { evalContent, commit, docsSha, worktreeBranch } = args;
-  if (!commit && !docsSha) return evalContent;
+  const { evalContent, commit, docsSha, worktreeBranch, qualityGateResult } = args;
+  if (!commit && !docsSha && !qualityGateResult) return evalContent;
   try {
     const json = JSON.parse(evalContent);
     json.commits = {
@@ -50,6 +52,14 @@ export function buildCompletionBody(args: {
         branch: worktreeBranch,
         changed_files: commit.changed_files,
         untracked_files: commit.untracked_files,
+      };
+    }
+    if (qualityGateResult) {
+      json.quality_gate_result = {
+        type: qualityGateResult.gate_type,
+        passed: qualityGateResult.passed,
+        details: qualityGateResult.message,
+        requires_async: qualityGateResult.requires_async ?? false,
       };
     }
     return JSON.stringify(json);
