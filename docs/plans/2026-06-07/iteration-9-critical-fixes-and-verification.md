@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 2/7 tasks completed
+- **Progress:** 3/8 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -15,16 +15,18 @@
 - [x] Task 1: 修复 orchestrator `run` 命令挂死问题 (CXO CRITICAL) — commit: d37a9d4
 - [ ] Task 2: 修复 `send` 命令不触发任务创建问题 (CXO CRITICAL)
 - [ ] Task 3: 验证 Leader 动态 ChainDef 生成 (iteration-8 遗留)
-- [ ] Task 4: 验证 Worker 自动领取任务 (iteration-8 遗留)
-- [ ] Task 5: 验证质量门自动触发 (iteration-8 遗留)
-- [ ] Task 6: 验证追溯链记录 (iteration-8 遗留)
+- [ ] Task 4: 验证 Worker 自动领取任务 (iteration-8 遗留) — FAIL: decompose 输出 markdown 非 JSON
+- [x] Task 5: 验证质量门自动触发 (iteration-8 遗留) — PASS（单元测试通过，E2E 被 decompose bug 阻塞）
+- [ ] Task 6: 验证追溯链记录 (iteration-8 遗留) — NEEDS_WORK: 需要代码分析而非跑测试
 - [x] Task 7: 执行复盘流程改进 (HIGH/MEDIUM) — commit: 1ff6135
+- [ ] Task 8: 修复 decompose 输出 markdown 而非 JSON (新发现 CRITICAL)
 
 ## 依赖关系
 
 ```
 Task 1 (fix run) ──→ Task 3,4,5,6 (验证任务依赖核心功能可用)
 Task 2 (fix send) ──→ Task 3 (ChainDef 需要 send 触发)
+Task 8 (fix decompose) ──→ Task 3,4 (验证任务依赖 decompose 正确输出 JSON)
 Task 7 (process) ── 独立
 ```
 
@@ -81,8 +83,16 @@ Task 7 (process) ── 独立
 - **依赖:** 无（可并行执行）
 - **验收标准:** 模板更新完成，记录变更日志
 
+### Task 8: 修复 decompose 输出 markdown 而非 JSON
+- **优先级:** P0 (CRITICAL)
+- **分配:** dev-1
+- **问题描述:** Leader decompose 步骤中，Claude 返回 markdown 格式而非 JSON，导致 chain router 解析失败 `SyntaxError: Unexpected token '#'`
+- **验收标准:** decompose 输出可被 chain router 正确解析为 JSON ChainDef
+- **依赖:** 无（阻塞 Task 3, 4）
+
 ## 成功标准
 1. CXO 两个 CRITICAL 问题修复
-2. iteration-8 四个验证任务全部 PASS
-3. 复盘 HIGH/MEDIUM 改进项落地
-4. 迭代完成率 ≥ 85%
+2. decompose 输出格式修复（新发现）
+3. iteration-8 四个验证任务全部 PASS
+4. 复盘 HIGH/MEDIUM 改进项落地
+5. 迭代完成率 ≥ 85%
