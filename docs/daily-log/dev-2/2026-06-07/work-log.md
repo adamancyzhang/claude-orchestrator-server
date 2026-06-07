@@ -30,3 +30,15 @@
   - docs/archive/README.md (new index)
 - **Test results:** N/A (documentation only)
 - **Verification:** team-coach PASS
+
+## Task #13: Modify Decompose Template
+- **Commit:** 04eea5b
+- **Changed files:** templates/workflow/decompose.md
+- **Test results:** N/A (template only)
+- **Verification:** team-lead PASS
+
+## Task #19: Update Decompose Template for quality_gate
+- **Commit:** 597ebd0
+- **Changed files:** templates/workflow/decompose.md
+- **Test results:** N/A (template only)
+- **Verification:** team-lead PASS
