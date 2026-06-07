@@ -532,7 +532,17 @@ export class ChainRouter {
         },
       });
     }
-    const resultContent = await fs.promises.readFile(resultPath, "utf-8");
+
+    // Try to read from resultPath first (if Claude wrote to file),
+    // otherwise fall back to reading from logPath (inbound.log)
+    let resultContent: string;
+    try {
+      resultContent = await fs.promises.readFile(resultPath, "utf-8");
+    } catch {
+      // resultPath doesn't exist, read from logPath instead
+      resultContent = await fs.promises.readFile(logPath, "utf-8");
+    }
+
     const cleaned = extractJson(resultContent);
     await this.handleTaskDefinitions(
       { ...msg, content: cleaned },
