@@ -21,7 +21,7 @@
 - **Test results:** 29/29 passed
 - **Summary:** MetricsCollectionService with aggregation by 1min/5min/1hour intervals, 30-day retention, Prometheus export.
 
-## Task #7: Documentation Cleanup and Archival
+## Task #10: Documentation Cleanup and Archival
 - **Commit:** 997fb9d
 - **Changed files:**
   - docs/archive/v1.0/ (4 files moved)
@@ -31,25 +31,25 @@
 - **Test results:** N/A (documentation only)
 - **Verification:** team-coach PASS
 
-## Task #13: Modify Decompose Template
+## Task #18: Modify Decompose Template
 - **Commit:** 04eea5b
 - **Changed files:** templates/workflow/decompose.md
 - **Test results:** N/A (template only)
 - **Verification:** team-lead PASS
 
-## Task #19: Update Decompose Template for quality_gate
+## Task #22: Update Decompose Template for quality_gate
 - **Commit:** 597ebd0
 - **Changed files:** templates/workflow/decompose.md
 - **Test results:** N/A (template only)
 - **Verification:** team-lead PASS
 
-## Task #16: Modify Worker System Prompt Construction
+## Task #20: Modify Worker System Prompt Construction
 - **Commit:** d9ff386
 - **Changed files:** packages/runtime/src/identity.ts, runner.ts, identity.test.ts
 - **Test results:** 84/84 passed
 - **Verification:** team-lead PASS
 
-## Task #15: Modify Worker to Use Dynamic System Prompt
+## Task #24: Modify Worker to Use Dynamic System Prompt
 - **Commit:** f0231e3
 - **Changed files:** packages/worker/src/watcher.ts
 - **Test results:** 87/87 passed
