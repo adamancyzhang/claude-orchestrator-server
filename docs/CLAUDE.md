@@ -27,6 +27,22 @@ docs/
 │   │   └── YYYY-MM-DD/
 │   │       ├── work-log.md
 │   │       └── evidence/
+│   ├── code-reviewer/
+│   │   └── YYYY-MM-DD/
+│   │       ├── work-log.md
+│   │       └── evidence/   ← 审查依据
+│   ├── testing-1/
+│   │   └── YYYY-MM-DD/
+│   │       ├── work-log.md
+│   │       └── evidence/   ← 测试报告
+│   ├── testing-2/
+│   │   └── YYYY-MM-DD/
+│   │       ├── work-log.md
+│   │       └── evidence/
+│   ├── testing-3/
+│   │   └── YYYY-MM-DD/
+│   │       ├── work-log.md
+│   │       └── evidence/
 │   ├── architect/
 │   │   └── YYYY-MM-DD/
 │   │       ├── work-log.md
@@ -35,32 +51,25 @@ docs/
 │   │   └── YYYY-MM-DD/
 │   │       ├── work-log.md
 │   │       └── evidence/   ← 验证依据
-│   ├── qa-engineer/
+│   ├── cxo/
 │   │   └── YYYY-MM-DD/
 │   │       ├── work-log.md
-│   │       └── evidence/
-│   ├── team-coach/
-│   │   └── YYYY-MM-DD/
-│   │       ├── work-log.md
-│   │       └── evidence/   ← 违规证据
-│   ├── tdd-guardian/
-│   │   └── YYYY-MM-DD/
-│   │       ├── work-log.md
-│   │       └── evidence/   ← 测试报告
+│   │       └── evidence/   ← 用户体验报告
 │   └── product-manager/
 │       └── YYYY-MM-DD/
 │           ├── work-log.md
 │           └── evidence/   ← 需求文档
-└── plans/                 ← 迭代计划
+├── plans/                 ← 当前迭代计划
+│   └── YYYY-MM-DD/
+│       └── iteration-N-*.md  ← 迭代计划（按序号排列）
+└── archive/               ← 已完成内容归档
     └── YYYY-MM-DD/
-        └── iteration-N-*.md  ← 迭代计划（按序号排列）
+        └── YYYY-MM-DD_iteration-N-*.md  ← 日期前缀 + UUID 追踪
 ```
 
 ---
 
 ## 责任链工作流
-
-参考 `templates/agents/` 定义的责任链模式：
 
 ```
 需求 → Planner → Executor → Verifier → Reviewer → Accepter
@@ -76,9 +85,9 @@ docs/
 | Verifier | verifier | 验证执行结果，对照计划检查 |
 | Reviewer | architect | 审查架构合规性 |
 | Accepter | team-lead | 最终验收，决定通过或退回 |
-| Quality | qa-engineer | 质量检查，边界条件验证 |
-| Testing | tdd-guardian | 按指令运行全量测试 |
-| Compliance | team-coach | 协作规范合规检查 |
+| Code Review | code-reviewer | 代码审查，质量检查 |
+| Testing | testing-1/2/3 | 测试验证，边界条件检查 |
+| UX | cxo | 用户体验测试 |
 | Requirements | product-manager | 需求定义，优先级排序 |
 
 ---
@@ -175,11 +184,13 @@ docs/
 | dev-1 | `dev-1/` | 编码、测试、提交 | 测试输出 |
 | dev-2 | `dev-2/` | 编码、测试、提交 | 测试输出 |
 | dev-3 | `dev-3/` | 编码、测试、提交 | 测试输出 |
+| code-reviewer | `code-reviewer/` | 代码审查 | 审查依据 |
+| testing-1 | `testing-1/` | 测试验证 | 测试报告 |
+| testing-2 | `testing-2/` | 测试验证 | 测试报告 |
+| testing-3 | `testing-3/` | 测试验证 | 测试报告 |
 | architect | `architect/` | 架构审查 | 审查依据 |
 | verifier | `verifier/` | 签章验证 | 验证依据 |
-| qa-engineer | `qa-engineer/` | 质量验证 | 测试报告 |
-| team-coach | `team-coach/` | 协作检查 | 违规证据 |
-| tdd-guardian | `tdd-guardian/` | 全量测试 | 测试报告 |
+| cxo | `cxo/` | 用户体验 | 用户体验报告 |
 | product-manager | `product-manager/` | 产品规划 | 需求文档 |
 
 ### work-log.md 结构
@@ -221,16 +232,21 @@ docs/
 ### iteration-N-*.md 结构
 
 ```markdown
-# Iteration N: <标题>
+# Iteration N - <标题> — YYYY-MM-DD
 
-**日期：** YYYY-MM-DD
-**状态：** 进行中/已完成
-
----
+## Status
+- **Overall:** in_progress | completed | blocked
+- **Progress:** X/Y tasks completed
+- **Last Updated:** YYYY-MM-DD HH:MM
 
 ## 目标
 - 目标1
 - 目标2
+
+## Checklist
+
+- [ ] Task 1: description
+- [ ] Task 2: description
 
 ## 任务分解
 
@@ -256,6 +272,22 @@ docs/
 | **包含验证方式** | 每个计划必须说明如何验证完成 |
 | **包含验收标准** | 每个任务必须有可验证的验收条件 |
 | **包含预期产出** | 明确列出每个任务的交付物 |
+| **Checklist 追踪** | 使用 `- [x] Task N: description — commit: <hash>` 格式 |
+
+---
+
+## 归档规范（archive/）
+
+### 归档规则
+- 已完成的迭代计划归档到 `archive/YYYY-MM-DD/`
+- 文件命名：`YYYY-MM-DD_iteration-N-<描述>_<uuid>.md`
+- UUID 为 8 位短 UUID，用于追踪标识
+- 超过 7 天的日志不再主动维护
+
+### 归档内容
+- 迭代计划（iteration-N-*.md）
+- 基准测试场景（benchmark-scenarios.md）
+- 其他已完成的一次性文档
 
 ---
 
@@ -266,12 +298,9 @@ docs/
 - 每次会话结束更新当日记录
 - 确保所有任务都有文档记录
 - 最终验收每个任务
+- 归档已完成的迭代计划
 
 ### 团队成员职责
 - 完成任务后立即报告 commit hash 和变更文件
 - 在自己的目录下记录工作日志
 - 保存证据到 evidence/ 目录
-
-### 归档规则
-- 超过 7 天的日志不再主动维护
-- 重要决策保留在 memory 文件中跨会话持久化
