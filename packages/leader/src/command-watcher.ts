@@ -34,14 +34,14 @@ export class CommandWatcher {
   }
 
   async start(): Promise<void> {
-    // Read existing file size so we only process new lines going forward.
-    try {
-      const stat = statSync(this.filePath);
-      this.byteOffset = stat.size;
-    } catch {
-      // File does not exist yet; start at offset 0.
-      this.byteOffset = 0;
-    }
+    // Process any existing commands in the file from the beginning.
+    // This ensures commands sent BEFORE the orchestrator started are
+    // still processed (e.g. `claude-orchestrator send "..."` followed
+    // by `claude-orchestrator run --headless`).
+    this.byteOffset = 0;
+
+    // Process existing content first
+    await this.processNewLines();
 
     // Watch the directory (not the file) so we get events even when the
     // file is created after start().

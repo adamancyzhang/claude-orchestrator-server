@@ -1,12 +1,13 @@
 // CORE-RETENTION
 // Locks in: CommandWatcher reads commands.jsonl for new lines, parses JSON,
 // and forwards valid "send" commands via messageRouter.send(). Skips malformed
-// JSON, non-send commands, and lines missing "content". Tracks file position
-// to only process new lines. Uses fs.watch with debounce.
+// JSON, non-send commands, and lines missing "content". Processes existing
+// lines on startup to handle commands sent before the orchestrator started.
+// Uses fs.watch with debounce.
 // Critical because: CommandWatcher is the entry point for external commands
 // into the leader. A missed or duplicated command means lost user input or
-// duplicate messages. Position tracking prevents re-processing old lines
-// after restart.
+// duplicate messages. Processing existing lines ensures commands sent before
+// startup are not lost.
 // Primary sources: packages/leader/src/command-watcher.ts
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
@@ -91,7 +92,7 @@ describe("CommandWatcher", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("does not process lines that existed before start()", async () => {
+  it("processes lines that existed before start()", async () => {
     writeFileSync(
       join(stateDir, "commands.jsonl"),
       JSON.stringify({ type: "send", content: "old command" }) + "\n",
@@ -102,7 +103,8 @@ describe("CommandWatcher", () => {
     await watcher.start();
 
     await waitDebounce();
-    expect(router.sent).toHaveLength(0);
+    expect(router.sent).toHaveLength(1);
+    expect(router.sent[0].content).toBe("old command");
 
     watcher.stop();
   });
