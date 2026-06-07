@@ -693,8 +693,10 @@ export class ChainRouter {
     }
 
     // Dispatch the first task to an available worker.
+    // New format tasks don't have a specific role requirement,
+    // so we look for any available idle worker.
     if (firstTask && firstTaskId) {
-      const worker = await this.findIdleWorkerByRole("executor");
+      const worker = await this.findIdleWorker();
       if (worker) {
         if (this.opts.chain_audit) {
           await this.opts.chain_audit.setLinkTask(
@@ -1784,6 +1786,20 @@ export class ChainRouter {
     const instances = await this.opts.registry.list();
     for (const inst of instances) {
       if (inst.role === role && inst.status === "idle") {
+        return { id: inst.id, name: inst.name };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Find any available idle worker regardless of role.
+   * Used by new format tasks that don't have a specific role requirement.
+   */
+  private async findIdleWorker(): Promise<{ id: InstanceId; name: string } | null> {
+    const instances = await this.opts.registry.list();
+    for (const inst of instances) {
+      if (inst.status === "idle") {
         return { id: inst.id, name: inst.name };
       }
     }
