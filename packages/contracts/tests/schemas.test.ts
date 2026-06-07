@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { TaskSchema } from "../src/schemas/task.js";
 import { InstanceSchema } from "../src/schemas/instance.js";
 import { MessageSchema } from "../src/schemas/message.js";
-import { ChainDefSchema } from "../src/schemas/chain.js";
+import { ChainDefSchema, LegacyChainDefSchema, NewChainDefSchema, ChainTaskSchema } from "../src/schemas/chain.js";
 import { EvalDecisionSchema } from "../src/schemas/eval.js";
 import { MergeDecisionSchema } from "../src/schemas/merge.js";
 
@@ -248,6 +248,136 @@ describe("ChainDefSchema", () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  // ── New format (task_list with system_prompt) ──────────────────────
+
+  it("accepts new format with task_list", () => {
+    const parsed = ChainDefSchema.parse({
+      chain_id: "c-2",
+      chain_title: "dynamic chain",
+      task_list: [
+        {
+          task_id: "t-1",
+          title: "Set up project",
+          description: "Initialize the project",
+          system_prompt: "You are setting up a new project.",
+        },
+      ],
+    });
+    expect(parsed.chain_id).toBe("c-2");
+    if ("task_list" in parsed) {
+      expect(parsed.task_list).toHaveLength(1);
+      expect(parsed.task_list[0].task_id).toBe("t-1");
+      expect(parsed.task_list[0].system_prompt).toBe("You are setting up a new project.");
+    }
+  });
+
+  it("accepts new format with depends_on and defaults", () => {
+    const parsed = ChainDefSchema.parse({
+      chain_id: "c-3",
+      chain_title: "chained tasks",
+      task_list: [
+        {
+          task_id: "t-1",
+          title: "First",
+          description: "Step one",
+          system_prompt: "Do step one.",
+        },
+        {
+          task_id: "t-2",
+          title: "Second",
+          description: "Step two",
+          system_prompt: "Do step two.",
+          depends_on: ["t-1"],
+          priority: 2,
+          criteria: "Code compiles",
+        },
+      ],
+    });
+    if ("task_list" in parsed) {
+      expect(parsed.task_list).toHaveLength(2);
+      expect(parsed.task_list[1].depends_on).toEqual(["t-1"]);
+      expect(parsed.task_list[1].priority).toBe(2);
+      expect(parsed.task_list[1].criteria).toBe("Code compiles");
+      // defaults applied
+      expect(parsed.task_list[0].depends_on).toEqual([]);
+      expect(parsed.task_list[0].priority).toBe(1);
+    }
+  });
+
+  it("rejects new format with empty task_list", () => {
+    expect(
+      NewChainDefSchema.safeParse({
+        chain_id: "c-4",
+        chain_title: "empty",
+        task_list: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects new format missing system_prompt", () => {
+    expect(
+      NewChainDefSchema.safeParse({
+        chain_id: "c-5",
+        chain_title: "no prompt",
+        task_list: [
+          {
+            task_id: "t-1",
+            title: "Task",
+            description: "Desc",
+            // system_prompt missing
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects new format missing task_id", () => {
+    expect(
+      NewChainDefSchema.safeParse({
+        chain_id: "c-6",
+        chain_title: "no id",
+        task_list: [
+          {
+            title: "Task",
+            description: "Desc",
+            system_prompt: "prompt",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("distinguishes legacy and new formats", () => {
+    // Legacy: has `tasks` key with object value
+    const legacy = LegacyChainDefSchema.safeParse({
+      chain_id: "c-1",
+      chain_title: "old",
+      tasks: {
+        plan: taskDef,
+        execute: taskDef,
+        verify: taskDef,
+        review: taskDef,
+        accept: taskDef,
+      },
+    });
+    expect(legacy.success).toBe(true);
+
+    // New: has `task_list` key with array value
+    const fresh = NewChainDefSchema.safeParse({
+      chain_id: "c-2",
+      chain_title: "new",
+      task_list: [
+        { task_id: "t-1", title: "T", description: "D", system_prompt: "P" },
+      ],
+    });
+    expect(fresh.success).toBe(true);
+
+    // Cross-rejection: legacy data rejected by new schema
+    expect(NewChainDefSchema.safeParse({ chain_id: "c", chain_title: "x", tasks: {} }).success).toBe(false);
+    // Cross-rejection: new data rejected by legacy schema
+    expect(LegacyChainDefSchema.safeParse({ chain_id: "c", chain_title: "x", task_list: [] }).success).toBe(false);
   });
 });
 
