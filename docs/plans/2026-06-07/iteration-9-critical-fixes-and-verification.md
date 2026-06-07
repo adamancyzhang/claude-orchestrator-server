@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 14/18 tasks completed
+- **Progress:** 15/18 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -28,7 +28,7 @@
 - [x] Task 14: 修复 TaskLink 枚举不接受数字 ID — commit: 7c6f150
 - [x] Task 15: 修复 decompose.md 未被 runner 创建 — commit: 2fdbd6d
 - [x] Task 16: 修复 task-queue 验证 link:null — 无法复现，已修复
-- [ ] Task 17: 修复任务 dispatch 逻辑（任务创建但不被 worker 领取）
+- [x] Task 17: 修复任务 dispatch 逻辑 — commit: 2defc01
 
 ## 依赖关系
 
