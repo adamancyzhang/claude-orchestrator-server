@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 5/10 tasks completed
+- **Progress:** 6/11 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -13,7 +13,7 @@
 ## Checklist
 
 - [x] Task 1: 修复 orchestrator `run` 命令挂死问题 (CXO CRITICAL) — commit: d37a9d4
-- [ ] Task 2: 修复 `send` 命令不触发任务创建问题 (CXO CRITICAL)
+- [x] Task 2: 修复 `send` 命令不触发任务创建问题 (CXO CRITICAL) — 无需修复，send 正常，问题在 decompose
 - [ ] Task 3: 验证 Leader 动态 ChainDef 生成 (iteration-8 遗留)
 - [ ] Task 4: 验证 Worker 自动领取任务 (iteration-8 遗留) — FAIL: decompose 输出 markdown 非 JSON
 - [x] Task 5: 验证质量门自动触发 (iteration-8 遗留) — PASS（单元测试通过，E2E 被 decompose bug 阻塞）
@@ -21,6 +21,7 @@
 - [x] Task 7: 执行复盘流程改进 (HIGH/MEDIUM) — commit: 1ff6135
 - [x] Task 8: 修复 decompose 输出 markdown 而非 JSON (新发现 CRITICAL) — commit: 066727c
 - [ ] Task 9: 修复 ChainAudit 缺失记录（claim/failure/disconnect）
+- [ ] Task 10: 修复 decompose 模板 tasks vs task_list 字段名不匹配
 
 ## 依赖关系
 
