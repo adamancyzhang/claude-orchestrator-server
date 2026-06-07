@@ -9,45 +9,46 @@
 
 ### Iteration 9 — Critical Fixes & Verification
 
-**Completed (7/12):**
+**Completed (13/17):**
 - Task #4: Fix orchestrator `run` hang — commit d37a9d4 (dev-1)
 - Task #5: Fix `send` command — 无需修复，send 正常
 - Task #8: Verify quality gate — PASS (testing-3)
 - Task #9: Verify traceability chain — PASS with gaps (code-reviewer)
 - Task #10: Process improvements — commit 1ff6135 (process-engineer)
 - Task #11: Fix decompose markdown output — commit 066727c (dev-1)
+- Task #12: Fix ChainAudit gaps — commit 6f2cdef (dev-2)
 - Task #13: Fix template tasks vs task_list — commit 9e8d513 (dev-1)
+- Task #14: Add response normalizer — commit afbcea3 (dev-1)
+- quality_gate expected→criteria — commit a7182b3 (team-lead)
+- quality_gate structure — commit c3dcfbc (team-lead)
+- TaskLink enum — commit 7c6f150 (dev-1)
+- decompose.md fallback — commit 2fdbd6d (dev-1)
 
 **In Progress:**
-- Task #12: Fix ChainAudit gaps (dev-2)
-- Task #14: Add response normalizer (dev-1)
+- Task #17: Fix task-queue validation (dev-2) — 无法复现，可能已修复
 
-**Blocked:**
-- Task #6: Verify ChainDef — waiting on Task #14
-- Task #7: Verify Worker auto-claim — FAIL, model ignores template format
+**Verification:**
+- Task #6: Verify ChainDef — testing-1 重试中
+- Task #7: Verify Worker — testing-2 重试中
 
 ### Key Findings
-1. **CXO CRITICAL:** orchestrator `run` hangs → fixed (d37a9d4)
-2. **Decompose bug chain:** markdown output → template format → model non-compliance
-   - Fix 1: JSON-only instruction in template (066727c)
-   - Fix 2: task_list field name (9e8d513)
-   - Fix 3: Response normalizer for model resilience (pending)
-3. **Traceability gaps:** ChainAudit missing records for task_claimed, task_failed, worker_left → dev-2 fixing
-4. **Process improvements:** Progress tracking, clarity scores, dependency management → done (1ff6135)
+1. **Decompose bug chain (8 layers):** 每次修一个 bug，真机测试暴露下一个
+   - markdown → JSON-only → task_list → model compliance → quality_gate fields → quality_gate structure → TaskLink enum → decompose.md fallback
+2. **Traceability gaps:** ChainAudit records for claim/failure → done (6f2cdef)
+3. **Process improvements:** done (1ff6135)
 
 ### Commits Today
 - d37a9d4: Fix orchestrator run hang
 - 1ff6135: Process improvements from retrospective
-- ad919f8: Add iteration-9 plan
-- 6107942: Fix CXO report path
-- 98ec1a0: Replace hardcoded paths with env vars
-- a4db0a0: Update iteration-9 plan with decompose bug
-- 54e293c: Add Task 9 (ChainAudit gaps) to plan
 - 066727c: Fix decompose markdown output
 - 9e8d513: Fix template tasks vs task_list
-- d804788: Update plan with Task 10
-- 3905811: Update plan with Task 11
-- ef4e4c8: Mark Task 8 complete
+- afbcea3: Add response normalizer
+- 6f2cdef: Fix ChainAudit gaps
+- a7182b3: Fix quality_gate expected→criteria
+- c3dcfbc: Fix quality_gate structure
+- 7c6f150: Fix TaskLink enum
+- 2fdbd6d: Fix decompose.md fallback
+- + multiple plan/doc commits
 
 ## Retrospective Feedback (from dev-1)
 - Requirement clarity: 5/5
