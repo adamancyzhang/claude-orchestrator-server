@@ -17,9 +17,11 @@
   },
   "dependencies": {
     "@co/contracts": "workspace:*",
-    "@co/infra": "workspace:*"
+    "@co/infra": "workspace:*",
+    "ws": "^8.16.0"
   },
   "devDependencies": {
+    "@types/ws": "^8.5.10",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   }

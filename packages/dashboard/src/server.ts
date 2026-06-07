@@ -7,6 +7,9 @@ import { SSEBroadcaster } from "./sse/broadcaster.js";
 import { StateWatcher } from "./watcher.js";
 import { createRouter } from "./routes/index.js";
 import type { AuthConfig } from "./auth.js";
+import { WSServer } from "./realtime/ws-server.js";
+import { ChartDataAggregator } from "./realtime/chart-data.js";
+import { HistoricalQuery } from "./realtime/historical-query.js";
 
 // MIME type mappings for static files
 const MIME_TYPES: Record<string, string> = {
@@ -47,6 +50,9 @@ export interface DashboardServerOptions {
 export class DashboardServer {
   private server: http.Server | null = null;
   private broadcaster: SSEBroadcaster;
+  private wsServer: WSServer;
+  private chartData: ChartDataAggregator;
+  private historicalQuery: HistoricalQuery;
   private watcher: StateWatcher;
   private port: number;
   private host: string;
@@ -74,11 +80,15 @@ export class DashboardServer {
     );
 
     this.broadcaster = new SSEBroadcaster();
+    this.wsServer = new WSServer();
+    this.chartData = new ChartDataAggregator();
+    this.historicalQuery = new HistoricalQuery();
     this.watcher = new StateWatcher(this.state_dir, this.logger);
 
     // Watch for state changes and broadcast to clients
     this.watcher.onUpdate((state) => {
       this.broadcaster.broadcast("state", state);
+      this.wsServer.broadcast("state", state);
     });
   }
 
@@ -105,6 +115,9 @@ export class DashboardServer {
       // Fall back to API router
       router(req, res);
     });
+
+    // Attach WebSocket server
+    this.wsServer.attach(this.server);
 
     // Start watching for state changes
     this.watcher.start();
@@ -133,6 +146,7 @@ export class DashboardServer {
   async stop(): Promise<void> {
     this.watcher.stop();
     this.broadcaster.closeAll();
+    this.wsServer.closeAll();
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -158,6 +172,27 @@ export class DashboardServer {
    */
   getHost(): string {
     return this.host;
+  }
+
+  /**
+   * Get the chart data aggregator.
+   */
+  getChartData(): ChartDataAggregator {
+    return this.chartData;
+  }
+
+  /**
+   * Get the historical query service.
+   */
+  getHistoricalQuery(): HistoricalQuery {
+    return this.historicalQuery;
+  }
+
+  /**
+   * Get the WebSocket server.
+   */
+  getWSServer(): WSServer {
+    return this.wsServer;
   }
 
   /**
