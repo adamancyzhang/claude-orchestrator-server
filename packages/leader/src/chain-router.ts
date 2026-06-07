@@ -123,8 +123,8 @@ export function isDecisionLegalForLink(
 
 /**
  * True when `content` parses as JSON and structurally looks like a
- * `ChainDef` payload (carries `chain_id` and `tasks` keys). Parse
- * failures and non-object payloads return false — this is a "looks like"
+ * `ChainDef` payload (carries `chain_id` and either `tasks` or `task_list`).
+ * Parse failures and non-object payloads return false — this is a "looks like"
  * predicate, not a validator. ChainRouter uses it as a cheap gate before
  * the full ChainDefSchema.parse downstream.
  */
@@ -132,7 +132,10 @@ export function looksLikeChainDef(content: string): boolean {
   try {
     const json = JSON.parse(extractJson(content)) as Record<string, unknown>;
     return Boolean(
-      json && typeof json === "object" && "chain_id" in json && "tasks" in json,
+      json &&
+        typeof json === "object" &&
+        "chain_id" in json &&
+        ("tasks" in json || "task_list" in json),
     );
   } catch {
     return false;
@@ -553,164 +556,184 @@ export class ChainRouter {
       "explore",
     ];
 
-    // magic_mode ⊕ explore presence: ChainRouter rejects
-    // requirements whose ChainDef does not match the leader's mode.
-    // The decompose template is responsible for emitting an `explore`
-    // task iff magic_mode=true.
     const magicMode = this.opts.magic_mode === true;
-    const hasExplore = chainDef.tasks.explore != null;
-    if (magicMode && !hasExplore) {
-      this.opts.logger.error(
-        "ChainDef missing `explore` task under --magic; requirement dropped",
-        { chain_id: chainDef.chain_id },
-      );
-      this.opts.bus.emit({
-        type: "debug_info",
-        message: `chain ${chainDef.chain_id}: ChainDef missing explore task under --magic — dropped`,
-      });
-      if (this.opts.chain_audit) {
-        await this.opts.chain_audit.record(chainDef.chain_id, {
-          event: "validation_failure",
-          payload: { reason: "magic_mode_requires_explore_task" },
-        });
-      }
-      return;
-    }
-    if (!magicMode && hasExplore) {
-      this.opts.logger.error(
-        "ChainDef carries `explore` task without --magic; requirement dropped",
-        { chain_id: chainDef.chain_id },
-      );
-      this.opts.bus.emit({
-        type: "debug_info",
-        message: `chain ${chainDef.chain_id}: ChainDef has explore task without --magic — dropped`,
-      });
-      if (this.opts.chain_audit) {
-        await this.opts.chain_audit.record(chainDef.chain_id, {
-          event: "validation_failure",
-          payload: { reason: "explore_task_without_magic_mode" },
-        });
-      }
-      return;
-    }
 
-    // Persist requirement.md and open audit before any dispatch fires —
-    // downstream workers read manifest.json to resolve upstream task ids,
-    // and dispatched messages carry the requirement_path verbatim.
-    const requirementPath = cachePaths.chainRequirementPath(
-      this.opts.cache_paths,
-      chainDef.chain_id,
-    );
-    await fs.promises.mkdir(path.dirname(requirementPath), { recursive: true });
-    await fs.promises.writeFile(
-      requirementPath,
-      originalRequirement ?? msg.content,
-      "utf-8",
-    );
-    // derive forest position from msg.spawned_from. Root
-    // chains (typed at the TUI) carry no spawned_from. Spawn-derived
-    // chains read the parent manifest to compute chain_depth+1 and
-    // inherit magic_mode (always true for spawned chains).
-    const parentChainId = msg.spawned_from ?? null;
-    let chainDepth = 0;
-    let parentManifest:
-      | Awaited<ReturnType<NonNullable<typeof this.opts.chain_audit>["readManifest"]>>
-      | null = null;
-    if (parentChainId && this.opts.chain_audit) {
-      parentManifest = await this.opts.chain_audit.readManifest(parentChainId);
-      if (parentManifest) {
-        chainDepth = parentManifest.chain_depth + 1;
-      }
-    }
+    // Detect format: new (task_list array) or legacy (tasks object).
+    const isNewFormat = "task_list" in chainDef && Array.isArray(chainDef.task_list);
 
-    if (this.opts.chain_audit) {
-      try {
-        await this.opts.chain_audit.openChain(chainDef.chain_id, {
-          created_at: new Date().toISOString(),
-          leader_id: this.opts.leader_id,
-          leader_name: this.opts.leader_name,
-          requirement_path: requirementPath,
-          max_total_retries: this.opts.max_chain_retries,
-          parent_chain_id: parentChainId,
-          chain_depth: chainDepth,
-          magic_mode: magicMode,
+    if (isNewFormat) {
+      // New format: validate and dispatch task_list.
+      const taskList = chainDef.task_list;
+      await this.handleNewFormatTasks(chainDef, taskList, msg, originalRequirement);
+    } else {
+      // Legacy format: validate magic_mode / explore presence, then dispatch.
+      const hasExplore = chainDef.tasks.explore != null;
+      if (magicMode && !hasExplore) {
+        this.opts.logger.error(
+          "ChainDef missing `explore` task under --magic; requirement dropped",
+          { chain_id: chainDef.chain_id },
+        );
+        this.opts.bus.emit({
+          type: "debug_info",
+          message: `chain ${chainDef.chain_id}: ChainDef missing explore task under --magic — dropped`,
         });
-      } catch (err) {
-        if (err instanceof ChainConflictError) {
-          this.opts.logger.error("chain_id conflict — refusing to reopen", {
-            chain_id: chainDef.chain_id,
-            existing_status: err.existing_status,
-            existing_completed_at: err.existing_completed_at,
-          });
-          this.opts.bus.emit({
-            type: "debug_info",
-            message: `chain ${chainDef.chain_id} already ${err.existing_status}; new requirement dropped`,
-          });
+        if (this.opts.chain_audit) {
           await this.opts.chain_audit.record(chainDef.chain_id, {
-            event: "chain_id_conflict",
-            payload: {
-              existing_status: err.existing_status,
-              existing_completed_at: err.existing_completed_at,
-              requirement_path: requirementPath,
-            },
+            event: "validation_failure",
+            payload: { reason: "magic_mode_requires_explore_task" },
           });
-          return;
         }
-        throw err;
+        return;
       }
-      await this.opts.chain_audit.record(chainDef.chain_id, {
-        event: "requirement_received",
-        payload: { requirement_path: requirementPath },
-      });
+      if (!magicMode && hasExplore) {
+        this.opts.logger.error(
+          "ChainDef carries `explore` task without --magic; requirement dropped",
+          { chain_id: chainDef.chain_id },
+        );
+        this.opts.bus.emit({
+          type: "debug_info",
+          message: `chain ${chainDef.chain_id}: ChainDef has explore task without --magic — dropped`,
+        });
+        if (this.opts.chain_audit) {
+          await this.opts.chain_audit.record(chainDef.chain_id, {
+            event: "validation_failure",
+            payload: { reason: "explore_task_without_magic_mode" },
+          });
+        }
+        return;
+      }
+      await this.handleLegacyFormatTasks(chainDef, linkOrder, msg, originalRequirement);
+    }
+  }
 
-      // wire up the chain forest: link the new chain to its
-      // parent in both directions and emit the spawn audit pair.
-      if (parentChainId) {
-        await this.opts.chain_audit.appendChildChain(
-          parentChainId,
+  // ── New format handler ──────────────────────────────────────────────
+
+  private async handleNewFormatTasks(
+    chainDef: Extract<ChainDef, { task_list: unknown[] }>,
+    taskList: Array<{
+      task_id: string;
+      title: string;
+      description?: string;
+      system_prompt: string;
+      depends_on?: string[];
+      priority?: number;
+      criteria?: string;
+    }>,
+    msg: Message,
+    originalRequirement?: string,
+  ): Promise<void> {
+    // Persist requirement.md and open audit.
+    const requirementPath = await this.openChainAudit(
+      chainDef.chain_id,
+      msg,
+      originalRequirement,
+    );
+
+    // Push all tasks to the queue, tracking the first for immediate dispatch.
+    let firstTaskId: TaskId | null = null;
+    let firstTask = taskList[0];
+
+    for (let i = 0; i < taskList.length; i++) {
+      const t = taskList[i];
+      const task = await this.opts.task_queue.push({
+        title: t.title,
+        description: t.description ?? "",
+        criteria: t.criteria ?? "",
+        priority: t.priority ?? 1,
+        link: t.task_id as TaskLink,
+        chain_id: chainDef.chain_id,
+        created_by: this.opts.leader_id,
+        created_by_name: this.opts.leader_name,
+      });
+      if (i === 0) {
+        firstTaskId = task.id;
+      }
+    }
+
+    this.opts.bus.emit({ type: "chain_activated", chain_id: chainDef.chain_id });
+    if (this.opts.hooks) {
+      void this.opts.hooks.fire({
+        type: "chain_activated",
+        env: { CO_CHAIN_ID: chainDef.chain_id },
+      });
+    }
+
+    // Dispatch the first task to an available worker.
+    if (firstTask && firstTaskId) {
+      const worker = await this.findIdleWorkerByRole("executor");
+      if (worker) {
+        if (this.opts.chain_audit) {
+          await this.opts.chain_audit.setLinkTask(
+            chainDef.chain_id,
+            firstTask.task_id as TaskLink,
+            firstTaskId,
+          );
+          await this.opts.chain_audit.record(chainDef.chain_id, {
+            event: "task_dispatch",
+            link: firstTask.task_id as TaskLink,
+            worker_id: worker.id,
+            worker_name: worker.name,
+            task_id: firstTaskId,
+          });
+        }
+        const initialUpstream = await this.collectUpstreamCommits(
           chainDef.chain_id,
         );
-        await this.opts.chain_audit.record(parentChainId, {
-          event: "chain_spawned",
-          payload: {
-            child_chain_id: chainDef.chain_id,
-            chain_depth: chainDepth,
-          },
+        await this.opts.message_router.send({
+          type: "task_dispatch",
+          from_instance: this.opts.leader_id,
+          from_name: this.opts.leader_name,
+          from_role: "leader",
+          to_instance: worker.id,
+          content: firstTask.title,
+          link: firstTask.task_id as TaskLink,
+          chain_id: chainDef.chain_id,
+          task_id: firstTaskId,
+          task_title: firstTask.title,
+          task_description: firstTask.description ?? "",
+          task_criteria: firstTask.criteria ?? "",
+          system_prompt: firstTask.system_prompt,
+          original_requirement_path: requirementPath,
+          upstream_commits: initialUpstream,
         });
-        await this.opts.chain_audit.record(chainDef.chain_id, {
-          event: "chain_spawned_from",
-          payload: {
-            parent_chain_id: parentChainId,
-            chain_depth: chainDepth,
-          },
-        });
-        this.opts.bus.emit({
-          type: "chain_spawned",
-          parent_chain_id: parentChainId,
-          child_chain_id: chainDef.chain_id,
-          chain_depth: chainDepth,
-        });
+        await this.rememberDispatch(
+          chainDef.chain_id,
+          firstTask.task_id as TaskLink,
+          worker.id,
+        );
+      } else {
+        this.opts.logger.warn("no executor available — new format task queued");
       }
     }
+  }
 
-    // Pre-resolve the first link's worker so we can stamp the pending
-    // task with assigned_to at push time — the Leader is the sole
-    // dispatcher; subsequent links are pinned later via task_queue.assign()
-    // in handleCompletionReport (activate_next).
+  // ── Legacy format handler ───────────────────────────────────────────
+
+  private async handleLegacyFormatTasks(
+    chainDef: Extract<ChainDef, { tasks: Record<string, unknown> }>,
+    linkOrder: Array<TaskLink>,
+    msg: Message,
+    originalRequirement?: string,
+  ): Promise<void> {
+    // Persist requirement.md and open audit.
+    const requirementPath = await this.openChainAudit(
+      chainDef.chain_id,
+      msg,
+      originalRequirement,
+    );
+
+    // Find the first non-null link and push all tasks to the queue.
     let firstLink: TaskLink | null = null;
+    let firstTaskId: string | null = null;
+    let firstTitle = "";
+    let firstDef: { title: string; description: string; criteria: string; priority: number } | null = null;
+
     for (const link of linkOrder) {
       if (chainDef.tasks[link]) {
         firstLink = link;
         break;
       }
     }
-    const firstWorker = firstLink
-      ? await this.findIdleWorkerByRole(LINK_TO_ROLE[firstLink])
-      : null;
-
-    let firstTaskId: string | null = null;
-    let firstTitle = "";
-    let firstDef: ChainDef["tasks"][TaskLink] | null = null;
     for (const link of linkOrder) {
       const def = chainDef.tasks[link];
       if (!def) continue;
@@ -724,8 +747,6 @@ export class ChainRouter {
         chain_id: chainDef.chain_id,
         created_by: this.opts.leader_id,
         created_by_name: this.opts.leader_name,
-        assigned_to: isFirst && firstWorker ? firstWorker.id : null,
-        assigned_to_name: isFirst && firstWorker ? firstWorker.name : null,
       });
       if (isFirst) {
         firstTaskId = task.id;
@@ -742,20 +763,179 @@ export class ChainRouter {
       });
     }
 
-    if (firstLink && firstTaskId && firstDef) {
+    if (firstLink && firstDef) {
+      const worker = firstLink
+        ? await this.findIdleWorkerByRole(LINK_TO_ROLE[firstLink] ?? "executor")
+        : null;
+
+      if (worker) {
+        if (this.opts.chain_audit) {
+          await this.opts.chain_audit.setLinkTask(
+            chainDef.chain_id,
+            firstLink,
+            asTaskId(firstTaskId ?? ""),
+          );
+          await this.opts.chain_audit.record(chainDef.chain_id, {
+            event: "task_dispatch",
+            link: firstLink,
+            worker_id: worker.id,
+            worker_name: worker.name,
+            task_id: asTaskId(firstTaskId ?? ""),
+          });
+        }
+        const initialUpstream = await this.collectUpstreamCommits(
+          chainDef.chain_id,
+        );
+        await this.opts.message_router.send({
+          type: "task_dispatch",
+          from_instance: this.opts.leader_id,
+          from_name: this.opts.leader_name,
+          from_role: "leader",
+          to_instance: worker.id,
+          content: firstTitle,
+          link: firstLink,
+          chain_id: chainDef.chain_id,
+          task_id: firstTaskId as never,
+          task_title: firstTitle,
+          task_description: firstDef.description,
+          task_criteria: firstDef.criteria,
+          original_requirement_path: requirementPath,
+          upstream_commits: initialUpstream,
+        });
+        await this.rememberDispatch(chainDef.chain_id, firstLink, worker.id);
+      } else {
+        this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink] ?? "executor"} available — task queued`);
+      }
+    }
+  }
+
+  // ── Shared audit helpers ────────────────────────────────────────────
+
+  private async openChainAudit(
+    chainId: ChainId,
+    msg: Message,
+    originalRequirement?: string,
+  ): Promise<string | null> {
+    const requirementPath = cachePaths.chainRequirementPath(
+      this.opts.cache_paths,
+      chainId,
+    );
+    await fs.promises.mkdir(path.dirname(requirementPath), { recursive: true });
+    await fs.promises.writeFile(
+      requirementPath,
+      originalRequirement ?? msg.content,
+      "utf-8",
+    );
+
+    const parentChainId = msg.spawned_from ?? null;
+    let chainDepth = 0;
+    let parentManifest:
+      | Awaited<ReturnType<NonNullable<typeof this.opts.chain_audit>["readManifest"]>>
+      | null = null;
+    if (parentChainId && this.opts.chain_audit) {
+      parentManifest = await this.opts.chain_audit.readManifest(parentChainId);
+      if (parentManifest) {
+        chainDepth = parentManifest.chain_depth + 1;
+      }
+    }
+
+    if (this.opts.chain_audit) {
+      try {
+        await this.opts.chain_audit.openChain(chainId, {
+          created_at: new Date().toISOString(),
+          leader_id: this.opts.leader_id,
+          leader_name: this.opts.leader_name,
+          requirement_path: requirementPath,
+          max_total_retries: this.opts.max_chain_retries,
+          parent_chain_id: parentChainId,
+          chain_depth: chainDepth,
+          magic_mode: this.opts.magic_mode === true,
+        });
+      } catch (err) {
+        if (err instanceof ChainConflictError) {
+          this.opts.logger.error("chain_id conflict — refusing to reopen", {
+            chain_id: chainId,
+            existing_status: err.existing_status,
+            existing_completed_at: err.existing_completed_at,
+          });
+          this.opts.bus.emit({
+            type: "debug_info",
+            message: `chain ${chainId} already ${err.existing_status}; new requirement dropped`,
+          });
+          await this.opts.chain_audit.record(chainId, {
+            event: "chain_id_conflict",
+            payload: {
+              existing_status: err.existing_status,
+              existing_completed_at: err.existing_completed_at,
+              requirement_path: requirementPath,
+            },
+          });
+          throw err; // Re-throw to abort dispatch
+        }
+        throw err;
+      }
+      await this.opts.chain_audit.record(chainId, {
+        event: "requirement_received",
+        payload: { requirement_path: requirementPath },
+      });
+
+      if (parentChainId) {
+        await this.opts.chain_audit.appendChildChain(
+          parentChainId,
+          chainId,
+        );
+        await this.opts.chain_audit.record(parentChainId, {
+          event: "chain_spawned",
+          payload: {
+            child_chain_id: chainId,
+            chain_depth: chainDepth,
+          },
+        });
+        await this.opts.chain_audit.record(chainId, {
+          event: "chain_spawned_from",
+          payload: {
+            parent_chain_id: parentChainId,
+            chain_depth: chainDepth,
+          },
+        });
+        this.opts.bus.emit({
+          type: "chain_spawned",
+          parent_chain_id: parentChainId,
+          child_chain_id: chainId,
+          chain_depth: chainDepth,
+        });
+      }
+    }
+
+    return requirementPath;
+  }
+
+    const firstWorker = firstLink
+      ? await this.findIdleWorkerByRole(LINK_TO_ROLE[firstLink] ?? "executor")
+      : null;
+
+    this.opts.bus.emit({ type: "chain_activated", chain_id: chainDef.chain_id });
+    if (this.opts.hooks) {
+      void this.opts.hooks.fire({
+        type: "chain_activated",
+        env: { CO_CHAIN_ID: chainDef.chain_id },
+      });
+    }
+
+    if (firstLink && firstDef) {
       if (firstWorker) {
         if (this.opts.chain_audit) {
           await this.opts.chain_audit.setLinkTask(
             chainDef.chain_id,
             firstLink,
-            asTaskId(firstTaskId),
+            asTaskId(firstTaskId ?? ""),
           );
           await this.opts.chain_audit.record(chainDef.chain_id, {
             event: "task_dispatch",
             link: firstLink,
             worker_id: firstWorker.id,
             worker_name: firstWorker.name,
-            task_id: asTaskId(firstTaskId),
+            task_id: asTaskId(firstTaskId ?? ""),
           });
         }
         const initialUpstream = await this.collectUpstreamCommits(
@@ -774,12 +954,13 @@ export class ChainRouter {
           task_title: firstTitle,
           task_description: firstDef.description,
           task_criteria: firstDef.criteria,
+          system_prompt: firstSystemPrompt,
           original_requirement_path: requirementPath,
           upstream_commits: initialUpstream,
         });
         await this.rememberDispatch(chainDef.chain_id, firstLink, firstWorker.id);
       } else {
-        this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink]} available — task queued`);
+        this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink] ?? "executor"} available — task queued`);
       }
     }
   }

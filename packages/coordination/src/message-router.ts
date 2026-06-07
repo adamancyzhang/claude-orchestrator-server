@@ -63,6 +63,7 @@ export class MessageRouter implements IMessageRouter {
       task_title: input.task_title ?? null,
       task_description: input.task_description ?? null,
       task_criteria: input.task_criteria ?? null,
+      system_prompt: input.system_prompt ?? null,
       result_path: input.result_path ?? null,
       original_requirement_path: input.original_requirement_path ?? null,
       // Optional v0.7 fields — must be forwarded for downstream
