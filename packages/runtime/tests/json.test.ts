@@ -70,4 +70,71 @@ That should work.`;
 {"result": "pass", "score": 95}`;
     expect(extractJson(input)).toBe('{"result": "pass", "score": 95}');
   });
+
+  it("returns pure JSON when input is valid JSON with no wrapping", () => {
+    const input = '{"key": "value", "count": 42}';
+    expect(extractJson(input)).toBe('{"key": "value", "count": 42}');
+  });
+
+  it("returns pure JSON array when input is valid JSON array", () => {
+    const input = '[{"id": 1}, {"id": 2}]';
+    expect(extractJson(input)).toBe('[{"id": 1}, {"id": 2}]');
+  });
+
+  it("handles markdown headers wrapping JSON", () => {
+    const input = `## Result
+
+{"task_list": [{"id": 1}], "status": "ok"}`;
+    expect(extractJson(input)).toBe('{"task_list": [{"id": 1}], "status": "ok"}');
+  });
+
+  it("handles markdown with bold text and JSON", () => {
+    const input = `**Here is the output:**
+
+\`\`\`json
+{"decision": "approve", "confidence": 0.95}
+\`\`\`
+
+*Note: this is final.*`;
+    expect(extractJson(input)).toBe('{"decision": "approve", "confidence": 0.95}');
+  });
+
+  it("handles multiple markdown headers before JSON", () => {
+    const input = `# Analysis
+
+## Step 1
+
+## Step 2
+
+{"result": "done", "steps": 2}`;
+    expect(extractJson(input)).toBe('{"result": "done", "steps": 2}');
+  });
+
+  it("handles text with horizontal rules and JSON", () => {
+    const input = `---
+
+{"action": "continue"}
+
+---`;
+    expect(extractJson(input)).toBe('{"action": "continue"}');
+  });
+
+  it("handles model response with preamble and code fence", () => {
+    const input = `I'll analyze the request and provide the decomposed tasks.
+
+\`\`\`json
+{
+  "task_list": [
+    {"task_id": "1", "role": "planner", "description": "analyze"}
+  ]
+}
+\`\`\`
+
+Here are the decomposed tasks.`;
+    expect(extractJson(input)).toContain('"task_list"');
+  });
+
+  it("handles empty string", () => {
+    expect(extractJson("")).toBe("");
+  });
 });

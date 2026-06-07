@@ -2,22 +2,39 @@
  * Extract a JSON object or array from a string that may contain
  * surrounding prose, markdown fences, or multiple JSON blocks.
  *
- * Strategy:
- *   1. Strip markdown code fences (```json ... ```).
- *   2. Find all candidate `{...}` and `[...]` blocks using a
- *      bracket-depth tracker (handles nested braces correctly,
- *      unlike a naive regex).
- *   3. Return the first candidate that parses as valid JSON.
- *   4. If nothing parses, return the cleaned input as-is.
+ * Strategy (in priority order):
+ *   1. Try parsing the entire trimmed text as JSON.
+ *   2. Strip markdown code fences and try parsing.
+ *   3. Find all candidate `{...}` and `[...]` blocks using a
+ *      bracket-depth tracker (handles nested braces correctly).
+ *   4. Strip markdown headers and other formatting, then try parsing.
+ *   5. If nothing parses, return the cleaned input as-is.
  */
 export function extractJson(content: string): string {
-  let cleaned = content.trim();
-  cleaned = cleaned
-    .replace(/^```(?:json)?\s*\n?/i, "")
-    .replace(/\n?```\s*$/i, "");
-  cleaned = cleaned.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  const trimmed = content.trim();
+  if (!trimmed) return "";
 
-  const candidates = findJsonCandidates(cleaned);
+  // 1. Try parsing entire text as JSON
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // not pure JSON — continue
+  }
+
+  // 2. Strip code fences and try parsing
+  const withoutFences = stripCodeFences(trimmed);
+  if (withoutFences !== trimmed) {
+    try {
+      JSON.parse(withoutFences);
+      return withoutFences;
+    } catch {
+      // continue
+    }
+  }
+
+  // 3. Find JSON-like blocks in the (fence-stripped) text
+  const candidates = findJsonCandidates(withoutFences);
   for (const candidate of candidates) {
     try {
       JSON.parse(candidate);
@@ -26,7 +43,63 @@ export function extractJson(content: string): string {
       // not valid JSON — try next candidate
     }
   }
-  return cleaned;
+
+  // 4. Strip markdown headers and formatting, then try parsing
+  const stripped = stripMarkdownHeaders(withoutFences);
+  if (stripped !== withoutFences) {
+    try {
+      JSON.parse(stripped);
+      return stripped;
+    } catch {
+      // continue
+    }
+    // Also try finding JSON in the header-stripped version
+    const headerCandidates = findJsonCandidates(stripped);
+    for (const candidate of headerCandidates) {
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // continue
+      }
+    }
+  }
+
+  // 5. Nothing worked — return cleaned input as-is
+  return withoutFences || trimmed;
+}
+
+/**
+ * Strip markdown code fences from text.
+ * Removes ```json ... ``` and plain ``` ... ``` blocks.
+ */
+function stripCodeFences(text: string): string {
+  let result = text;
+  // Remove opening/closing fence pairs
+  result = result
+    .replace(/^```(?:json)?\s*\n?/i, "")
+    .replace(/\n?```\s*$/i, "");
+  // Remove standalone fence markers
+  result = result.replace(/```json\s*/g, "").replace(/```\s*/g, "");
+  return result.trim();
+}
+
+/**
+ * Strip markdown headers and other formatting that can wrap JSON.
+ * Handles: # Header, ## Header, **bold**, *italic*, etc.
+ */
+function stripMarkdownHeaders(text: string): string {
+  let result = text;
+  // Remove markdown headers (# through ######)
+  result = result.replace(/^#{1,6}\s+.*$/gm, "");
+  // Remove bold/italic markers
+  result = result.replace(/\*\*([^*]+)\*\*/g, "$1");
+  result = result.replace(/\*([^*]+)\*/g, "$1");
+  // Remove horizontal rules
+  result = result.replace(/^[-*_]{3,}$/gm, "");
+  // Collapse multiple blank lines
+  result = result.replace(/\n{3,}/g, "\n\n");
+  return result.trim();
 }
 
 /**
