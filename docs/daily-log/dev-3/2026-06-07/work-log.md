@@ -58,7 +58,7 @@
 - **Verification:** qa-engineer PASS, architect PASS
 
 ## Task #5: Historical Data Management
-- **Commit:** d1771f0 + 62e29e2
+- **Commit:** 62e29e2 + d1771f0
 - **Changed files:** historical-data.ts, historical-data.test.ts, index.ts
 - **Test results:** 11/11 passed
-- **Verification:** pending
+- **Verification:** architect 审查中
