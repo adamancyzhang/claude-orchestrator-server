@@ -69,6 +69,43 @@ import { ensureCoRoot } from "./co-root-initializer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * User-friendly error codes for orchestrator startup failures.
+ */
+export type ErrorCode = "E001" | "E002" | "E003" | "E004";
+
+export interface OrchestratorError {
+  code: ErrorCode;
+  message: string;
+  fix: string;
+}
+
+const ERROR_CODES: Record<ErrorCode, { message: string; fix: string }> = {
+  E001: {
+    message: "Workspace has uncommitted changes",
+    fix: "Run `git add -A && git commit` or `git stash` before starting.",
+  },
+  E002: {
+    message: "ZooKeeper connection failed",
+    fix: "Check that ZooKeeper is running and reachable. Verify --zk-hosts or CO_ZK_HOSTS environment variable.",
+  },
+  E003: {
+    message: "Configuration file missing or invalid",
+    fix: "Run `claude-orchestrator init` to generate the default configuration, or check ~/.claude-orchestrator/config.yaml for syntax errors.",
+  },
+  E004: {
+    message: "commands.jsonl not found",
+    fix: "Ensure the state directory contains a commands.jsonl file. The orchestrator creates this automatically in headless mode.",
+  },
+};
+
+/**
+ * Format an OrchestratorError for console output.
+ */
+export function formatError(err: OrchestratorError): string {
+  return `[${err.code}] ${err.message}\n  Fix: ${err.fix}`;
+}
+
 export interface RunInput {
   zk_hosts: string;
   worker_count: number;
@@ -90,6 +127,8 @@ export interface RunInput {
   headless?: boolean;
   // Directory for state.json and .leader-id. Defaults to co-root.
   state_dir?: string;
+  // When true, skip backing up existing ~/.claude/CLAUDE.md before init.
+  no_backup?: boolean;
 }
 
 export interface OrchestratorPaths {
@@ -174,10 +213,10 @@ export async function runOrchestrator(
   // anything else (git worktree add requires a valid repo + HEAD).
   ensureGitRepo(projectRoot, logger);
 
-  const initChecker = new InitChecker({ y_flag: input.y_flag ?? false, logger });
+  const initChecker = new InitChecker({ y_flag: input.y_flag ?? false, logger, no_backup: input.no_backup });
   await initChecker.runAll([
     createGlobalConfigStep(logger),
-    createUserClaudeMdStep(paths.template_dir, logger),
+    createUserClaudeMdStep(paths.template_dir, logger, input.no_backup),
     createTeamClaudeMdStep(paths.template_dir, projectRoot, logger),
     createSkillsStep(paths.skills_dir, projectRoot, logger),
   ]);
@@ -188,10 +227,20 @@ export async function runOrchestrator(
 
   // Phase 3 used to live further down; we need ResolvedConfig BEFORE
   // commitInitFiles so the auto_commit_init_files toggle is honored.
-  const resolved = loadConfig({
-    cli_zookeeper: input.zk_hosts,
-    cli_debug: input.debug,
-  });
+  let resolved;
+  try {
+    resolved = loadConfig({
+      cli_zookeeper: input.zk_hosts,
+      cli_debug: input.debug,
+    });
+  } catch (err) {
+    const cfgErr: OrchestratorError = {
+      code: "E003",
+      message: `${ERROR_CODES.E003.message}: ${String(err)}`,
+      fix: ERROR_CODES.E003.fix,
+    };
+    throw new Error(formatError(cfgErr));
+  }
   commitInitFiles(projectRoot, logger, {
     enabled: resolved.git.auto_commit_init_files,
     branch: resolved.git.auto_commit_init_files_branch,
@@ -240,7 +289,16 @@ export async function runOrchestrator(
     : useRealZk
       ? new ZkClient(zkOpts)
       : new InMemoryZkClient({ ensure_paths: zkEnsurePaths });
-  await zk.connect();
+  try {
+    await zk.connect();
+  } catch (err) {
+    const zkErr: OrchestratorError = {
+      code: "E002",
+      message: `${ERROR_CODES.E002.message}: ${String(err)}`,
+      fix: ERROR_CODES.E002.fix,
+    };
+    throw new Error(formatError(zkErr));
+  }
 
   await zk.createEphemeral(
     zkPaths.leader(),
@@ -699,9 +757,11 @@ function ensureCleanWorkspace(projectRoot: string): void {
     return; // not a git repo — allow (shouldn't happen after ensureGitRepo)
   }
   if (status.length > 0) {
-    throw new Error(
-      "Workspace has uncommitted changes. Please commit or stash them before starting the orchestrator.",
-    );
+    const err: OrchestratorError = {
+      code: "E001",
+      ...ERROR_CODES.E001,
+    };
+    throw new Error(formatError(err));
   }
 }
 

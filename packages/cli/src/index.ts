@@ -110,6 +110,10 @@ Examples:
     "--no-progress",
     "Disable progress indicator. Useful when piping output or in CI environments.",
   )
+  .option(
+    "--no-backup",
+    "Skip backing up existing ~/.claude/CLAUDE.md before init. Use when you want to overwrite without saving the previous version.",
+  )
   .action(async function (this: Command) {
     const opts = this.opts() as {
       worker: number;
@@ -119,6 +123,7 @@ Examples:
       enabledZookeeper?: boolean;
       headless?: boolean;
       progress?: boolean;
+      noBackup?: boolean;
     };
     const globalOpts = this.optsWithGlobals();
     const debug = Boolean(globalOpts.debug);
@@ -142,6 +147,7 @@ Examples:
         enabled_zookeeper: Boolean(opts.enabledZookeeper),
         headless: Boolean(opts.headless),
         state_dir: stateDir,
+        no_backup: Boolean(opts.noBackup),
       });
       progress.stop("Orchestration completed");
       if (jsonMode) {
@@ -731,7 +737,7 @@ _${commandName.replace(/-/g, "_")}_completions() {
   commands="run config send status workers tasks events chains messages wait completion"
 
   if [[ \${cur} == -* ]] ; then
-    COMPREPLY=( $(compgen -W "--worker --magic --magic-max-chains --yes --enabled-zookeeper --headless --no-progress --json --zookeeper --debug --state-dir --help --version" -- \${cur}) )
+    COMPREPLY=( $(compgen -W "--worker --magic --magic-max-chains --yes --enabled-zookeeper --headless --no-progress --no-backup --json --zookeeper --debug --state-dir --help --version" -- \${cur}) )
     return 0
   fi
 
@@ -786,6 +792,7 @@ _${commandName.replace(/-/g, "_")}_completions() {
     '--enabled-zookeeper[Use real ZooKeeper for message routing]' \\
     '--headless[Run without TUI]' \\
     '--no-progress[Disable progress indicator]' \\
+    '--no-backup[Skip backing up existing CLAUDE.md]' \\
     '--json[Output in JSON format]' \\
     '-z[ZooKeeper connection string]:hosts' \\
     '--zookeeper[ZooKeeper connection string]:hosts' \\
@@ -873,6 +880,7 @@ complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l enabled-zookeeper -d 'Use real ZooKeeper'
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l headless -d 'Run without TUI'
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l no-progress -d 'Disable progress indicator'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l no-backup -d 'Skip backing up existing CLAUDE.md'
 
 # Events options
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:events -l tail -d 'Number of recent events to show'

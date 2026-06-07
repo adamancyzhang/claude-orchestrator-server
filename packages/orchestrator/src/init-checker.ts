@@ -42,6 +42,7 @@ function expandHomeDir(p: string): string {
 export interface InitCheckerOptions {
   y_flag: boolean;
   logger: ILogger;
+  no_backup?: boolean;
 }
 
 export class InitChecker {
@@ -174,9 +175,10 @@ export function createGlobalConfigStep(logger: ILogger): InitStep {
   };
 }
 
-export function createUserClaudeMdStep(templateDir: string, logger: ILogger): InitStep {
+export function createUserClaudeMdStep(templateDir: string, logger: ILogger, noBackup?: boolean): InitStep {
   const src = path.join(templateDir, "user-global-claude.md");
   const dest = expandHomeDir("~/.claude/CLAUDE.md");
+  const backup = `${dest}.bak`;
   return {
     id: "user_claude_md",
     title: "User Global CLAUDE.md",
@@ -199,6 +201,13 @@ export function createUserClaudeMdStep(templateDir: string, logger: ILogger): In
     },
     async execute() {
       if (!fs.existsSync(src)) return;
+
+      // Backup existing file if it exists and backup is not disabled
+      if (fs.existsSync(dest) && !noBackup) {
+        fs.copyFileSync(dest, backup);
+        logger.info(`backed up ${dest} to ${backup}`);
+      }
+
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(src, dest);
       logger.info(`wrote ${dest}`);
