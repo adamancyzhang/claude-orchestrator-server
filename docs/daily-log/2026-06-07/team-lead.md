@@ -9,28 +9,31 @@
 
 ### Iteration 9 — Critical Fixes & Verification
 
-**Completed (4/10):**
+**Completed (7/12):**
 - Task #4: Fix orchestrator `run` hang — commit d37a9d4 (dev-1)
-- Task #8: Verify quality gate — PASS with caveat (testing-3)
+- Task #5: Fix `send` command — 无需修复，send 正常
+- Task #8: Verify quality gate — PASS (testing-3)
 - Task #9: Verify traceability chain — PASS with gaps (code-reviewer)
 - Task #10: Process improvements — commit 1ff6135 (process-engineer)
+- Task #11: Fix decompose markdown output — commit 066727c (dev-1)
+- Task #13: Fix template tasks vs task_list — commit 9e8d513 (dev-1)
 
 **In Progress:**
-- Task #5: Fix `send` command (dev-2)
-- Task #8: Fix decompose markdown output — CRITICAL (dev-1)
-- Task #9: Fix ChainAudit gaps (dev-2)
-- Task #6: Verify traceability chain — redo with code analysis (code-reviewer)
+- Task #12: Fix ChainAudit gaps (dev-2)
+- Task #14: Add response normalizer (dev-1)
 
 **Blocked:**
-- Task #6: Verify ChainDef — waiting on Task #11 (decompose fix)
-- Task #7: Verify Worker auto-claim — FAIL, waiting on Task #11
+- Task #6: Verify ChainDef — waiting on Task #14
+- Task #7: Verify Worker auto-claim — FAIL, model ignores template format
 
 ### Key Findings
 1. **CXO CRITICAL:** orchestrator `run` hangs → fixed (d37a9d4)
-2. **CXO CRITICAL:** `send` command works, but decompose outputs markdown not JSON → dev-1 fixing
-3. **Decompose bug:** Claude returns markdown instead of JSON for ChainDef generation → blocks entire pipeline
-4. **Traceability gaps:** ChainAudit missing records for task_claimed, task_failed, worker_left → dev-2 fixing
-5. **Process improvements:** Progress tracking, clarity scores, dependency management → done (1ff6135)
+2. **Decompose bug chain:** markdown output → template format → model non-compliance
+   - Fix 1: JSON-only instruction in template (066727c)
+   - Fix 2: task_list field name (9e8d513)
+   - Fix 3: Response normalizer for model resilience (pending)
+3. **Traceability gaps:** ChainAudit missing records for task_claimed, task_failed, worker_left → dev-2 fixing
+4. **Process improvements:** Progress tracking, clarity scores, dependency management → done (1ff6135)
 
 ### Commits Today
 - d37a9d4: Fix orchestrator run hang
@@ -40,6 +43,11 @@
 - 98ec1a0: Replace hardcoded paths with env vars
 - a4db0a0: Update iteration-9 plan with decompose bug
 - 54e293c: Add Task 9 (ChainAudit gaps) to plan
+- 066727c: Fix decompose markdown output
+- 9e8d513: Fix template tasks vs task_list
+- d804788: Update plan with Task 10
+- 3905811: Update plan with Task 11
+- ef4e4c8: Mark Task 8 complete
 
 ## Retrospective Feedback (from dev-1)
 - Requirement clarity: 5/5
