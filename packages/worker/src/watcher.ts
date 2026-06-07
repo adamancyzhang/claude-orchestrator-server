@@ -440,10 +440,12 @@ export class WorkerWatcher {
       });
       const prompt = renderPrompt(retryHint);
       let attemptText = "";
+      // Use dynamic system_prompt from message if available, otherwise fall back to identity
+      const systemPrompt = msg.system_prompt ?? this.opts.identity_system_prompt;
       result = await this.opts.runner.run({
         prompt,
         log_path: logPath,
-        system_prompt: this.opts.identity_system_prompt,
+        system_prompt: systemPrompt,
         cwd: this.opts.worktree_path,
         quiet: true,
         on_chunk: (chunk) => {
