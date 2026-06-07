@@ -1,10 +1,13 @@
 export {
   runOrchestrator,
   defaultPaths,
+  formatError,
   type RunInput,
   type OrchestratorPaths,
   type OrchestratorDeps,
   type ZkClientFactoryInput,
+  type ErrorCode,
+  type OrchestratorError,
 } from "./run.js";
 export {
   initializeWorktrees,
