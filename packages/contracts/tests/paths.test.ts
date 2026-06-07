@@ -142,8 +142,11 @@ describe("cachePaths layout", () => {
     expect(cachePaths.messageLogPath(opts, msg)).toBe(
       "/tmp/proj/leader-001/messages/m-3/inbound.log",
     );
-    expect(cachePaths.decomposeResultPath(opts, msg)).toBe(
-      "/tmp/proj/leader-001/messages/m-3/decompose.md",
+  });
+
+  it("places decompose result under docs/<leader>/<date>/ (model artifact layer)", () => {
+    expect(cachePaths.decomposeResultPath(opts, msg, "2026-06-07")).toBe(
+      "/tmp/proj/leader-001/docs/leader-001/2026-06-07/decompose-m-3.md",
     );
   });
 

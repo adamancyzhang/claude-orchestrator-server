@@ -475,9 +475,11 @@ export class ChainRouter {
     }
 
     const logPath = cachePaths.messageLogPath(this.opts.cache_paths, msg.id);
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const resultPath = cachePaths.decomposeResultPath(
       this.opts.cache_paths,
       msg.id,
+      today,
     );
     await fs.promises.mkdir(path.dirname(resultPath), { recursive: true });
 

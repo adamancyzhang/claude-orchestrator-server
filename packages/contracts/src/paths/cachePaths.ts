@@ -9,7 +9,8 @@ import type { ChainId, InstanceId, MessageId, TaskId } from "../ids.js";
  * Layout under the leader root:
  *   chains/<chain_id>/     requirement.md  manifest.json  audit.jsonl
  *   tasks/<task_id>/       definition.md  exec-<ts>.log  eval-<n>.log  commit.log  result.md
- *   messages/<message_id>/ inbound.log  decompose.md
+ *   messages/<message_id>/ inbound.log                              ← system communication (structured JSON)
+ *   docs/<leader>/<date>/  decompose-<msg_id>.md  chain-def.json    ← model artifacts (arbitrary markdown)
  *   docs/<worker>/<date>/  CLAUDE.md  <prefix>-<uniqueKey>.md  evidence/
  *   memory/                CLAUDE.md  <dir>/CLAUDE.md  <dir>/<file>.md
  */
@@ -84,7 +85,7 @@ export function commitLogPath(o: CachePathOptions, taskId: TaskId): string {
   return `${taskDir(o, taskId)}/commit.log`;
 }
 
-// messages/<message_id>/...
+// messages/<message_id>/...  — system communication layer (structured JSON)
 export function messageDir(
   o: CachePathOptions,
   messageId: MessageId,
@@ -99,11 +100,19 @@ export function messageLogPath(
   return `${messageDir(o, messageId)}/inbound.log`;
 }
 
+/**
+ * Decompose result path — model artifact layer (arbitrary markdown/JSON).
+ *
+ * Lives under `docs/<leader>/<date>/` rather than `messages/` to keep
+ * model-generated artifacts separate from system communication channels.
+ * The `date` parameter should be YYYY-MM-DD format.
+ */
 export function decomposeResultPath(
   o: CachePathOptions,
   messageId: MessageId,
+  date: string,
 ): string {
-  return `${messageDir(o, messageId)}/decompose.md`;
+  return `${coRootDir(o)}/docs/${o.leader_instance_id}/${date}/decompose-${messageId}.md`;
 }
 
 // docs/<worker>/<date>/<prefix>-<uniqueKey>.md  — worker local copies
