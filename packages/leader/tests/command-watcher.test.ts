@@ -240,4 +240,123 @@ describe("CommandWatcher", () => {
     await waitDebounce();
     expect(router.sent).toHaveLength(0);
   });
+
+  it("starts without crashing when commands.jsonl does not exist", async () => {
+    const router = new CapturingMessageRouter();
+    const watcher = new CommandWatcher(makeOpts(stateDir, router));
+    await watcher.start();
+
+    await waitDebounce();
+    // No crash, no messages sent.
+    expect(router.sent).toHaveLength(0);
+
+    watcher.stop();
+  });
+
+  it("handles file created after watcher starts", async () => {
+    const router = new CapturingMessageRouter();
+    const watcher = new CommandWatcher(makeOpts(stateDir, router));
+    await watcher.start();
+
+    // Create the file after the watcher is already running.
+    writeFileSync(
+      join(stateDir, "commands.jsonl"),
+      JSON.stringify({ type: "send", content: "created later" }) + "\n",
+    );
+
+    await waitDebounce();
+    expect(router.sent).toHaveLength(1);
+    expect(router.sent[0].content).toBe("created later");
+
+    watcher.stop();
+  });
+
+  it("skips empty lines and whitespace-only lines", async () => {
+    const router = new CapturingMessageRouter();
+    const watcher = new CommandWatcher(makeOpts(stateDir, router));
+    await watcher.start();
+
+    appendFileSync(
+      join(stateDir, "commands.jsonl"),
+      "\n   \n" +
+        JSON.stringify({ type: "send", content: "valid" }) + "\n",
+    );
+
+    await waitDebounce();
+    expect(router.sent).toHaveLength(1);
+    expect(router.sent[0].content).toBe("valid");
+
+    watcher.stop();
+  });
+
+  it("skips commands where content is not a string", async () => {
+    const router = new CapturingMessageRouter();
+    const watcher = new CommandWatcher(makeOpts(stateDir, router));
+    await watcher.start();
+
+    appendFileSync(
+      join(stateDir, "commands.jsonl"),
+      JSON.stringify({ type: "send", content: 123 }) + "\n",
+    );
+
+    await waitDebounce();
+    expect(router.sent).toHaveLength(0);
+
+    watcher.stop();
+  });
+
+  it("handles messageRouter.send failure without crashing", async () => {
+    const failingRouter: IMessageRouter = {
+      async send(): Promise<Message> {
+        throw new Error("send failed");
+      },
+      async poll(): Promise<Message[]> {
+        throw new Error("unused");
+      },
+      async waitForMessage(): Promise<void> {
+        throw new Error("unused");
+      },
+      async ack(): Promise<void> {
+        throw new Error("unused");
+      },
+      async dismiss(): Promise<void> {
+        throw new Error("unused");
+      },
+    };
+
+    const watcher = new CommandWatcher(makeOpts(stateDir, failingRouter));
+    await watcher.start();
+
+    appendFileSync(
+      join(stateDir, "commands.jsonl"),
+      JSON.stringify({ type: "send", content: "will fail" }) + "\n",
+    );
+
+    await waitDebounce();
+    // Should not throw despite messageRouter.send() failing.
+    watcher.stop();
+  });
+
+  it("processes multiple sequential appends", async () => {
+    const router = new CapturingMessageRouter();
+    const watcher = new CommandWatcher(makeOpts(stateDir, router));
+    await watcher.start();
+
+    appendFileSync(
+      join(stateDir, "commands.jsonl"),
+      JSON.stringify({ type: "send", content: "first" }) + "\n",
+    );
+    await waitDebounce();
+    expect(router.sent).toHaveLength(1);
+
+    appendFileSync(
+      join(stateDir, "commands.jsonl"),
+      JSON.stringify({ type: "send", content: "second" }) + "\n",
+    );
+    await waitDebounce();
+    expect(router.sent).toHaveLength(2);
+    expect(router.sent[1].content).toBe("second");
+
+    watcher.stop();
+  });
 });
