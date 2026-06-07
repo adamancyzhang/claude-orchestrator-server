@@ -107,12 +107,29 @@
 - **验证:** ✅ 通过
 
 ### ChainDef 格式重构（动态 system_prompt）
-- **Task:** (chain-def refactor)
+- **Task:** #12
 - **Commit:** ef4ca49
 - **变更文件:**
   - `packages/contracts/src/schemas/chain.ts` — 新增 ChainTaskSchema（task_id、title、description、system_prompt、depends_on）、NewChainDefSchema、废弃 LegacyChainDefSchema、ChainDefSchema 改为 union
   - `packages/contracts/tests/schemas.test.ts` — 新增 7 个测试覆盖新格式验证和格式区分
 - **测试结果:** 126/126 通过（contracts 包）
+- **验证:** ✅ 通过
+
+### ChainRouter 适配新 ChainDef 格式
+- **Task:** #14
+- **Commit:** da475e3
+- **变更文件:**
+  - `packages/leader/src/chain-router.ts` — looksLikeChainDef 支持 task_list 检测、handleTaskDefinitions 拆分为 handleNewFormatTasks/handleLegacyFormatTasks、openChainAudit 共享辅助方法
+- **测试结果:** 161/161 通过（leader 包）
+- **验证:** ✅ 通过
+
+### QualityGate 添加到 ChainTask
+- **Task:** #18
+- **Commit:** 158cda4
+- **变更文件:**
+  - `packages/contracts/src/schemas/chain.ts` — 新增 QualityGateSchema（self_eval/test/review/accept 四种类型）、ChainTaskSchema 添加可选 quality_gate 字段
+  - `packages/contracts/tests/schemas.test.ts` — 新增 10 个测试覆盖所有 gate 类型、默认值、拒绝和 round-trip
+- **测试结果:** 136/136 通过（contracts 包）
 - **验证:** ✅ 通过
 
 ### Dashboard Documentation
