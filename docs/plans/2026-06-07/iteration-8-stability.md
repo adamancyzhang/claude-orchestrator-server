@@ -2,8 +2,8 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 4/8 tasks completed (+ Task 9 紧急修复)
-- **Last Updated:** 2026-06-07 15:30
+- **Progress:** 6/8 tasks completed
+- **Last Updated:** 2026-06-07 19:00
 
 ## 目标
 1. 修复 TypeScript 编译错误，建立稳定基线
@@ -20,7 +20,7 @@
 - [ ] Task 5: 验证追溯链记录（Iteration 7 Task 6）— RE-VERIFICATION after Task 9 fix
 - [x] Task 6: 补充 CommandWatcher 单元测试 — commit: da7ff0d
 - [x] Task 7: 添加 --dry-run 选项 — commit: 25d4326b
-- [ ] Task 8: 添加 --cleanup 选项
+- [x] Task 8: 添加 --cleanup 选项 — commit: b8c2b50
 
 ## 依赖关系
 
