@@ -42,3 +42,15 @@
 - **Changed files:** templates/workflow/decompose.md
 - **Test results:** N/A (template only)
 - **Verification:** team-lead PASS
+
+## Task #16: Modify Worker System Prompt Construction
+- **Commit:** d9ff386
+- **Changed files:** packages/runtime/src/identity.ts, runner.ts, identity.test.ts
+- **Test results:** 84/84 passed
+- **Verification:** team-lead PASS
+
+## Task #15: Modify Worker to Use Dynamic System Prompt
+- **Commit:** f0231e3
+- **Changed files:** packages/worker/src/watcher.ts
+- **Test results:** 87/87 passed
+- **Verification:** team-lead PASS
