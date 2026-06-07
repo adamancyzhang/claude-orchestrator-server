@@ -1,7 +1,24 @@
-# Iteration 3 Improvements - 2026-06-07
+# Iteration 2 - Test Coverage & Error Handling — 2026-06-07
+
+## Status
+- **Overall:** completed
+- **Progress:** 9/9 tasks completed
+- **Last Updated:** 2026-06-07 02:49
 
 ## Overview
 Based on codebase analysis, this iteration focuses on filling critical test coverage gaps and improving error handling.
+
+## Checklist
+
+- [x] Task 1: orchestrator/run.ts tests — commit: 3c15aff
+- [x] Task 2: in-process-supervisor.ts tests — commit: 79850b4
+- [x] Task 3: docs-committer.ts tests — commit: (dev-3 commit)
+- [x] Task 4: Add logging to silent catches — commit: b05a97b
+- [x] Task 5: CLI child entry point validation — commit: (dev-2 commit)
+- [x] Task 6: Fix CLI description — commit: (dev-3 commit)
+- [x] Task 7: monitor.ts tests — commit: 650f08c
+- [x] Task 8: stream-tailer.ts tests — commit: 650f08c
+- [x] Task 9: co-root-initializer.ts tests — commit: (dev-3 commit)
 
 ## Priority 1: Critical Test Coverage (High)
 

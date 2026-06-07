@@ -1,7 +1,22 @@
-# CLI Commands for Headless Orchestration
+# Iteration 0 - CLI Commands for Headless Orchestration — 2026-06-07
 
-**日期：** 2026-06-07
-**状态：** 实现中
+## Status
+- **Overall:** completed
+- **Progress:** 10/10 tasks completed
+- **Last Updated:** 2026-06-07 02:32
+
+## Checklist
+
+- [x] Task 1: 架构审查 — commit: (architect review)
+- [x] Task 2: StateWriter 实现 — commit: 51f40c4
+- [x] Task 3: CommandWatcher 实现 — commit: afd53ef
+- [x] Task 4: CLI 命令 — commit: a006acf
+- [x] Task 5: runOrchestrator 改造 — commit: a006acf
+- [x] Task 6: StateWriter 修复 — commit: fcd0476
+- [x] Task 7: state-utils 修复 — commit: a007234
+- [x] Task 8: CLI 小修复 — commit: df5bdd1
+- [x] Task 9: CLI 测试 — commit: d668ef0
+- [x] Task 10: 最终验证 — commit: c061045
 
 ---
 

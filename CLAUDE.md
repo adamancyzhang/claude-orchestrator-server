@@ -107,12 +107,28 @@ See `docs/CLAUDE.md` for detailed standards.
 | **Member records** | Each dev/verifier/architect has separate section |
 | **Sequential numbering** | iteration-0, iteration-1, iteration-2... no gaps |
 
+### Iteration Plan Format
+
+Every iteration plan MUST have:
+
+1. **Status header** with:
+   - `Overall:` in_progress | completed | blocked
+   - `Progress:` X/Y tasks completed
+   - `Last Updated:` YYYY-MM-DD HH:MM
+
+2. **Checklist** with commit hash tracking:
+   - Pending: `- [ ] Task N: description`
+   - Completed: `- [x] Task N: description — commit: <hash>`
+   - Failed: `- [~] Task N: description — <reason>`
+
 ### team-lead Responsibilities
 
 - Check unfinished logs at session start
 - Update daily records at session end
 - Ensure all tasks have documentation
 - Tasks must be recorded in plans/ before assignment
+- **Update checklist in iteration plan when tasks complete**
+- **Never mark checklist item complete without commit hash**
 
 ---
 
