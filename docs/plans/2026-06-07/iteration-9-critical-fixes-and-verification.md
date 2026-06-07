@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 15/19 tasks completed
+- **Progress:** 16/19 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -29,7 +29,7 @@
 - [x] Task 15: 修复 decompose.md 未被 runner 创建 — commit: 2fdbd6d
 - [x] Task 16: 修复 task-queue 验证 link:null — 无法复现，已修复
 - [x] Task 17: 修复任务 dispatch 逻辑 — commit: 2defc01
-- [ ] Task 18: 改进 extractJson 处理 markdown 包裹的 JSON
+- [x] Task 18: 改进 extractJson 处理 markdown 包裹的 JSON — commit: d470fb2
 
 ## 依赖关系
 
