@@ -93,7 +93,7 @@ Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{nam
       "quality_gate": {
         "type": "test | review | self_eval | accept",
         "command": "<validation command or review criteria>",
-        "expected": "<expected outcome>"
+        "criteria": "<expected outcome>"
       },
       "priority": 1,
       "depends_on": []
@@ -107,7 +107,7 @@ Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{nam
       "quality_gate": {
         "type": "<gate type>",
         "command": "<validation command>",
-        "expected": "<expected outcome>"
+        "criteria": "<expected outcome>"
       },
       "priority": 1,
       "depends_on": ["0"]
@@ -120,10 +120,10 @@ Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{nam
 
 | Type | When to use | Example |
 |------|-------------|---------|
-| `test` | Code implementation, bug fixes | `{ "type": "test", "command": "npm test", "expected": "all tests pass" }` |
-| `review` | Architecture, design decisions | `{ "type": "review", "command": "architect reviews structure", "expected": "no layer violations" }` |
-| `self_eval` | Simple tasks, documentation | `{ "type": "self_eval", "command": "self-assess against criteria", "expected": "all criteria met" }` |
-| `accept` | Critical deliverables | `{ "type": "accept", "command": "verifier signs off", "expected": "acceptance confirmed" }` |
+| `test` | Code implementation, bug fixes | `{ "type": "test", "command": "npm test", "criteria": "all tests pass" }` |
+| `review` | Architecture, design decisions | `{ "type": "review", "command": "architect reviews structure", "criteria": "no layer violations" }` |
+| `self_eval` | Simple tasks, documentation | `{ "type": "self_eval", "command": "self-assess against criteria", "criteria": "all criteria met" }` |
+| `accept` | Critical deliverables | `{ "type": "accept", "command": "verifier signs off", "criteria": "acceptance confirmed" }` |
 
 When `magic_mode=true`, append an explore task as the final entry:
 
@@ -137,7 +137,7 @@ When `magic_mode=true`, append an explore task as the final entry:
   "quality_gate": {
     "type": "self_eval",
     "command": "evaluate chain completeness and follow-up value",
-    "expected": "decision made with clear rationale"
+    "criteria": "decision made with clear rationale"
   },
   "priority": 1,
   "depends_on": ["<last task id>"]
@@ -166,7 +166,7 @@ Output ONLY the JSON for the active mode. No explanation.
       "quality_gate": {
         "type": "test",
         "command": "npm run build && npm run dev",
-        "expected": "build succeeds, dev server starts without errors"
+        "criteria": "build succeeds, dev server starts without errors"
       },
       "priority": 1,
       "depends_on": []
@@ -180,7 +180,7 @@ Output ONLY the JSON for the active mode. No explanation.
       "quality_gate": {
         "type": "test",
         "command": "npm run lint && npm run format --check",
-        "expected": "lint and format checks pass with exit 0"
+        "criteria": "lint and format checks pass with exit 0"
       },
       "priority": 1,
       "depends_on": ["0"]
@@ -194,7 +194,7 @@ Output ONLY the JSON for the active mode. No explanation.
       "quality_gate": {
         "type": "test",
         "command": "npm run build && npm run dev",
-        "expected": "build succeeds, pages load and navigate correctly"
+        "criteria": "build succeeds, pages load and navigate correctly"
       },
       "priority": 1,
       "depends_on": ["1"]
