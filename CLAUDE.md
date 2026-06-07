@@ -6,47 +6,31 @@ Project-specific instructions. For behavioral guidelines, see global `~/.claude/
 
 ## 1. Team Management
 
-This project uses an agent team for development.
+This project uses an agent team for development. See [TEAMS.md](TEAMS.md) for complete team structure, workflow, and agent definitions.
 
-### Team Members
+### Quick Reference
 
-| Member | Role | Scope | Prohibited |
-|--------|------|-------|------------|
-| team-lead | Planning & coordination | Task planning, assignment, verification | No code, no tests |
-| product-manager | Product planning | Requirements, priorities, roadmap | No code, no architecture decisions |
-| dev-1/2/3 | Developer | Code, scoped tests, commits | No full tests, no .claude/ changes |
-| architect | Architecture review | Layer boundaries, design decisions | No code, no style reviews |
-| qa-engineer | Quality verification | Scoped tests, boundary checks | No full tests, no code changes |
-| tdd-guardian | Test discipline | Run full tests on command, report results | No test standards, no code changes |
-| verifier | Sign-off | Verify commits, changes, test coverage | No code, no unverified PASS |
-| team-coach | Collaboration discipline | Check compliance, record violations | No code, no task assignment |
-| cxo | Chief Experience Officer | Real-world testing, user experience reports | No code fixes, no implementation |
-
-### Team Recovery (New Session)
-
-1. Read all agent definitions from `.claude/agents/`
-2. Clean old team config: keep only team-lead in `~/.claude/teams/orch-dev/config.json` members
-3. For each member, call Agent tool with `.claude/agents/<role>.md` content (remove YAML frontmatter) as prompt
-4. Set `team_name: "orch-dev"`, `mode: "bypassPermissions"`, `run_in_background: true`
-5. Wait for all members to come online, then verify rules are loaded
+| Member | Role | Scope |
+|--------|------|-------|
+| team-lead | Planning & coordination | Task planning, assignment, verification |
+| product-manager | Product planning | Requirements, priorities, roadmap |
+| dev-1 | Developer | Code, scoped tests, commits |
+| dev-2 | Developer | Code, scoped tests, commits |
+| dev-3 | Developer | Code, scoped tests, commits |
+| code-reviewer | Code review | Code quality, architecture compliance |
+| testing-1 | Testing | Scoped tests, boundary checks, regression |
+| testing-2 | Testing | Scoped tests, boundary checks, regression |
+| testing-3 | Testing | Scoped tests, boundary checks, regression |
+| verifier | Sign-off | Verify commits, changes, test coverage |
+| architect | Architecture review | Layer boundaries, design decisions |
+| cxo | User experience | Real-world UX testing, experience reports |
 
 ### Key Constraints
 
 - `.claude/agents/*.md` is the only source for agent definitions (content in English)
-- When spawning, pass file content directly without translation
 - Team config path: `~/.claude/teams/orch-dev/config.json`
 - Max 3 developers (dev-1/2/3) to avoid conflicts
-
-### File Access Boundaries (Iron Rules)
-
-| Rule | Description |
-|------|-------------|
-| **Workspace limit** | All agents except team-lead can only access files within project workspace |
-| **No system files** | Cannot access `~/.claude/`, `/tmp/`, or other system directories |
-| **No agent inboxes** | Cannot read `~/.claude/teams/orch-dev/inboxes/` |
-| **team-lead privilege** | Only team-lead can access team config and agent definition files |
-
-**Project workspace:** `/mnt/c/Users/adama/Documents/projects/claude-orchestrator-server`
+- Max 3 testers (testing-1/2/3) to avoid conflicts
 
 ---
 
