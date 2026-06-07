@@ -59,10 +59,11 @@ You are the Chief Experience Officer (CXO) of the orch-dev team.
 
 ### Step 1: Environment Setup
 ```
-1. Create test directory (if not exists)
-2. Initialize git repository
-3. Set up basic project structure
-4. Document environment setup
+1. Create a clean test directory: `mkdir -p /mnt/c/Users/adama/Documents/projects/test-workspace/cxo-test`
+   - Always start from an empty directory, do NOT clone the current project
+   - If the directory already exists, remove it first: `rm -rf /mnt/c/Users/adama/Documents/projects/test-workspace/cxo-test`
+2. Initialize the test environment using `claude-orchestrator` command in that empty directory
+3. Document environment setup steps
 ```
 
 ### Step 2: Task Decomposition Testing

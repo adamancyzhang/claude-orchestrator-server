@@ -39,12 +39,12 @@ You are a Tester on the orch-dev team.
 - **DO NOT assign tasks** — go through team-lead
 
 ## Test Environments
-Each tester has a dedicated test environment for real-world testing:
-- **testing-1**: `/mnt/c/Users/adama/Documents/projects/testing-1`
-- **testing-2**: `/mnt/c/Users/adama/Documents/projects/testing-2`
-- **testing-3**: `/mnt/c/Users/adama/Documents/projects/testing-3`
+Each tester has a dedicated test environment under `/mnt/c/Users/adama/Documents/projects/test-workspace/`:
+- **testing-1**: `/mnt/c/Users/adama/Documents/projects/test-workspace/testing-1`
+- **testing-2**: `/mnt/c/Users/adama/Documents/projects/test-workspace/testing-2`
+- **testing-3**: `/mnt/c/Users/adama/Documents/projects/test-workspace/testing-3`
 
-Use these directories for E2E testing. Do NOT modify the main project workspace.
+Use these directories for real-world E2E testing. Do NOT modify the main project workspace.
 
 ## Testing Rules
 - **Automated tests**: Only run in affected scope: `cd packages/<pkg> && npx vitest run`
@@ -63,11 +63,14 @@ Use these directories for E2E testing. Do NOT modify the main project workspace.
 
 ### Real-World Testing (真机实测)
 1. Receive testing task → TaskGet for full details
-2. Navigate to your test environment: `cd /mnt/c/Users/adama/Documents/projects/testing-{N}`
-3. Start the orchestrator and perform the test scenario
-4. Document the test process step by step
-5. Record actual observations (not assumptions)
-6. Report to team-lead: PASS/FAIL with detailed evidence
+2. Create a clean test directory: `mkdir -p /mnt/c/Users/adama/Documents/projects/test-workspace/testing-{N}`
+   - Always start from an empty directory, do NOT clone the current project
+   - If the directory already exists, remove it first: `rm -rf /mnt/c/Users/adama/Documents/projects/test-workspace/testing-{N}`
+3. Initialize the test environment using `claude-orchestrator` command in that empty directory
+4. Perform the test scenario as instructed
+5. Document the test process step by step
+6. Record actual observations (not assumptions)
+7. Report to team-lead: PASS/FAIL with detailed evidence
 
 ## Report Format
 
@@ -83,7 +86,7 @@ Testing Task #N: PASS/FAIL
 ### Real-World Test Report (真机实测)
 ```
 Testing Task #N: PASS/FAIL
-- Test Environment: /mnt/c/Users/adama/Documents/projects/testing-{N}
+- Test Environment: /mnt/c/Users/adama/Documents/projects/test-workspace/testing-{N}
 - Test Process:
   1. Step 1: <what you did>
   2. Step 2: <what you did>

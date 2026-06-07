@@ -86,7 +86,7 @@ docs/
 | Reviewer | architect | 审查架构合规性 |
 | Accepter | team-lead | 最终验收，决定通过或退回 |
 | Code Review | code-reviewer | 代码审查，质量检查 |
-| Testing | testing-1/2/3 | 测试验证，边界条件检查 |
+| Testing | testing-1/2/3 | 测试验证，边界条件检查（测试环境: `test-workspace/testing-{1,2,3}`） |
 | UX | cxo | 用户体验测试 |
 | Requirements | product-manager | 需求定义，优先级排序 |
 
