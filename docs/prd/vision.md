@@ -75,27 +75,41 @@ Worker 不应被限制在"写代码"。它可以：
 
 ## 架构变更
 
-### 当前架构（废弃）
+### 设计核心：动态责任链
 
-```
-用户需求 → Leader → ChainDef(plan, execute, verify, review, accept)
-                ↓
-        固定模板渲染 → Worker(planner) → Worker(executor) → ...
-```
+**保留责任链概念，但让它动态化。**
+
+传统责任链是固定的（plan → execute → verify → review → accept），我们的责任链由 Leader 动态生成，每个环节都有：
+- **执行者**：通用 Worker（无角色绑定）
+- **质量门**：如何验证工作完成
+- **追溯链**：谁做了什么，何时完成，如何验证
 
 ### 目标架构
 
 ```
 用户需求 → Leader 分析
                 ↓
-        动态生成 ChainDef（任务列表 + 每个任务的系统提示词）
+        动态生成 ChainDef（任务列表 + 系统提示词 + 质量门）
                 ↓
-        Worker[0] 收到 (任务 + 系统提示词) → 执行 → 完成
+        Worker[0] 执行 → 质量门评估 → 通过/重试
                 ↓
-        Leader 评估 → Worker[1] 收到 (任务 + 系统提示词) → 执行 → 完成
+        Worker[1] 执行 → 质量门评估 → 通过/重试
                 ↓
-        ... 直到所有任务完成
+        ... 直到所有任务通过质量门
+                ↓
+        Leader 最终验收 → 完成
 ```
+
+### 质量门类型
+
+每个任务必须有质量门，Leader 决定使用哪种：
+
+| 类型 | 说明 | 适用场景 |
+|------|------|----------|
+| `self_eval` | Worker 自评估 | 简单任务、文档编写 |
+| `test` | 运行测试验证 | 代码实现 |
+| `review` | 另一个 Worker 审查 | 架构设计、复杂逻辑 |
+| `accept` | Leader 最终验收 | 关键任务、最终交付 |
 
 ## 系统提示词生成规范
 
@@ -207,44 +221,85 @@ Leader 为每个任务生成的系统提示词应包含：
 
 ## ChainDef 格式变更
 
-### 当前格式（废弃）
+### 目标格式（带质量门和追溯链）
 
 ```json
 {
   "chain_id": "xxx",
-  "links": [
-    { "link": "plan", "title": "...", "description": "...", "criteria": "..." },
-    { "link": "execute", "title": "...", "description": "...", "criteria": "..." },
-    { "link": "verify", "title": "...", "description": "...", "criteria": "..." }
-  ]
-}
-```
-
-### 目标格式
-
-```json
-{
-  "chain_id": "xxx",
+  "chain_title": "创建 Vue 3 项目",
   "tasks": [
     {
       "task_id": "0",
       "title": "初始化 Vue 项目",
       "system_prompt": "## 背景\n用户希望创建...",
-      "depends_on": []
+      "depends_on": [],
+      "quality_gate": {
+        "type": "test",
+        "criteria": "项目能正常构建和启动",
+        "commands": ["npm run build", "npm run dev -- --port 3001"]
+      }
     },
     {
       "task_id": "1",
       "title": "配置开发环境",
       "system_prompt": "## 背景\n前序任务已完成...",
-      "depends_on": ["0"]
+      "depends_on": ["0"],
+      "quality_gate": {
+        "type": "test",
+        "criteria": "lint 和 format 能正常运行",
+        "commands": ["npm run lint", "npm run format:check"]
+      }
     },
     {
       "task_id": "2",
       "title": "创建基础页面",
       "system_prompt": "## 背景\n项目已初始化...",
-      "depends_on": ["1"]
+      "depends_on": ["1"],
+      "quality_gate": {
+        "type": "review",
+        "criteria": "页面能正常跳转，代码符合 Vue 3 最佳实践",
+        "reviewer_prompt": "审查以下内容：\n1. 路由配置是否正确\n2. 组件是否使用 Composition API\n3. 样式是否使用 scoped CSS"
+      }
     }
   ]
+}
+```
+
+### 质量门详细规范
+
+#### self_eval 类型
+```json
+{
+  "type": "self_eval",
+  "criteria": "明确的完成标准",
+  "eval_prompt": "可选的自评估提示词"
+}
+```
+
+#### test 类型
+```json
+{
+  "type": "test",
+  "criteria": "测试通过的标准",
+  "commands": ["要运行的命令列表"]
+}
+```
+
+#### review 类型
+```json
+{
+  "type": "review",
+  "criteria": "审查通过的标准",
+  "reviewer_prompt": "审查者的系统提示词"
+}
+```
+
+#### accept 类型
+```json
+{
+  "type": "accept",
+  "criteria": "最终验收标准",
+  "acceptor_prompt": "验收者的系统提示词"
 }
 ```
 
@@ -257,19 +312,54 @@ Leader 为每个任务生成的系统提示词应包含：
 3. 按系统提示词的指导执行
 4. 将结果写入指定位置
 5. 提交代码
-6. 自评估完成质量
+6. **通过质量门验证**
 7. 发送完成报告
 
-### Worker 自评估标准：
+### 质量门执行流程：
+
+```
+Worker 执行完成
+        ↓
+根据 quality_gate.type 执行验证
+        ↓
+┌─────────────────────────────────────┐
+│ type=test     → 运行 commands       │
+│ type=self_eval → 自评估             │
+│ type=review   → 等待审查者          │
+│ type=accept   → 等待 Leader 验收    │
+└─────────────────────────────────────┘
+        ↓
+通过 → 发送完成报告（status: completed）
+失败 → 发送失败报告（status: needs_revision）
+```
+
+### Worker 完成报告格式：
 
 ```json
 {
+  "task_id": "0",
   "status": "completed" | "needs_revision" | "failed",
   "summary": "完成情况总结",
   "output_path": "产物路径",
-  "commit_hash": "提交哈希"
+  "commit_hash": "提交哈希",
+  "quality_gate_result": {
+    "type": "test",
+    "passed": true,
+    "details": "所有测试通过",
+    "evidence": ["npm run build: 成功", "npm run dev: 成功"]
+  }
 }
 ```
+
+### 追溯链记录：
+
+每个任务完成后，系统记录：
+- **谁**：Worker ID
+- **什么**：任务 ID 和标题
+- **何时**：开始时间、完成时间
+- **如何**：系统提示词、执行过程
+- **结果**：完成状态、质量门结果
+- **证据**：commit hash、产物路径
 
 ## 实施路线
 
