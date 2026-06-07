@@ -1,0 +1,88 @@
+# Iteration 9 - Critical Fixes & Verification — 2026-06-07
+
+## Status
+- **Overall:** in_progress
+- **Progress:** 2/7 tasks completed
+- **Last Updated:** 2026-06-07 14:19
+
+## 目标
+1. 修复 CXO 发现的 2 个 CRITICAL 问题（orchestrator 挂死、send 不触发任务）
+2. 完成 iteration-8 遗留的 4 个验证任务
+3. 执行复盘中的流程改进
+
+## Checklist
+
+- [x] Task 1: 修复 orchestrator `run` 命令挂死问题 (CXO CRITICAL) — commit: d37a9d4
+- [ ] Task 2: 修复 `send` 命令不触发任务创建问题 (CXO CRITICAL)
+- [ ] Task 3: 验证 Leader 动态 ChainDef 生成 (iteration-8 遗留)
+- [ ] Task 4: 验证 Worker 自动领取任务 (iteration-8 遗留)
+- [ ] Task 5: 验证质量门自动触发 (iteration-8 遗留)
+- [ ] Task 6: 验证追溯链记录 (iteration-8 遗留)
+- [x] Task 7: 执行复盘流程改进 (HIGH/MEDIUM) — commit: 1ff6135
+
+## 依赖关系
+
+```
+Task 1 (fix run) ──→ Task 3,4,5,6 (验证任务依赖核心功能可用)
+Task 2 (fix send) ──→ Task 3 (ChainDef 需要 send 触发)
+Task 7 (process) ── 独立
+```
+
+## 详细设计
+
+### Task 1: 修复 orchestrator `run` 命令挂死
+- **优先级:** P0 (CRITICAL)
+- **分配:** dev-1
+- **问题描述:** `claude-orchestrator run --headless -y` 启动后反复输出 "Initializing orchestrator..."，30+ 秒后超时，worker 无法连接
+- **验收标准:** `run` 命令正常启动，worker 可连接，任务可被处理
+- **参考:** CXO 测试报告 `docs/cxo/` 下的证据
+
+### Task 2: 修复 `send` 命令不触发任务
+- **优先级:** P0 (CRITICAL)
+- **分配:** dev-2
+- **问题描述:** `claude-orchestrator send "..."` 返回 "Command sent" 但不创建任务，tasks 输出为空
+- **验收标准:** `send` 命令能触发 leader 生成 ChainDef 并创建任务
+
+### Task 3: 验证 Leader 动态 ChainDef 生成
+- **优先级:** P0
+- **分配:** testing-1
+- **验证内容:** Leader 能根据用户输入动态生成 ChainDef，task_list 正确，system_prompt 质量达标
+- **依赖:** Task 1, Task 2
+- **验收标准:** 真机实测 PASS
+
+### Task 4: 验证 Worker 自动领取任务
+- **优先级:** P0
+- **分配:** testing-2
+- **验证内容:** Worker 启动后自动监听、提交后自动领取、执行结果正确返回
+- **依赖:** Task 1
+- **验收标准:** 真机实测 PASS
+
+### Task 5: 验证质量门自动触发
+- **优先级:** P1
+- **分配:** testing-3
+- **验证内容:** 配置 quality_gate 后执行任务，质量门自动触发，结果记录到 state.json
+- **依赖:** Task 1
+- **验收标准:** 真机实测 PASS
+
+### Task 6: 验证追溯链记录
+- **优先级:** P1
+- **分配:** code-reviewer
+- **验证内容:** 执行多个任务，检查 state.json 记录，验证执行者、时间、结果
+- **依赖:** Task 1
+- **验收标准:** 追溯链完整可查
+
+### Task 7: 执行复盘流程改进
+- **优先级:** P1
+- **分配:** process-engineer
+- **改进项:**
+  - HIGH: 修正迭代计划进度追踪模板
+  - MEDIUM: dev report 加 requirement clarity 评分
+  - MEDIUM: 改进依赖管理流程
+- **依赖:** 无（可并行执行）
+- **验收标准:** 模板更新完成，记录变更日志
+
+## 成功标准
+1. CXO 两个 CRITICAL 问题修复
+2. iteration-8 四个验证任务全部 PASS
+3. 复盘 HIGH/MEDIUM 改进项落地
+4. 迭代完成率 ≥ 85%

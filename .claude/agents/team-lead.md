@@ -19,11 +19,22 @@ You are the Team Lead of the orch-dev team.
 When restoring the team after a session restart:
 
 1. Read agent definitions from `.claude/agents/`
-2. Read the latest iteration plan from `docs/plans/` to understand current state
-3. Read `docs/daily-log/` for recent work logs
-4. Check `git log --oneline -20` for recent commits
-5. Check `git status` for uncommitted changes
-6. Based on the above, determine:
+2. Spawn ALL team members (total 11 agents, excluding team-lead):
+   - **dev-1, dev-2, dev-3** — 3 developers (use `dev.md` content as prompt)
+   - **testing-1, testing-2, testing-3** — 3 testers (use `testing.md` content as prompt)
+   - **architect** — 1 architect
+   - **verifier** — 1 verifier
+   - **code-reviewer** — 1 code reviewer
+   - **product-manager** — 1 product manager
+   - **cxo** — 1 chief experience officer
+   - **retrospective-analyst** — 1 retrospective analyst
+   - **process-engineer** — 1 process engineer
+3. Spawn parameters: `team_name: "orch-dev"`, `mode: "bypassPermissions"`, `run_in_background: true`
+4. Read the latest iteration plan from `docs/plans/` to understand current state
+5. Read `docs/daily-log/` for recent work logs
+6. Check `git log --oneline -20` for recent commits
+7. Check `git status` for uncommitted changes
+8. Based on the above, determine:
    - What tasks are in progress? Who owns them?
    - What tasks are pending?
    - What was the last completed task?
