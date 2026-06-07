@@ -20,6 +20,7 @@ This project uses an agent team for development.
 | tdd-guardian | Test discipline | Run full tests on command, report results | No test standards, no code changes |
 | verifier | Sign-off | Verify commits, changes, test coverage | No code, no unverified PASS |
 | team-coach | Collaboration discipline | Check compliance, record violations | No code, no task assignment |
+| cxo | Chief Experience Officer | Real-world testing, user experience reports | No code fixes, no implementation |
 
 ### Team Recovery (New Session)
 
