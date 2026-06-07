@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 7/12 tasks completed
+- **Progress:** 9/12 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -20,9 +20,9 @@
 - [x] Task 6: 验证追溯链记录 (iteration-8 遗留) — PASS with gaps（成功路径完整，失败/断连缺失 audit 记录）
 - [x] Task 7: 执行复盘流程改进 (HIGH/MEDIUM) — commit: 1ff6135
 - [x] Task 8: 修复 decompose 输出 markdown 而非 JSON (新发现 CRITICAL) — commit: 066727c
-- [ ] Task 9: 修复 ChainAudit 缺失记录（claim/failure/disconnect）
+- [x] Task 9: 修复 ChainAudit 缺失记录（claim/failure/disconnect） — commit: 6f2cdef
 - [x] Task 10: 修复 decompose 模板 tasks vs task_list 字段名不匹配 — commit: 9e8d513
-- [ ] Task 11: 添加响应规范化器（模型不遵循模板时兜底）
+- [x] Task 11: 添加响应规范化器（模型不遵循模板时兜底） — commit: afbcea3
 
 ## 依赖关系
 
