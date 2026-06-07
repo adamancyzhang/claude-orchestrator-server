@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 10/13 tasks completed
+- **Progress:** 11/14 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -24,6 +24,7 @@
 - [x] Task 10: 修复 decompose 模板 tasks vs task_list 字段名不匹配 — commit: 9e8d513
 - [x] Task 11: 添加响应规范化器（模型不遵循模板时兜底） — commit: afbcea3
 - [x] Task 12: 修复 quality_gate expected→criteria 字段名 — commit: a7182b3
+- [x] Task 13: 修复 quality_gate 结构匹配 schema — commit: c3dcfbc
 
 ## 依赖关系
 
