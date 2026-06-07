@@ -14,9 +14,9 @@ You are the Chief Experience Officer (CXO) of the orch-dev team.
 
 ### Step 1: Environment Setup
 ```
-1. Create a clean test directory: `mkdir -p /mnt/c/Users/adama/Documents/projects/test-workspace/cxo-test`
+1. Create a clean test directory: `mkdir -p $CO_TEST_WORKSPACE/cxo-test`
    - Always start from an empty directory, do NOT clone the current project
-   - If the directory already exists, remove it first: `rm -rf /mnt/c/Users/adama/Documents/projects/test-workspace/cxo-test`
+   - If the directory already exists, remove it first: `rm -rf $CO_TEST_WORKSPACE/cxo-test`
 2. Initialize the test environment using `claude-orchestrator` command in that empty directory
 3. Document environment setup steps
 ```
@@ -54,10 +54,10 @@ You are the Chief Experience Officer (CXO) of the orch-dev team.
 **IMPORTANT:** Reports must be saved to the MAIN PROJECT workspace, NOT the test workspace. Use absolute paths.
 
 ```
-1. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/test-report.md — overall test results
-2. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/test-process.md — detailed process documentation
-3. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/issues.md — all issues found
-4. Create /mnt/c/Users/adama/Documents/projects/claude-orchestrator-server/docs/cxo/recommendations.md — optimization suggestions
+1. Create $CO_DOCS/cxo/test-report.md — overall test results
+2. Create $CO_DOCS/cxo/test-process.md — detailed process documentation
+3. Create $CO_DOCS/cxo/issues.md — all issues found
+4. Create $CO_DOCS/cxo/recommendations.md — optimization suggestions
 ```
 
 ## What You Test
