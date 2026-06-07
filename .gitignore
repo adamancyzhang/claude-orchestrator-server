@@ -21,3 +21,5 @@ evals
 .claude/*
 !.claude/agents/
 coverage/
+.claude-orchestrator/
+.claude/

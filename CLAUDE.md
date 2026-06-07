@@ -1,115 +1,61 @@
-# CLAUDE.md
+# Multi-Agent Orchestration Workspace
 
-Project-specific instructions. For behavioral guidelines, see global `~/.claude/CLAUDE.md`.
+You are a Worker in a CLI-native multi-agent orchestration system. Work is coordinated through ZooKeeper-based message passing. The system follows the Plan → Execute → Verify → Review → Accept responsibility chain.
 
----
+## Team Roles
 
-## 1. Team Management
+| Role | Responsibility | Skill |
+|------|---------------|-------|
+| **Planner** | Requirement analysis, blueprint design, task decomposition | `task-planning` |
+| **Executor** | Implementation per blueprint, code changes, testing | `task-execution` |
+| **Verifier** | Cross-check Executor output against Planner blueprint | `task-verification` |
+| **Reviewer** | Chain-level quality gate, design consistency review | `task-review` |
+| **Accepter** | Final sign-off against business acceptance criteria | `task-acceptance` |
 
-This project uses an agent team for development. See [TEAMS.md](TEAMS.md) for complete team structure, workflow, agent definitions, and checklist tracking rules.
+All roles use `task-traceability` as the foundational traceability layer: Trace → Execute → Map → Evidence → Record.
 
-### Key Constraints
+## Documentation Directory
 
-- `.claude/agents/*.md` is the only source for agent definitions (content in English)
-- Team config path: `~/.claude/teams/orch-dev/config.json`
-- Max 3 developers (dev-1/2/3) to avoid conflicts
-- Max 3 testers (testing-1/2/3) to avoid conflicts
+All work artifacts go under `{{co_role_path}}/YYYY-MM-DD/`. Do not scatter documents elsewhere.
 
----
+Each role's typical outputs:
 
-## 2. Collaboration Rules (Iron Rules)
+| Role | Artifact |
+|------|----------|
+| Planner | `blueprint.md` |
+| Executor | `traceability-map.md` + `evidence/` |
+| Verifier | `verification-map.md` + `evidence/` |
+| Reviewer | `review-judgment.md` |
+| Accepter | `acceptance-report.md` |
 
-### 2.1 Testing Discipline
+## Daily Working Directory
 
-**Core principle: Testing is a means, not an end.**
+Your daily directory is `{{co_role_path}}/YYYY-MM-DD/`. Each daily directory must contain a `CLAUDE.md` as directory memory.
 
-| Rule | Description |
-|------|-------------|
-| **No full tests** | dev/testing only run scoped tests: `cd packages/<pkg> && npx vitest run` |
-| **Tests ≠ verification** | Tests passing ≠ correct. Must verify against expected outcomes |
-| **No repeated tests** | Same test run > 3 times in session = waste |
+**Workflow:**
+- **Start:** Navigate to today's directory. Read `CLAUDE.md` if it exists to restore context. Otherwise, create the directory and seed a fresh `CLAUDE.md`.
+- **During:** After each sub-task, update `CLAUDE.md` with status.
+- **End:** Record what was accomplished, what remains, and any blockers.
 
-### 2.2 Task Discipline
+## Reading Upstream Artifacts
 
-| Rule | Description |
-|------|-------------|
-| **Plan before execute** | Tasks must be recorded in `docs/plans/` before assignment |
-| **Single responsibility** | Each task does one thing only |
-| **Report immediately** | Report commit hash + changed files + test results on completion |
-| **Stop when blocked** | Stop immediately and ask team-lead when unclear |
-| **No scope creep** | Don't do work outside task scope |
+When your link depends on previous work:
 
-### 2.3 Collaboration Discipline
+| Your Link | Read From `{{co_root}}/docs/` |
+|-----------|--------------------------------------|
+| Execute | `{planner_name}/YYYY-MM-DD/blueprint.md` |
+| Verify | `{planner_name}/.../blueprint.md` + `{executor_name}/.../traceability-map.md` |
+| Review | Planner + Executor + Verifier artifacts |
+| Accept | All four upstream artifacts |
 
-| Rule | Description |
-|------|-------------|
-| **Role boundaries** | Each role only does its scope, overstepping = violation |
-| **No decision substitution** | dev doesn't make architecture decisions, architect doesn't write code |
-| **Evidence chain** | All work must have commit hash as evidence |
-| **Sign-off flow** | All developer work must go through verifier sign-off |
+If an upstream artifact is missing, check the chain-shared cache copy provided in your per-task template (`{{upstream_plan_artifact}}` / `{{upstream_execute_artifact}}` / `{{upstream_verify_artifact}}` / `{{upstream_review_artifact}}`). If still not found, report to Leader.
 
----
+## Your Personal CLAUDE.md
 
-## 3. Work Documentation
+Your role-specific rules are at `{{co_role_path}}/CLAUDE.md`. Read it at the start of every session.
 
-See `docs/CLAUDE.md` for detailed standards.
+## Git Rules
 
-### Core Requirements
-
-| Item | Requirement |
-|------|-------------|
-| **Log location** | `docs/daily-log/YYYY-MM-DD/work-log.md` |
-| **Plan location** | `docs/plans/YYYY-MM-DD/iteration-N-*.md` |
-| **Evidence chain** | Each record must include: Task #, Commit, Changed files, Test results, Verification status |
-| **Member records** | Each dev/verifier/architect has separate section |
-| **Sequential numbering** | iteration-0, iteration-1, iteration-2... no gaps |
-
----
-
-## 4. Compact Instructions (Context Compression)
-
-When context usage exceeds 80%, preserve by priority:
-
-### Must Preserve (Cannot Lose)
-
-1. **Current task status**: All in_progress and pending tasks from TaskList
-2. **Team member status**: Who's doing what, recent commit hashes
-3. **Key decisions**: Important technical decisions from this iteration
-4. **Unfinished work**: Pending task list
-
-### Can Compress
-
-1. **Completed task details**: Keep only commit hash and summary
-2. **Test output**: Keep only pass/fail counts
-3. **Code review details**: Keep only conclusion (PASS/FAIL)
-4. **Log history**: Keep only last 2 days
-
-### Compression Format
-
-```markdown
-## Compressed Summary (YYYY-MM-DD)
-
-### Completed (This Round)
-- #XX task name — commit: abc1234
-
-### In Progress
-- #YY task name — owner: dev-1 — status: in progress
-
-### Pending
-- #ZZ task name — priority: high
-
-### Key Decisions
-- Decision 1: description
-- Decision 2: description
-
-### Team Status
-- dev-1: working (Task #YY)
-- dev-2: idle
-- dev-3: working (Task #ZZ)
-```
-
-### Compression Triggers
-
-- Context usage > 80%: compress immediately
-- Every 5 tasks completed: check if compression needed
-- Session > 30 minutes: check if compression needed
+- Commit after each completed task. One logical unit per commit.
+- Commit message ends with your own name signature.
+- Never amend published commits. Verify with `git status` before committing.
