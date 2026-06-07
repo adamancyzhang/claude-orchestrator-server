@@ -95,3 +95,33 @@
   - `packages/infra/tests/alerting.test.ts` — 26 个单元测试
 - **测试结果:** 311/311 通过（infra 包）
 - **验证:** ✅ 通过
+
+### Performance Testing Suite
+- **Task:** #8
+- **Commit:** 92b4291
+- **变更文件:**
+  - `packages/infra/tests/performance/load-test.test.ts` — 100 并发 agent 负载测试、消息排序、突发处理、故障恢复
+  - `packages/infra/tests/performance/benchmark.test.ts` — 指标原语吞吐量、MessageBatcher 吞吐量、延迟
+  - `packages/infra/tests/performance/metrics-test.test.ts` — 吞吐量（ops/sec）、延迟（p99 <1μs）、资源使用
+- **测试结果:** 20/20 通过
+- **验证:** ✅ 通过
+
+### ChainDef 格式重构（动态 system_prompt）
+- **Task:** (chain-def refactor)
+- **Commit:** ef4ca49
+- **变更文件:**
+  - `packages/contracts/src/schemas/chain.ts` — 新增 ChainTaskSchema（task_id、title、description、system_prompt、depends_on）、NewChainDefSchema、废弃 LegacyChainDefSchema、ChainDefSchema 改为 union
+  - `packages/contracts/tests/schemas.test.ts` — 新增 7 个测试覆盖新格式验证和格式区分
+- **测试结果:** 126/126 通过（contracts 包）
+- **验证:** ✅ 通过
+
+### Dashboard Documentation
+- **Task:** #15
+- **Commit:** 25cce55
+- **变更文件:**
+  - `docs/dashboard/user-guide.md` — 用户指南
+  - `docs/dashboard/admin-guide.md` — 管理员配置指南
+  - `docs/dashboard/api-docs.md` — API 文档
+  - `docs/dashboard/troubleshooting.md` — 故障排除指南
+- **测试结果:** N/A（文档）
+- **验证:** ✅ 通过
