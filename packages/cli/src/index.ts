@@ -3,7 +3,7 @@ import { Command } from "commander";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadConfig, output } from "@co/infra";
-import { PROTOCOL_VERSION } from "@co/contracts";
+import { PROTOCOL_VERSION, noopLogger } from "@co/contracts";
 import { runOrchestrator, cleanupOrchestrator } from "@co/orchestrator";
 import { readState, getStateDir, type StateData } from "./state-utils.js";
 import { jsonOutput, jsonError } from "./json-output.js";
@@ -44,6 +44,25 @@ function outputError(jsonMode: boolean, code: string, message: string): void {
   }
 }
 
+/**
+ * Compute the co_root path that the orchestrator uses as its state
+ * directory. Matches the orchestrator's formula:
+ *   coRoot = path.join(projects_root, leaderId)
+ * where leaderId = config.instance_id ?? <random>.
+ * Returns undefined when the config lacks an instance_id (orchestrator
+ * hasn't been initialized yet).
+ */
+function resolveCoRoot(): string | undefined {
+  try {
+    const config = loadConfig();
+    const leaderId = config.instance_id;
+    if (!leaderId) return undefined;
+    return path.join(config.projects_root, leaderId);
+  } catch {
+    return undefined;
+  }
+}
+
 program
   .name("claude-orchestrator")
   .description(`Multi-agent orchestration CLI for Claude
@@ -71,13 +90,6 @@ For more information, visit: https://github.com/adamancyzhang/claude-orchestrato
       try {
         await cleanupOrchestrator({
           all: Boolean(opts.all),
-          logger: {
-            info: console.log,
-            warn: console.warn,
-            error: console.error,
-            debug: () => {},
-            child: () => ({ info: console.log, warn: console.warn, error: console.error, debug: () => {}, child: () => ({}) }),
-          },
         });
         outputResult({ message: "Cleanup complete" }, jsonMode);
       } catch (err) {

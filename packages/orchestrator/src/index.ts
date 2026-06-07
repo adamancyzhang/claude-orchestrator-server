@@ -36,3 +36,4 @@ export {
   createTeamClaudeMdStep,
   createSkillsStep,
 } from "./init-checker.js";
+export { cleanupOrchestrator, type CleanupOptions } from "./cleanup.js";
