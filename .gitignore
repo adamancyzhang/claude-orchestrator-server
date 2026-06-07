@@ -19,3 +19,4 @@ countlines-cli/
 evals
 
 .claude
+coverage/
