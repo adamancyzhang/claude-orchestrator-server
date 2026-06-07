@@ -14,6 +14,10 @@ This project uses an agent team for development. See [TEAMS.md](TEAMS.md) for co
 - Team config path: `~/.claude/teams/orch-dev/config.json`
 - Max 3 developers (dev-1/2/3) to avoid conflicts
 - Max 3 testers (testing-1/2/3) to avoid conflicts
+- Max 1 retrospective-analyst (single point of analysis)
+- Max 1 process-engineer (single point of process change)
+- After all tasks PASS, team-lead MUST trigger retrospective-analyst → process-engineer loop
+- process-engineer can ONLY modify `.claude/agents/`, `TEAMS.md`, `CLAUDE.md`, `docs/CLAUDE.md`
 
 ---
 
