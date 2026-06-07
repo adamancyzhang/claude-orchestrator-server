@@ -628,6 +628,7 @@ export class ChainRouter {
       msg,
       originalRequirement,
     );
+    if (requirementPath === null) return; // Chain conflict — abort.
 
     // Push all tasks to the queue, tracking the first for immediate dispatch.
     let firstTaskId: TaskId | null = null;
@@ -721,6 +722,7 @@ export class ChainRouter {
       msg,
       originalRequirement,
     );
+    if (requirementPath === null) return; // Chain conflict — abort.
 
     // Find the first non-null link and push all tasks to the queue.
     let firstLink: TaskLink | null = null;
@@ -870,7 +872,7 @@ export class ChainRouter {
               requirement_path: requirementPath,
             },
           });
-          throw err; // Re-throw to abort dispatch
+          return null; // Abort dispatch — chain_id conflict.
         }
         throw err;
       }
@@ -908,61 +910,6 @@ export class ChainRouter {
     }
 
     return requirementPath;
-  }
-
-    const firstWorker = firstLink
-      ? await this.findIdleWorkerByRole(LINK_TO_ROLE[firstLink] ?? "executor")
-      : null;
-
-    this.opts.bus.emit({ type: "chain_activated", chain_id: chainDef.chain_id });
-    if (this.opts.hooks) {
-      void this.opts.hooks.fire({
-        type: "chain_activated",
-        env: { CO_CHAIN_ID: chainDef.chain_id },
-      });
-    }
-
-    if (firstLink && firstDef) {
-      if (firstWorker) {
-        if (this.opts.chain_audit) {
-          await this.opts.chain_audit.setLinkTask(
-            chainDef.chain_id,
-            firstLink,
-            asTaskId(firstTaskId ?? ""),
-          );
-          await this.opts.chain_audit.record(chainDef.chain_id, {
-            event: "task_dispatch",
-            link: firstLink,
-            worker_id: firstWorker.id,
-            worker_name: firstWorker.name,
-            task_id: asTaskId(firstTaskId ?? ""),
-          });
-        }
-        const initialUpstream = await this.collectUpstreamCommits(
-          chainDef.chain_id,
-        );
-        await this.opts.message_router.send({
-          type: "task_dispatch",
-          from_instance: this.opts.leader_id,
-          from_name: this.opts.leader_name,
-          from_role: "leader",
-          to_instance: firstWorker.id,
-          content: firstTitle,
-          link: firstLink,
-          chain_id: chainDef.chain_id,
-          task_id: firstTaskId as never,
-          task_title: firstTitle,
-          task_description: firstDef.description,
-          task_criteria: firstDef.criteria,
-          system_prompt: firstSystemPrompt,
-          original_requirement_path: requirementPath,
-          upstream_commits: initialUpstream,
-        });
-        await this.rememberDispatch(chainDef.chain_id, firstLink, firstWorker.id);
-      } else {
-        this.opts.logger.warn(`no ${LINK_TO_ROLE[firstLink] ?? "executor"} available — task queued`);
-      }
-    }
   }
 
   private async handleCompletionReport(msg: Message): Promise<void> {
