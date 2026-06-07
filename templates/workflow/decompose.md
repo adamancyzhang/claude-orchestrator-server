@@ -83,7 +83,7 @@ Write the result to {{result_path}}. Also save a copy to `{{co_root}}/docs/{{nam
 {
   "chain_id": "chain-<seq>",
   "chain_title": "<short summary of the overall goal>",
-  "tasks": [
+  "task_list": [
     {
       "task_id": "0",
       "title": "<short title>",
@@ -156,7 +156,7 @@ Output ONLY the JSON for the active mode. No explanation.
 {
   "chain_id": "chain-1",
   "chain_title": "Create Vue 3 + TypeScript + Vite project",
-  "tasks": [
+  "task_list": [
     {
       "task_id": "0",
       "title": "Initialize Vue 3 project",
