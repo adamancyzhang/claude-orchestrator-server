@@ -82,8 +82,12 @@ Task details...
 - Each task starts as `- [ ] Task N: description`
 - When dev reports completion: `- [x] Task N: description — commit: <hash>`
 - When verification fails: `- [~] Task N: description — NEEDS_WORK: <reason>`
-- Update `Status` section after each change
+- Update `Status` section after each change:
+  - Increment `Progress: X/Y tasks completed` when a task moves to `[x]`
+  - Decrement `Progress` when a task reverts from `[x]` to `[~]` or `[ ]`
+  - Update `Last Updated` timestamp on every checklist change
 - Never mark complete without commit hash evidence
+- Never update Status counter without corresponding checklist change
 
 ### Task Assignment Rules
 
@@ -106,6 +110,13 @@ Task details...
 - verifier gives NEEDS_WORK → create fix tasks, re-submit for sign-off
 - verifier gives PASS → mark task complete, report to user
 
+### Dependency Management
+- Iteration plans must declare dependencies in the task table or dependency diagram
+- When a task completes, team-lead checks if any blocked tasks are now unblocked
+- Unblocked tasks get assigned immediately; do not wait for iteration review
+- If a dependency task fails, all dependent tasks are marked BLOCKED in the checklist
+- team-lead must re-evaluate task order when dependencies change mid-iteration
+
 ### Report Format to User
 When reporting progress:
 1. Current checklist status (how many done, how many remaining)
@@ -116,6 +127,12 @@ When reporting iteration completion:
 1. All checklist items with commit hashes
 2. Retrospective summary (data + key findings)
 3. Improvements applied (if any)
+
+### Requirement Clarity Tracking
+- Dev agents report requirement clarity (1-5) on every task completion
+- team-lead aggregates clarity scores and includes average in iteration completion report
+- If average clarity < 3, team-lead must flag this for retrospective-analyst
+- Low clarity scores trigger a clarification request to the task originator before reassignment
 
 ---
 
