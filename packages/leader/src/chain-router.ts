@@ -556,7 +556,14 @@ export class ChainRouter {
         err instanceof Error ? err : new Error(String(err)),
       );
     }
-    const parsed = ChainDefSchema.safeParse(jsonData);
+
+    // Normalize the response to handle model non-compliance:
+    // 1. If response has `task_list` → use as-is (correct format)
+    // 2. If response has `tasks` as array → convert to `task_list` (model non-compliance)
+    // 3. If response has `tasks` as object → legacy format, convert accordingly
+    const normalized = this.normalizeChainDef(jsonData);
+
+    const parsed = ChainDefSchema.safeParse(normalized);
     if (!parsed.success) {
       throw new ValidationError("invalid ChainDef in message", parsed.error);
     }
@@ -1771,5 +1778,46 @@ export class ChainRouter {
       }
     }
     return null;
+  }
+
+  /**
+   * Normalize ChainDef response to handle model non-compliance.
+   * Models may output `tasks` as an array instead of `task_list`.
+   * This function converts such responses to the expected format.
+   *
+   * Normalization rules:
+   * 1. If response has `task_list` → use as-is (correct format)
+   * 2. If response has `tasks` as array → convert to `task_list`
+   * 3. If response has `tasks` as object → legacy format, convert accordingly
+   */
+  private normalizeChainDef(data: unknown): unknown {
+    if (typeof data !== "object" || data === null) {
+      return data;
+    }
+
+    const obj = data as Record<string, unknown>;
+
+    // Case 1: Already has task_list → use as-is
+    if ("task_list" in obj && Array.isArray(obj.task_list)) {
+      return obj;
+    }
+
+    // Case 2: Has tasks as array → convert to task_list
+    if ("tasks" in obj && Array.isArray(obj.tasks)) {
+      this.opts.logger.debug("normalizing ChainDef: converting tasks array to task_list");
+      return {
+        ...obj,
+        task_list: obj.tasks,
+        tasks: undefined,
+      };
+    }
+
+    // Case 3: Has tasks as object → legacy format, use as-is
+    if ("tasks" in obj && typeof obj.tasks === "object" && obj.tasks !== null) {
+      return obj;
+    }
+
+    // No normalization needed
+    return obj;
   }
 }
