@@ -1,3 +1,5 @@
+CRITICAL: Your response MUST be valid JSON only. No markdown, no explanation, no prose before or after the JSON. Start your response with `{` and end with `}`.
+
 Break down the requirement below into a chain of tasks. Each task carries its own system_prompt that tells the Worker exactly how to work. Workers have no fixed roles -- the system_prompt defines their behavior for each specific task.
 
 ## Step 0: Restore Directory Memory

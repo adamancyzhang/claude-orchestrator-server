@@ -544,7 +544,19 @@ export class ChainRouter {
     msg: Message,
     originalRequirement?: string,
   ): Promise<void> {
-    const parsed = ChainDefSchema.safeParse(JSON.parse(extractJson(msg.content)));
+    let jsonData: unknown;
+    try {
+      const extracted = extractJson(msg.content);
+      jsonData = JSON.parse(extracted);
+    } catch (err) {
+      const preview = msg.content.slice(0, 200);
+      throw new ValidationError(
+        `Failed to parse JSON from decompose output. The model may have returned markdown instead of JSON. ` +
+        `Response preview: "${preview}..."`,
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
+    const parsed = ChainDefSchema.safeParse(jsonData);
     if (!parsed.success) {
       throw new ValidationError("invalid ChainDef in message", parsed.error);
     }
