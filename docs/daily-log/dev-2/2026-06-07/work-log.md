@@ -20,3 +20,13 @@
   - packages/infra/tests/metrics-collection-service.test.ts
 - **Test results:** 29/29 passed
 - **Summary:** MetricsCollectionService with aggregation by 1min/5min/1hour intervals, 30-day retention, Prometheus export.
+
+## Task #7: Documentation Cleanup and Archival
+- **Commit:** 997fb9d
+- **Changed files:**
+  - docs/archive/v1.0/ (4 files moved)
+  - docs/archive/v2.0/ (6 files moved)
+  - docs/design/v3.0/task-breakdown.md (removed duplicate)
+  - docs/archive/README.md (new index)
+- **Test results:** N/A (documentation only)
+- **Verification:** team-coach PASS
