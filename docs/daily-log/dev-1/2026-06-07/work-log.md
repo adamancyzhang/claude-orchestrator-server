@@ -84,7 +84,7 @@
 - **验证:** ✅ 通过
 
 ### Alerting System
-- **Task:** (alerting system)
+- **Task:** #4
 - **Commit:** 2ee7a1b
 - **变更文件:**
   - `packages/infra/src/alerting/alert-rule.ts` — AlertRuleConfig 接口、比较运算符、运行时状态管理
