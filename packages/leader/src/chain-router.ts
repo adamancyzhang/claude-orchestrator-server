@@ -694,6 +694,7 @@ export class ChainRouter {
           task_description: firstTask.description ?? "",
           task_criteria: firstTask.criteria ?? "",
           system_prompt: firstTask.system_prompt,
+          quality_gate: firstTask.quality_gate ?? null,
           original_requirement_path: requirementPath,
           upstream_commits: initialUpstream,
         });

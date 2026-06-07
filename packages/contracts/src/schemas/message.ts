@@ -16,6 +16,7 @@ import {
   type TaskLink,
 } from "../enums.js";
 import { UpstreamCommitsSchema, type UpstreamCommits } from "./task.js";
+import { QualityGateSchema, type QualityGate } from "./chain.js";
 
 export const MessageSchema = z.object({
   id: z.string().transform(asMessageId).default(""),
@@ -33,6 +34,7 @@ export const MessageSchema = z.object({
   task_description: z.string().nullable().default(null),
   task_criteria: z.string().nullable().default(null),
   system_prompt: z.string().nullable().default(null),
+  quality_gate: QualityGateSchema.nullable().default(null),
   result_path: z.string().nullable().default(null),
   original_requirement_path: z.string().nullable().default(null),
   reply_to: z.string().transform(asMessageId).nullable().default(null),
@@ -63,6 +65,7 @@ export interface SendMessageInput {
   task_description?: string | null;
   task_criteria?: string | null;
   system_prompt?: string | null;
+  quality_gate?: QualityGate | null;
   result_path?: string | null;
   original_requirement_path?: string | null;
   reply_to?: MessageId | null;

@@ -45,6 +45,7 @@ import {
   type GenerationFailure,
 } from "./output-validator.js";
 import { preTaskRebase } from "./git-rebase.js";
+import { QualityGateExecutor, type QualityGateResult } from "./quality-gate.js";
 
 export interface WorkerWatcherOptions {
   instance_id: InstanceId;
@@ -88,6 +89,11 @@ export interface WorkerWatcherOptions {
    * Interval in milliseconds between periodic heartbeats. Defaults to 10 seconds.
    */
   heartbeat_interval_ms?: number;
+  /**
+   * Optional quality gate executor. When provided, tasks with a quality_gate
+   * in their message will be validated after generation completes.
+   */
+  quality_gate_executor?: QualityGateExecutor;
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000; // 10 seconds
@@ -422,6 +428,7 @@ export class WorkerWatcher {
     let retryHint = "";
     let failure: GenerationFailure | null = null;
     let assistantResponse = "";
+    let qualityGateResult: QualityGateResult | null = null;
     const maxAttempts = isChainLink ? MAX_GENERATION_RETRIES : 1;
     this.opts.activity_reporter?.report({
       phase: "generate",
@@ -573,6 +580,69 @@ export class WorkerWatcher {
         chain_id: msg.chain_id ?? null,
         task_id: taskId,
       });
+    }
+
+    // Quality gate: if the task message carries a quality_gate, execute
+    // it after generation succeeds. A failed gate sends a feedback
+    // report so the Leader can retry instead of proceeding to commit.
+    if (msg.quality_gate && this.opts.quality_gate_executor) {
+      this.opts.activity_reporter?.report({
+        phase: "quality_gate",
+        action: "phase_start",
+        detail: `gate type: ${msg.quality_gate.type}`,
+        link: link as TaskLink | null,
+        task_id: taskId,
+      });
+      let gateResult: QualityGateResult;
+      try {
+        gateResult = await this.opts.quality_gate_executor.execute(
+          msg.quality_gate,
+          this.opts.worktree_path,
+        );
+      } catch (err) {
+        gateResult = {
+          passed: false,
+          gate_type: msg.quality_gate.type,
+          message: `Quality gate threw: ${String(err)}`,
+        };
+      }
+      qualityGateResult = gateResult;
+      this.opts.activity_reporter?.report({
+        phase: "quality_gate",
+        action: gateResult.passed ? "phase_end" : "error",
+        detail: gateResult.message.slice(0, 120),
+        link: link as TaskLink | null,
+        task_id: taskId,
+      });
+      if (!gateResult.passed) {
+        this.opts.logger.warn("quality gate failed — sending feedback", {
+          task_id: taskId,
+          gate_type: gateResult.gate_type,
+          message: gateResult.message,
+        });
+        await this.sendForcedFeedbackReport({
+          link: link as TaskLink,
+          msg,
+          resultPath,
+          taskId,
+          stderr: `Quality gate (${gateResult.gate_type}) failed: ${gateResult.message}`,
+        });
+        if (realTaskId) {
+          try {
+            await this.opts.task_queue.fail(
+              realTaskId,
+              `quality_gate_${gateResult.gate_type}_failed`,
+            );
+          } catch (err) {
+            this.opts.logger.warn("task fail() for quality gate", {
+              task_id: realTaskId,
+              error: String(err),
+            });
+          }
+        }
+        await this.opts.message_router.dismiss(this.opts.instance_id, msg.id);
+        return;
+      }
     }
 
     let commit: CommitResult | null = null;
@@ -729,6 +799,7 @@ export class WorkerWatcher {
           commit,
           docsSha,
           result.session_id ?? undefined,
+          qualityGateResult,
         );
         this.opts.activity_reporter?.report({
           phase: "evaluate",
@@ -800,6 +871,7 @@ export class WorkerWatcher {
     commit: CommitResult | null,
     docsSha: string | null,
     resumeSessionId: SessionId | undefined,
+    qualityGateResult?: QualityGateResult | null,
   ): Promise<void> {
     const evalContent = await this.opts.evaluator.evaluate({
       link,
@@ -819,6 +891,7 @@ export class WorkerWatcher {
       commit,
       docsSha,
       worktreeBranch: this.opts.worktree_branch,
+      qualityGateResult: qualityGateResult ?? undefined,
     });
 
     await sendCompletionReportFn({
