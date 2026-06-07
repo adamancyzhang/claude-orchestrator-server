@@ -17,10 +17,11 @@ export const ROLE_TO_SYSTEM_TEMPLATE: Record<string, string> = {
 
 /**
  * Build the full system prompt for a worker by loading the identity
- * template (agents/worker-identity.md) and the role-specific
- * responsibilities template, joining them, and interpolating vars.
+ * template (agents/worker-identity.md) and combining it with either:
+ * - A dynamic system prompt provided by Leader (when input.dynamic_system_prompt is set)
+ * - The legacy role-specific responsibilities template (fallback)
  *
- * Throws TemplateNotFoundError if either template is missing — a
+ * Throws TemplateNotFoundError if required templates are missing — a
  * missing template is a configuration error that must fail fast.
  */
 export function buildWorkerSystemPrompt(
@@ -32,19 +33,27 @@ export function buildWorkerSystemPrompt(
   }
   const identityTpl = engine.load("agents/worker-identity.md");
 
-  const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[input.role];
-  if (!roleTplName) {
-    throw new TemplateNotFoundError(
-      `agents/${input.role}/responsibilities.md`,
-    );
+  let contentTpl: string;
+
+  if (input.dynamic_system_prompt) {
+    // New path: use Leader-provided dynamic system prompt
+    contentTpl = input.dynamic_system_prompt;
+  } else {
+    // Legacy path: load role-specific responsibilities template
+    const roleTplName = ROLE_TO_SYSTEM_TEMPLATE[input.role];
+    if (!roleTplName) {
+      throw new TemplateNotFoundError(
+        `agents/${input.role}/responsibilities.md`,
+      );
+    }
+    if (!engine.has(roleTplName)) {
+      throw new TemplateNotFoundError(roleTplName);
+    }
+    contentTpl = engine.load(roleTplName);
   }
-  if (!engine.has(roleTplName)) {
-    throw new TemplateNotFoundError(roleTplName);
-  }
-  const roleTpl = engine.load(roleTplName);
 
   return ClaudeRunner.buildIdentityPrompt(
-    [identityTpl, roleTpl].join("\n\n---\n\n"),
+    [identityTpl, contentTpl].join("\n\n---\n\n"),
     input,
   );
 }

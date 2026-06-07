@@ -148,6 +148,59 @@ describe("buildWorkerSystemPrompt", () => {
       buildWorkerSystemPrompt(engine, SAMPLE_INPUT),
     ).toThrow("Template not found: agents/worker-identity.md");
   });
+
+  it("uses dynamic_system_prompt when provided instead of role template", () => {
+    const engine = createEngine();
+    const dynamicPrompt = "## 背景\n用户需要创建 Vue 项目\n\n## 工作方法\n1. 使用脚手架初始化\n\n## 约束\n- 使用 TypeScript\n\n## 输出\n可运行的项目";
+    const result = buildWorkerSystemPrompt(engine, {
+      ...SAMPLE_INPUT,
+      role: "planner",
+      dynamic_system_prompt: dynamicPrompt,
+    });
+
+    expect(result).toContain("Tom");
+    expect(result).toContain(dynamicPrompt);
+    // Should NOT contain the planner responsibilities template content
+    expect(result).not.toContain("task-planning");
+  });
+
+  it("dynamic_system_prompt preserves base identity info", () => {
+    const engine = createEngine();
+    const dynamicPrompt = "## 背景\nTest context\n\n## 工作方法\nDo stuff\n\n## 约束\nBe careful\n\n## 输出\nResult file";
+    const result = buildWorkerSystemPrompt(engine, {
+      ...SAMPLE_INPUT,
+      dynamic_system_prompt: dynamicPrompt,
+    });
+
+    // Base identity placeholders must be resolved
+    expect(result).toContain("Tom");
+    expect(result).toContain("planner");
+    expect(result).toContain(SAMPLE_INPUT.worktree_path);
+    expect(result).toContain(SAMPLE_INPUT.co_root);
+    expect(result).not.toContain("{{name}}");
+    expect(result).not.toContain("{{role}}");
+  });
+
+  it("falls back to role template when dynamic_system_prompt is empty", () => {
+    const engine = createEngine();
+    const result = buildWorkerSystemPrompt(engine, {
+      ...SAMPLE_INPUT,
+      dynamic_system_prompt: "",
+    });
+
+    // Should use the planner responsibilities template
+    expect(result).toContain("task-planning");
+  });
+
+  it("falls back to role template when dynamic_system_prompt is undefined", () => {
+    const engine = createEngine();
+    const result = buildWorkerSystemPrompt(engine, {
+      ...SAMPLE_INPUT,
+      dynamic_system_prompt: undefined,
+    });
+
+    expect(result).toContain("task-planning");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════

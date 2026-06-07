@@ -17,6 +17,12 @@ export interface BuildIdentityInput {
   worktree_branch: string;
   co_root: string;
   co_role_path: string;
+  /**
+   * Dynamic system prompt provided by Leader at decompose time.
+   * When set, this replaces the fixed role responsibilities template.
+   * The base identity (worker name, paths) is still prepended.
+   */
+  dynamic_system_prompt?: string;
 }
 
 export class ClaudeRunner implements IClaudeRunner {
