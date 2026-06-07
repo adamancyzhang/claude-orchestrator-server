@@ -63,16 +63,24 @@ export async function execWithStreaming(
   }
   args.push("-p", opts.prompt);
 
+  // Split command string into executable and extra args. The config
+  // stores commands like "claude --dangerously-skip-permissions ..." as a
+  // single string, but spawn() expects the executable as the first arg
+  // and flags as separate array elements.
+  const commandParts = opts.command.split(/\s+/).filter(Boolean);
+  const executable = commandParts[0];
+  const commandArgs = commandParts.slice(1);
+
   if (!opts.quiet) {
     const msgPreview =
       opts.prompt.length > 100 ? opts.prompt.slice(0, 100) + "..." : opts.prompt;
-    console.log(`\n[Exec] ${opts.command} ${args.join(" ")}`);
+    console.log(`\n[Exec] ${executable} ${[...commandArgs, ...args].join(" ")}`);
   }
 
   return new Promise((resolve) => {
     const logStream = fs.createWriteStream(opts.log_path, { flags: "a" });
 
-    const child = spawn(opts.command, args, {
+    const child = spawn(executable, [...commandArgs, ...args], {
       cwd: opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env },

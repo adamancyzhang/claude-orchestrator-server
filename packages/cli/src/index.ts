@@ -291,7 +291,7 @@ Examples:
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
     try {
-      const stateDir = getStateDir(globalOpts);
+      const stateDir = getStateDir(globalOpts, resolveCoRoot());
       const commandsPath = path.join(stateDir, "commands.jsonl");
       const command = {
         type: "send",
@@ -324,7 +324,7 @@ Examples:
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
     try {
-      const stateDir = getStateDir(globalOpts);
+      const stateDir = getStateDir(globalOpts, resolveCoRoot());
       const state = readState(stateDir);
       outputResult(state, jsonMode);
     } catch (err) {
@@ -351,7 +351,7 @@ Examples:
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
     try {
-      const stateDir = getStateDir(globalOpts);
+      const stateDir = getStateDir(globalOpts, resolveCoRoot());
       const state = readState(stateDir);
       if (state.workers.length === 0) {
         if (jsonMode) {
@@ -405,7 +405,7 @@ Examples:
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
     try {
-      const stateDir = getStateDir(globalOpts);
+      const stateDir = getStateDir(globalOpts, resolveCoRoot());
       const state = readState(stateDir);
       const all = [
         ...state.pending_tasks.map((t) => ({ ...t, queue: "pending" })),
@@ -467,7 +467,7 @@ Examples:
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
     try {
-      const stateDir = getStateDir(globalOpts);
+      const stateDir = getStateDir(globalOpts, resolveCoRoot());
       const state = readState(stateDir);
       const tail = parseInt(this.opts().tail, 10);
       if (!Number.isFinite(tail) || tail < 1) {
@@ -515,7 +515,7 @@ Examples:
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
     try {
-      const stateDir = getStateDir(globalOpts);
+      const stateDir = getStateDir(globalOpts, resolveCoRoot());
       const state = readState(stateDir);
 
       // Extract chain info from events.
@@ -616,7 +616,7 @@ Examples:
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
     try {
-      const stateDir = getStateDir(globalOpts);
+      const stateDir = getStateDir(globalOpts, resolveCoRoot());
       const state = readState(stateDir);
       const worker = state.workers.find((w) => w.id === workerId);
       if (!worker) {
@@ -662,7 +662,7 @@ Examples:
   .action(async function (this: Command) {
     const globalOpts = this.optsWithGlobals();
     const jsonMode = Boolean(globalOpts.json);
-    const stateDir = getStateDir(globalOpts);
+    const stateDir = getStateDir(globalOpts, resolveCoRoot());
     const opts = this.opts() as { task?: string; chain?: string; timeout?: string };
     const timeoutMs = (parseInt(opts.timeout ?? "30", 10)) * 1000;
     const start = Date.now();

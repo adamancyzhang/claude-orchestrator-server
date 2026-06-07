@@ -62,6 +62,9 @@ export function readState(stateDir: string): StateData {
   return data;
 }
 
-export function getStateDir(globalOpts: { stateDir?: string }): string {
-  return globalOpts.stateDir ?? path.join(".claude-orchestrator", "state");
+export function getStateDir(
+  globalOpts: { stateDir?: string },
+  coRoot?: string,
+): string {
+  return globalOpts.stateDir ?? coRoot ?? path.join(".claude-orchestrator", "state");
 }
