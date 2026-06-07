@@ -13,7 +13,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { InitChecker, type InitCheckerOptions, type InitStep } from "../src/init-checker.js";
+import {
+  InitChecker,
+  type InitCheckerOptions,
+  type InitStep,
+  createUserClaudeMdStep,
+} from "../src/init-checker.js";
 
 // Mock @co/infra to control init status loading/saving
 vi.mock("@co/infra", () => ({
@@ -108,5 +113,100 @@ describe("InitChecker", () => {
 
     const checker = new InitChecker({ y_flag: false, logger });
     await expect(checker.runAll([step])).rejects.toThrow("check failed");
+  });
+});
+
+describe("createUserClaudeMdStep — backup behavior", () => {
+  let tempDir: string;
+  let templateDir: string;
+  let logger: { info: vi.Mock; warn: vi.Mock; error: vi.Mock };
+  const origHome = os.homedir();
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "init-backup-"));
+    templateDir = path.join(tempDir, "templates");
+    fs.mkdirSync(templateDir, { recursive: true });
+    logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    vi.clearAllMocks();
+  });
+
+  // Set HOME env var so expandHomeDir (~/.claude/CLAUDE.md) resolves
+  // into our temp directory instead of the real home dir.
+  function setHome(home: string) {
+    process.env.HOME = home;
+    // os.homedir() reads HOME on Linux
+  }
+
+  it("should create .bak backup before overwriting existing CLAUDE.md", async () => {
+    const home = path.join(tempDir, "home");
+    const claudeDir = path.join(home, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    const dest = path.join(claudeDir, "CLAUDE.md");
+    fs.writeFileSync(dest, "original content", "utf-8");
+
+    const src = path.join(templateDir, "user-global-claude.md");
+    fs.writeFileSync(src, "new template content", "utf-8");
+
+    setHome(home);
+    try {
+      const step = createUserClaudeMdStep(templateDir, logger);
+      await step.execute();
+
+      expect(fs.existsSync(dest)).toBe(true);
+      expect(fs.readFileSync(dest, "utf-8")).toBe("new template content");
+      expect(fs.existsSync(`${dest}.bak`)).toBe(true);
+      expect(fs.readFileSync(`${dest}.bak`, "utf-8")).toBe("original content");
+      expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("backed up"));
+    } finally {
+      process.env.HOME = origHome;
+    }
+  });
+
+  it("should skip backup when noBackup is true", async () => {
+    const home = path.join(tempDir, "home");
+    const claudeDir = path.join(home, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+    const dest = path.join(claudeDir, "CLAUDE.md");
+    fs.writeFileSync(dest, "original content", "utf-8");
+
+    const src = path.join(templateDir, "user-global-claude.md");
+    fs.writeFileSync(src, "new template content", "utf-8");
+
+    setHome(home);
+    try {
+      const step = createUserClaudeMdStep(templateDir, logger, true);
+      await step.execute();
+
+      expect(fs.readFileSync(dest, "utf-8")).toBe("new template content");
+      expect(fs.existsSync(`${dest}.bak`)).toBe(false);
+      expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("backed up"));
+    } finally {
+      process.env.HOME = origHome;
+    }
+  });
+
+  it("should not backup when dest does not exist yet", async () => {
+    const home = path.join(tempDir, "home");
+    const claudeDir = path.join(home, ".claude");
+    fs.mkdirSync(claudeDir, { recursive: true });
+
+    const src = path.join(templateDir, "user-global-claude.md");
+    fs.writeFileSync(src, "fresh content", "utf-8");
+
+    setHome(home);
+    try {
+      const step = createUserClaudeMdStep(templateDir, logger);
+      await step.execute();
+
+      const dest = path.join(claudeDir, "CLAUDE.md");
+      expect(fs.readFileSync(dest, "utf-8")).toBe("fresh content");
+      expect(fs.existsSync(`${dest}.bak`)).toBe(false);
+    } finally {
+      process.env.HOME = origHome;
+    }
   });
 });
