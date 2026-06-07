@@ -106,3 +106,37 @@ Task 7 (process) ── 独立
 3. iteration-8 四个验证任务全部 PASS
 4. 复盘 HIGH/MEDIUM 改进项落地
 5. 迭代完成率 ≥ 85%
+
+## 未完成任务记录
+
+### Task 4: 验证 Worker 自动领取任务
+- **状态:** 未完成
+- **负责人:** testing-2
+- **当前进展:** 9 次重试，部分成功
+  - ✅ 任务能被创建（task_list 格式正确）
+  - ✅ dispatch 逻辑已修复（commit 2defc01）
+  - ⚠️ 模型行为不一致：有时返回 JSON（成功），有时返回 markdown（失败）
+  - ⚠️ extractJson 已改进（commit d470fb2）但未验证
+- **阻塞原因:** 模型（mimo-v2.5-pro）行为不一致，不是代码 bug
+- **下一步:** 重试测试，观察 extractJson 改进是否解决问题
+
+### 本轮发现并修复的 bug 链（共 10 层）
+| # | 问题 | 修复 commit |
+|---|------|------------|
+| 1 | decompose 输出 markdown | 066727c |
+| 2 | `tasks` vs `task_list` 字段名 | 9e8d513 |
+| 3 | 模型忽略模板格式 | afbcea3 |
+| 4 | quality_gate `expected` vs `criteria` | a7182b3 |
+| 5 | quality_gate 结构不匹配 schema | c3dcfbc |
+| 6 | TaskLink 枚举不接受数字 ID | 7c6f150 |
+| 7 | decompose.md 未被 runner 创建 | 2fdbd6d |
+| 8 | task-queue 验证 link:null | 已修复 |
+| 9 | 任务 dispatch 硬编码 executor 角色 | 2defc01 |
+| 10 | extractJson 不处理 markdown 包裹 | d470fb2 |
+
+### 已完成的验证任务
+| 任务 | 结果 | 说明 |
+|------|------|------|
+| Task 3: ChainDef 生成 | ✅ PASS | testing-1 真机测试通过 |
+| Task 5: 质量门 | ✅ PASS | testing-3 单元测试通过 |
+| Task 6: 追溯链 | ✅ PASS with gaps | code-reviewer 代码分析通过
