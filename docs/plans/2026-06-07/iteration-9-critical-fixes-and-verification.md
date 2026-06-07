@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 12/15 tasks completed
+- **Progress:** 12/17 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -26,6 +26,8 @@
 - [x] Task 12: 修复 quality_gate expected→criteria 字段名 — commit: a7182b3
 - [x] Task 13: 修复 quality_gate 结构匹配 schema — commit: c3dcfbc
 - [x] Task 14: 修复 TaskLink 枚举不接受数字 ID — commit: 7c6f150
+- [ ] Task 15: 修复 decompose.md 未被 runner 创建
+- [ ] Task 16: 修复 task-queue 验证 link:null 失败
 
 ## 依赖关系
 
