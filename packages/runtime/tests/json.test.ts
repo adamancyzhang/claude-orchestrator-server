@@ -137,4 +137,241 @@ Here are the decomposed tasks.`;
   it("handles empty string", () => {
     expect(extractJson("")).toBe("");
   });
+
+  // ── Real-world decompose model output scenarios ──────────────────
+  // These simulate what mimo-v2.5-pro actually returns when asked to
+  // decompose a requirement into a ChainDef.
+
+  describe("decompose model output scenarios", () => {
+    // Scenario 1: Ideal — model follows instructions, returns pure JSON
+    it("Scenario 1: pure JSON (ideal model behavior)", () => {
+      const input = `{
+  "chain_id": "chain-1",
+  "chain_title": "Fix the login bug",
+  "task_list": [
+    {
+      "task_id": "0",
+      "title": "Investigate the bug",
+      "system_prompt": "## 背景\\n用户报告登录失败",
+      "description": "Investigate the login failure",
+      "criteria": "root cause identified",
+      "quality_gate": { "type": "self_eval", "criteria": "analysis complete" },
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}`;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      expect(parsed.chain_id).toBe("chain-1");
+      expect(parsed.task_list).toHaveLength(1);
+    });
+
+    // Scenario 2: Model wraps in markdown code fences (very common)
+    it("Scenario 2: markdown code fence wrapping", () => {
+      const input = `\`\`\`json
+{
+  "chain_id": "chain-2",
+  "chain_title": "Add dark mode",
+  "task_list": [
+    {
+      "task_id": "0",
+      "title": "Implement dark mode",
+      "system_prompt": "## 背景\\n用户想要暗色模式",
+      "description": "Add dark mode support",
+      "criteria": "toggle works",
+      "quality_gate": { "type": "test", "criteria": "all tests pass", "commands": ["pnpm test"] },
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}
+\`\`\``;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      expect(parsed.chain_id).toBe("chain-2");
+      expect(parsed.task_list).toHaveLength(1);
+    });
+
+    // Scenario 3: Model adds prose explanation before JSON
+    it("Scenario 3: prose before JSON", () => {
+      const input = `I'll analyze the requirement and break it down into tasks.
+
+Here is the task decomposition:
+
+{
+  "chain_id": "chain-3",
+  "chain_title": "Refactor auth module",
+  "task_list": [
+    {
+      "task_id": "0",
+      "title": "Plan the refactoring",
+      "system_prompt": "## 背景\\n认证模块需要重构",
+      "description": "Create a refactoring plan",
+      "criteria": "plan documented",
+      "quality_gate": { "type": "self_eval", "criteria": "plan is complete" },
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}`;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      expect(parsed.chain_id).toBe("chain-3");
+    });
+
+    // Scenario 4: Model adds prose + code fence (most common failure case)
+    it("Scenario 4: prose + code fence (common failure case)", () => {
+      const input = `I'll break down the requirement into tasks for the chain.
+
+\`\`\`json
+{
+  "chain_id": "chain-4",
+  "chain_title": "Add unit tests",
+  "task_list": [
+    {
+      "task_id": "0",
+      "title": "Write tests",
+      "system_prompt": "## 背景\\n需要补充单元测试",
+      "description": "Write unit tests for the API",
+      "criteria": "coverage > 80%",
+      "quality_gate": { "type": "test", "criteria": "tests pass", "commands": ["pnpm test"] },
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}
+\`\`\`
+
+These tasks should cover the requirement.`;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      expect(parsed.chain_id).toBe("chain-4");
+    });
+
+    // Scenario 5: Model adds markdown headers before JSON
+    it("Scenario 5: markdown headers before JSON", () => {
+      const input = `## Task Decomposition
+
+### Analysis
+
+The requirement needs 2 tasks.
+
+### Chain Definition
+
+{
+  "chain_id": "chain-5",
+  "chain_title": "Update documentation",
+  "task_list": [
+    {
+      "task_id": "0",
+      "title": "Update README",
+      "system_prompt": "## 背景\\nREADME 需要更新",
+      "description": "Update the README file",
+      "criteria": "README is accurate",
+      "quality_gate": { "type": "review", "criteria": "docs are clear", "reviewer_prompt": "check accuracy" },
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}`;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      expect(parsed.chain_id).toBe("chain-5");
+    });
+
+    // Scenario 6: Model uses `tasks` array instead of `task_list` (non-compliance)
+    it("Scenario 6: model uses 'tasks' array instead of 'task_list'", () => {
+      const input = `{
+  "chain_id": "chain-6",
+  "chain_title": "Fix bug",
+  "tasks": [
+    {
+      "task_id": "0",
+      "title": "Fix it",
+      "system_prompt": "## 背景\\n修复 bug",
+      "description": "Fix the bug",
+      "criteria": "bug is fixed",
+      "quality_gate": { "type": "test", "criteria": "tests pass", "commands": ["pnpm test"] },
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}`;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      // extractJson should extract it; normalizeChainDef handles tasks→task_list
+      expect(parsed.chain_id).toBe("chain-6");
+      expect(parsed.tasks).toHaveLength(1);
+    });
+
+    // Scenario 7: Model returns very long system_prompt with special chars
+    it("Scenario 7: long system_prompt with special characters", () => {
+      const input = `\`\`\`json
+{
+  "chain_id": "chain-7",
+  "chain_title": "Complex task",
+  "task_list": [
+    {
+      "task_id": "0",
+      "title": "Do something complex",
+      "system_prompt": "## 背景\\n这是一个复杂的任务，包含特殊字符：中文、引号\\"test\\"、换行\\n、制表符\\t、反斜杠\\\\、emoji 🎉、HTML <div>、SQL 'SELECT * FROM users'",
+      "description": "Complex task with special chars",
+      "criteria": "all handled correctly",
+      "quality_gate": { "type": "self_eval", "criteria": "done" },
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}
+\`\`\``;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      expect(parsed.chain_id).toBe("chain-7");
+      expect(parsed.task_list[0].system_prompt).toContain("中文");
+      expect(parsed.task_list[0].system_prompt).toContain("🎉");
+    });
+
+    // Scenario 8: Model returns multiple JSON blocks (ambiguity)
+    it("Scenario 8: multiple JSON blocks — returns first valid one", () => {
+      const input = `Here's an example of the format:
+{"example": true}
+
+And here's the actual result:
+{
+  "chain_id": "chain-8",
+  "chain_title": "Real task",
+  "task_list": []
+}`;
+      const result = extractJson(input);
+      const parsed = JSON.parse(result);
+      // Should return the first valid JSON candidate
+      expect(parsed.example).toBe(true);
+    });
+
+    // Scenario 9: Model returns JSON with trailing comma (invalid JSON)
+    it("Scenario 9: trailing comma — extractJson returns raw, parse fails", () => {
+      const input = `{
+  "chain_id": "chain-9",
+  "task_list": [],
+}`;
+      const result = extractJson(input);
+      // extractJson returns it as-is since it can't parse
+      expect(result).toContain("chain_id");
+      // But JSON.parse will fail — this is the actual failure mode
+      expect(() => JSON.parse(result)).toThrow();
+    });
+
+    // Scenario 10: Model returns JSON with comments (invalid JSON)
+    it("Scenario 10: JSON with comments — extractJson returns raw, parse fails", () => {
+      const input = `{
+  // This is the chain
+  "chain_id": "chain-10",
+  "task_list": []
+}`;
+      const result = extractJson(input);
+      expect(result).toContain("chain_id");
+      expect(() => JSON.parse(result)).toThrow();
+    });
+  });
 });
