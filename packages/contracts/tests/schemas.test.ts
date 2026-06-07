@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { TaskSchema } from "../src/schemas/task.js";
 import { InstanceSchema } from "../src/schemas/instance.js";
 import { MessageSchema } from "../src/schemas/message.js";
-import { ChainDefSchema, LegacyChainDefSchema, NewChainDefSchema, ChainTaskSchema } from "../src/schemas/chain.js";
+import { ChainDefSchema, LegacyChainDefSchema, NewChainDefSchema, ChainTaskSchema, QualityGateSchema } from "../src/schemas/chain.js";
 import { EvalDecisionSchema } from "../src/schemas/eval.js";
 import { MergeDecisionSchema } from "../src/schemas/merge.js";
 
@@ -378,6 +378,197 @@ describe("ChainDefSchema", () => {
     expect(NewChainDefSchema.safeParse({ chain_id: "c", chain_title: "x", tasks: {} }).success).toBe(false);
     // Cross-rejection: new data rejected by legacy schema
     expect(LegacyChainDefSchema.safeParse({ chain_id: "c", chain_title: "x", task_list: [] }).success).toBe(false);
+  });
+
+  // ── QualityGate ────────────────────────────────────────────────────
+
+  it("accepts ChainTask with self_eval quality_gate", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-1",
+      title: "Write tests",
+      description: "Write unit tests",
+      system_prompt: "Write tests for the module.",
+      quality_gate: {
+        type: "self_eval",
+        criteria: "All tests pass",
+      },
+    });
+    expect(parsed.quality_gate).toEqual({
+      type: "self_eval",
+      criteria: "All tests pass",
+    });
+  });
+
+  it("accepts ChainTask with test quality_gate and commands", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-2",
+      title: "Run tests",
+      description: "Execute test suite",
+      system_prompt: "Run the test suite.",
+      quality_gate: {
+        type: "test",
+        criteria: "All tests pass",
+        commands: ["pnpm test", "pnpm lint"],
+      },
+    });
+    expect(parsed.quality_gate).toEqual({
+      type: "test",
+      criteria: "All tests pass",
+      commands: ["pnpm test", "pnpm lint"],
+    });
+  });
+
+  it("test quality_gate defaults commands to empty array", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-3",
+      title: "Test",
+      description: "Desc",
+      system_prompt: "Prompt",
+      quality_gate: {
+        type: "test",
+        criteria: "Pass",
+      },
+    });
+    expect(parsed.quality_gate).toEqual({
+      type: "test",
+      criteria: "Pass",
+      commands: [],
+    });
+  });
+
+  it("accepts ChainTask with review quality_gate", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-4",
+      title: "Review",
+      description: "Code review",
+      system_prompt: "Review the code.",
+      quality_gate: {
+        type: "review",
+        criteria: "No critical issues",
+        reviewer_prompt: "Review for security vulnerabilities.",
+      },
+    });
+    expect(parsed.quality_gate).toEqual({
+      type: "review",
+      criteria: "No critical issues",
+      reviewer_prompt: "Review for security vulnerabilities.",
+    });
+  });
+
+  it("review quality_gate defaults reviewer_prompt to empty string", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-5",
+      title: "Review",
+      description: "Desc",
+      system_prompt: "Prompt",
+      quality_gate: {
+        type: "review",
+        criteria: "Pass",
+      },
+    });
+    expect(parsed.quality_gate).toEqual({
+      type: "review",
+      criteria: "Pass",
+      reviewer_prompt: "",
+    });
+  });
+
+  it("accepts ChainTask with accept quality_gate", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-6",
+      title: "Accept",
+      description: "Final acceptance",
+      system_prompt: "Accept the deliverable.",
+      quality_gate: {
+        type: "accept",
+        criteria: "Meets all requirements",
+        acceptor_prompt: "Verify the deliverable meets acceptance criteria.",
+      },
+    });
+    expect(parsed.quality_gate).toEqual({
+      type: "accept",
+      criteria: "Meets all requirements",
+      acceptor_prompt: "Verify the deliverable meets acceptance criteria.",
+    });
+  });
+
+  it("accept quality_gate defaults acceptor_prompt to empty string", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-7",
+      title: "Accept",
+      description: "Desc",
+      system_prompt: "Prompt",
+      quality_gate: {
+        type: "accept",
+        criteria: "Pass",
+      },
+    });
+    expect(parsed.quality_gate).toEqual({
+      type: "accept",
+      criteria: "Pass",
+      acceptor_prompt: "",
+    });
+  });
+
+  it("rejects unknown quality_gate type", () => {
+    expect(
+      ChainTaskSchema.safeParse({
+        task_id: "t-8",
+        title: "Task",
+        description: "Desc",
+        system_prompt: "Prompt",
+        quality_gate: {
+          type: "unknown_type",
+          criteria: "Pass",
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("quality_gate is optional on ChainTask", () => {
+    const parsed = ChainTaskSchema.parse({
+      task_id: "t-9",
+      title: "Task",
+      description: "Desc",
+      system_prompt: "Prompt",
+    });
+    expect(parsed.quality_gate).toBeUndefined();
+  });
+
+  it("ChainTask with quality_gate round-trips through ChainDefSchema", () => {
+    const parsed = ChainDefSchema.parse({
+      chain_id: "c-qg",
+      chain_title: "quality gate chain",
+      task_list: [
+        {
+          task_id: "t-1",
+          title: "Build",
+          description: "Build the project",
+          system_prompt: "Run the build.",
+          quality_gate: {
+            type: "test",
+            criteria: "Build succeeds",
+            commands: ["pnpm build"],
+          },
+        },
+        {
+          task_id: "t-2",
+          title: "Review",
+          description: "Review the code",
+          system_prompt: "Review changes.",
+          quality_gate: {
+            type: "review",
+            criteria: "No issues",
+            reviewer_prompt: "Review carefully.",
+          },
+        },
+      ],
+    });
+    if ("task_list" in parsed) {
+      expect(parsed.task_list[0].quality_gate).toBeDefined();
+      expect(parsed.task_list[0].quality_gate!.type).toBe("test");
+      expect(parsed.task_list[1].quality_gate!.type).toBe("review");
+    }
   });
 });
 

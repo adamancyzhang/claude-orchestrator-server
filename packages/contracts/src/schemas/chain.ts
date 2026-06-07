@@ -16,6 +16,36 @@ export type ChainTaskDef = z.infer<typeof ChainTaskDefSchema>;
 // ── New format: dynamic tasks with system_prompt ──────────────────────
 
 /**
+ * Quality gate for a chain task. Determines how the task's output
+ * is validated before the chain proceeds to the next task.
+ */
+export const QualityGateSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("self_eval"),
+    criteria: z.string(),
+  }),
+  z.object({
+    type: z.literal("test"),
+    criteria: z.string(),
+    /** Shell commands to run as part of the gate (e.g. ["pnpm test"]). */
+    commands: z.array(z.string()).default([]),
+  }),
+  z.object({
+    type: z.literal("review"),
+    criteria: z.string(),
+    /** Prompt sent to the reviewer LLM. */
+    reviewer_prompt: z.string().default(""),
+  }),
+  z.object({
+    type: z.literal("accept"),
+    criteria: z.string(),
+    /** Prompt sent to the acceptor LLM. */
+    acceptor_prompt: z.string().default(""),
+  }),
+]);
+export type QualityGate = z.infer<typeof QualityGateSchema>;
+
+/**
  * A single task in a chain, with a dynamically generated system prompt.
  *
  * Leader generates the system_prompt to tell the Worker *how* to execute
@@ -36,6 +66,8 @@ export const ChainTaskSchema = z.object({
   priority: TaskPrioritySchema.default(1),
   /** Success criteria for the task. */
   criteria: z.string().default(""),
+  /** Optional quality gate for validating task output. */
+  quality_gate: QualityGateSchema.optional(),
 });
 export type ChainTask = z.infer<typeof ChainTaskSchema>;
 
