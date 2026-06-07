@@ -243,6 +243,7 @@ export class LeaderState implements ILeaderStateView {
       case "chain_spawned":
       case "magic_depth_exhausted":
       case "debug_info":
+      case "worker_health_timeout":
         break;
       case "stream_chunk": {
         const sw = this._workers.find((w) => w.id === event.instance_id);

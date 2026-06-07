@@ -12,6 +12,8 @@ import {
   WorktreeLockedError,
   type ChainDef,
   type ChainId,
+  type LegacyChainDef,
+  type QualityGate,
   type CompletionCommits,
   type EvalDecision,
   type IClaudeRunner,
@@ -567,7 +569,8 @@ export class ChainRouter {
       await this.handleNewFormatTasks(chainDef, taskList, msg, originalRequirement);
     } else {
       // Legacy format: validate magic_mode / explore presence, then dispatch.
-      const hasExplore = chainDef.tasks.explore != null;
+      const legacyDef = chainDef as LegacyChainDef;
+      const hasExplore = legacyDef.tasks.explore != null;
       if (magicMode && !hasExplore) {
         this.opts.logger.error(
           "ChainDef missing `explore` task under --magic; requirement dropped",
@@ -602,7 +605,7 @@ export class ChainRouter {
         }
         return;
       }
-      await this.handleLegacyFormatTasks(chainDef, linkOrder, msg, originalRequirement);
+      await this.handleLegacyFormatTasks(legacyDef, linkOrder, msg, originalRequirement);
     }
   }
 
@@ -618,6 +621,7 @@ export class ChainRouter {
       depends_on?: string[];
       priority?: number;
       criteria?: string;
+      quality_gate?: QualityGate | null;
     }>,
     msg: Message,
     originalRequirement?: string,

@@ -68,6 +68,8 @@ function eventToString(event: LeaderEvent): string {
         return "";
       }
       return `${event.instance_id.slice(0, 8)} [${event.phase}/${event.action}] ${event.detail}`;
+    default:
+      return "";
   }
 }
 
