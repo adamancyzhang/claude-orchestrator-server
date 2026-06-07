@@ -2,7 +2,7 @@
 
 ## Status
 - **Overall:** in_progress
-- **Progress:** 3/8 tasks completed
+- **Progress:** 4/10 tasks completed
 - **Last Updated:** 2026-06-07 14:19
 
 ## 目标
@@ -17,9 +17,10 @@
 - [ ] Task 3: 验证 Leader 动态 ChainDef 生成 (iteration-8 遗留)
 - [ ] Task 4: 验证 Worker 自动领取任务 (iteration-8 遗留) — FAIL: decompose 输出 markdown 非 JSON
 - [x] Task 5: 验证质量门自动触发 (iteration-8 遗留) — PASS（单元测试通过，E2E 被 decompose bug 阻塞）
-- [ ] Task 6: 验证追溯链记录 (iteration-8 遗留) — NEEDS_WORK: 需要代码分析而非跑测试
+- [x] Task 6: 验证追溯链记录 (iteration-8 遗留) — PASS with gaps（成功路径完整，失败/断连缺失 audit 记录）
 - [x] Task 7: 执行复盘流程改进 (HIGH/MEDIUM) — commit: 1ff6135
 - [ ] Task 8: 修复 decompose 输出 markdown 而非 JSON (新发现 CRITICAL)
+- [ ] Task 9: 修复 ChainAudit 缺失记录（claim/failure/disconnect）
 
 ## 依赖关系
 
