@@ -27,11 +27,13 @@
   "peerDependencies": {
     "@co/contracts": "workspace:*",
     "@co/runtime": "workspace:*",
-    "@co/coordination": "workspace:*"
+    "@co/coordination": "workspace:*",
+    "@co/leader": "workspace:*"
   },
   "devDependencies": {
     "@co/contracts": "workspace:*",
     "@co/runtime": "workspace:*",
-    "@co/coordination": "workspace:*"
+    "@co/coordination": "workspace:*",
+    "@co/leader": "workspace:*"
   }
 }

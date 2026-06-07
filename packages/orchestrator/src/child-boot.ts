@@ -27,6 +27,7 @@ import {
   registerChildBoot,
   type ChildConfig,
 } from "@co/worker";
+import { ChainAudit } from "@co/leader";
 import { startParentAliveCheck } from "./child-supervisor.js";
 
 function resolveProjectRoot(worktreePath: string): string {
@@ -160,6 +161,11 @@ async function boot(config: ChildConfig): Promise<void> {
     logger.child("hooks"),
   );
 
+  const chainAudit = new ChainAudit({
+    cache_paths: cachePathOpts,
+    logger: logger.child("chain-audit"),
+  });
+
   const watcher = new WorkerWatcher({
     instance_id: instance.id,
     leader_id: asInstanceId(config.leader_instance_id),
@@ -182,6 +188,7 @@ async function boot(config: ChildConfig): Promise<void> {
     git_remote: config.git_remote,
     magic_mode: config.magic_mode,
     activity_reporter: activityReporter,
+    chain_audit: chainAudit,
   });
 
   await watcher.start();

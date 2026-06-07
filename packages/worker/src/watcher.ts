@@ -20,6 +20,7 @@ import {
   type UpstreamCommits,
   TemplateNotFoundError,
 } from "@co/contracts";
+import type { ChainAudit } from "@co/leader";
 import { ClaudeRunner } from "@co/runtime";
 import type { SelfEvaluator } from "./evaluator.js";
 import { chainLinksFor } from "./evaluator.js";
@@ -94,6 +95,11 @@ export interface WorkerWatcherOptions {
    * in their message will be validated after generation completes.
    */
   quality_gate_executor?: QualityGateExecutor;
+  /**
+   * Optional chain audit instance for recording task_claimed and task_failed events.
+   * When provided, the watcher will record audit events for task lifecycle.
+   */
+  chain_audit?: ChainAudit;
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000; // 10 seconds
@@ -266,6 +272,21 @@ export class WorkerWatcher {
             CO_CHAIN_ID: (msg.chain_id as ChainId) ?? "",
           },
         });
+        // Record task_claimed event in chain audit if available
+        if (this.opts.chain_audit && msg.chain_id) {
+          await this.opts.chain_audit.record(msg.chain_id as ChainId, {
+            event: "task_claimed",
+            link: link as TaskLink,
+            worker_id: this.opts.instance_id,
+            worker_name: this.opts.worker_name,
+            task_id: realTaskId,
+          }).catch((err) => {
+            this.opts.logger.warn("chain_audit record task_claimed failed", {
+              error: String(err),
+              task_id: realTaskId,
+            });
+          });
+        }
       }
     }
 
@@ -554,6 +575,22 @@ export class WorkerWatcher {
       if (realTaskId) {
         try {
           await this.opts.task_queue.fail(realTaskId, failure.detail);
+          // Record task_failed event in chain audit if available
+          if (this.opts.chain_audit && msg.chain_id) {
+            await this.opts.chain_audit.record(msg.chain_id as ChainId, {
+              event: "task_failed",
+              link: link as TaskLink,
+              worker_id: this.opts.instance_id,
+              worker_name: this.opts.worker_name,
+              task_id: realTaskId,
+              payload: { reason: failure.detail },
+            }).catch((err) => {
+              this.opts.logger.warn("chain_audit record task_failed failed", {
+                error: String(err),
+                task_id: realTaskId,
+              });
+            });
+          }
         } catch (err) {
           this.opts.logger.warn("task fail() marking errored", {
             task_id: realTaskId,
@@ -633,6 +670,22 @@ export class WorkerWatcher {
               realTaskId,
               `quality_gate_${gateResult.gate_type}_failed`,
             );
+            // Record task_failed event in chain audit if available
+            if (this.opts.chain_audit && msg.chain_id) {
+              await this.opts.chain_audit.record(msg.chain_id as ChainId, {
+                event: "task_failed",
+                link: link as TaskLink,
+                worker_id: this.opts.instance_id,
+                worker_name: this.opts.worker_name,
+                task_id: realTaskId,
+                payload: { reason: `quality_gate_${gateResult.gate_type}_failed` },
+              }).catch((err) => {
+                this.opts.logger.warn("chain_audit record task_failed failed", {
+                  error: String(err),
+                  task_id: realTaskId,
+                });
+              });
+            }
           } catch (err) {
             this.opts.logger.warn("task fail() for quality gate", {
               task_id: realTaskId,

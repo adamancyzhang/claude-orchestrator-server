@@ -175,6 +175,9 @@ importers:
       '@co/coordination':
         specifier: workspace:*
         version: link:../coordination
+      '@co/leader':
+        specifier: workspace:*
+        version: link:../leader
       '@co/runtime':
         specifier: workspace:*
         version: link:../runtime

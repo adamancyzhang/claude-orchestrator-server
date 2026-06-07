@@ -21,6 +21,7 @@ import {
   WorkerDocsCommitter,
   WorkerWatcher,
 } from "@co/worker";
+import { ChainAudit } from "@co/leader";
 import type {
   IChildSupervisor,
   ChildSupervisorOptions,
@@ -203,6 +204,11 @@ export class InProcessSupervisor implements IChildSupervisor {
       logger.child("hooks"),
     );
 
+    const chainAudit = new ChainAudit({
+      cache_paths: this.opts.cache_paths,
+      logger: logger.child("chain-audit"),
+    });
+
     const watcher = new WorkerWatcher({
       instance_id: instance.id,
       leader_id: this.opts.leader_instance_id,
@@ -225,6 +231,7 @@ export class InProcessSupervisor implements IChildSupervisor {
       git_remote: this.gitRemote,
       magic_mode: this.magicMode,
       activity_reporter: activityReporter,
+      chain_audit: chainAudit,
     });
     return { watcher, activity_reporter: activityReporter };
   }
