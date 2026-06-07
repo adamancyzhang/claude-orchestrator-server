@@ -132,6 +132,16 @@
 - **测试结果:** 136/136 通过（contracts 包）
 - **验证:** ✅ 通过
 
+### QualityGate 集成到 Worker 流程
+- **Task:** #21
+- **Commit:** 013373b
+- **变更文件:**
+  - `packages/worker/src/watcher.ts` — 导入 QualityGateExecutor，任务执行后检查 quality_gate，失败时发送 needs_revision 报告
+  - `packages/contracts/src/schemas/message.ts` — MessageSchema 添加 quality_gate 字段
+  - `packages/leader/src/chain-router.ts` — 任务分派消息中传递 quality_gate
+- **测试结果:** 97/97 worker, 136/136 contracts, 161/161 leader
+- **验证:** ✅ 通过
+
 ### Dashboard Documentation
 - **Task:** #15
 - **Commit:** 25cce55
