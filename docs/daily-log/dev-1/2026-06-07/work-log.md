@@ -72,3 +72,26 @@
   - `packages/orchestrator/tests/run-orchestrator.test.ts` — 接口测试
 - **测试结果:** 39/39 通过
 - **验证:** ✅ 已签章
+
+### Fix failing tests in leader package
+- **Task:** #1
+- **Commit:** a1ae318
+- **变更文件:**
+  - `packages/leader/src/load-balancer.ts` — 移除 pickBestWorker 中候选数不足3时的随机性，确保确定性选择最低负载 worker
+  - `packages/leader/src/stream-tailer.ts` — 文件缩小时在返回前重置 position 到 0，使新内容从头读取
+  - `packages/leader/tests/stream-tailer.test.ts` — 将 shrink 测试中的 "truncated" 改为 "short"，因为 "truncated\n"（10字节）实际大于 "original\n"（9字节）
+- **测试结果:** 161/161 通过（leader 包）
+- **验证:** ✅ 通过
+
+### Alerting System
+- **Task:** (alerting system)
+- **Commit:** 2ee7a1b
+- **变更文件:**
+  - `packages/infra/src/alerting/alert-rule.ts` — AlertRuleConfig 接口、比较运算符、运行时状态管理
+  - `packages/infra/src/alerting/alert-manager.ts` — AlertManager 状态机（ok → pending → firing → resolved）
+  - `packages/infra/src/alerting/notifier.ts` — Notifier 接口、LogNotifier、WebhookNotifier
+  - `packages/infra/src/alerting/alert-history.ts` — AlertHistory 内存环形缓冲区
+  - `packages/infra/src/alerting/index.ts` — 模块导出
+  - `packages/infra/tests/alerting.test.ts` — 26 个单元测试
+- **测试结果:** 311/311 通过（infra 包）
+- **验证:** ✅ 通过
