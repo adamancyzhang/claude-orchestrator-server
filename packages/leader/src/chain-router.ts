@@ -664,7 +664,7 @@ export class ChainRouter {
         description: t.description ?? "",
         criteria: t.criteria ?? "",
         priority: t.priority ?? 1,
-        link: t.task_id as TaskLink,
+        link: null, // New format uses task_id for identification, not TaskLink
         chain_id: chainDef.chain_id,
         created_by: this.opts.leader_id,
         created_by_name: this.opts.leader_name,
@@ -689,12 +689,12 @@ export class ChainRouter {
         if (this.opts.chain_audit) {
           await this.opts.chain_audit.setLinkTask(
             chainDef.chain_id,
-            firstTask.task_id as TaskLink,
+            "execute" as TaskLink, // New format uses task_id, but chain_audit expects TaskLink
             firstTaskId,
           );
           await this.opts.chain_audit.record(chainDef.chain_id, {
             event: "task_dispatch",
-            link: firstTask.task_id as TaskLink,
+            link: "execute" as TaskLink,
             worker_id: worker.id,
             worker_name: worker.name,
             task_id: firstTaskId,
@@ -710,7 +710,7 @@ export class ChainRouter {
           from_role: "leader",
           to_instance: worker.id,
           content: firstTask.title,
-          link: firstTask.task_id as TaskLink,
+          link: null,
           chain_id: chainDef.chain_id,
           task_id: firstTaskId,
           task_title: firstTask.title,
@@ -723,7 +723,7 @@ export class ChainRouter {
         });
         await this.rememberDispatch(
           chainDef.chain_id,
-          firstTask.task_id as TaskLink,
+          "execute" as TaskLink,
           worker.id,
         );
       } else {
