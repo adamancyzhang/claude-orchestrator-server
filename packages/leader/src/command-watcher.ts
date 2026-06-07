@@ -74,7 +74,13 @@ export class CommandWatcher {
     this.processing = true;
 
     try {
-      const fd = readFileSync(this.filePath, "utf-8");
+      let fd: string;
+      try {
+        fd = readFileSync(this.filePath, "utf-8");
+      } catch {
+        // File does not exist yet; nothing to process.
+        return;
+      }
       const bytes = Buffer.byteLength(fd, "utf-8");
 
       if (bytes <= this.byteOffset) {
