@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadConfig, output } from "@co/infra";
 import { PROTOCOL_VERSION } from "@co/contracts";
-import { runOrchestrator } from "@co/orchestrator";
+import { runOrchestrator, cleanupOrchestrator } from "@co/orchestrator";
 import { readState, getStateDir, type StateData } from "./state-utils.js";
 import { jsonOutput, jsonError } from "./json-output.js";
 import { createProgress } from "./progress.js";
@@ -61,7 +61,30 @@ For more information, visit: https://github.com/adamancyzhang/claude-orchestrato
   .option("-z, --zookeeper <hosts>", "ZooKeeper connection string (env: ZK_HOSTS). Use 'in-memory' for local testing without ZooKeeper.")
   .option("-d, --debug", "Enable debug mode with verbose logging output")
   .option("--state-dir <dir>", "State directory path (default: .claude-orchestrator/state). Stores orchestrator state, commands, and task history.")
-  .option("--json", "Output in JSON format for machine-readable responses. All commands support this flag.");
+  .option("--json", "Output in JSON format for machine-readable responses. All commands support this flag.")
+  .option("--cleanup", "Remove temporary orchestrator files for the current project.")
+  .option("--all", "Remove all orchestrator temporary files (use with --cleanup).")
+  .action(async function (this: Command) {
+    const opts = this.opts();
+    if (opts.cleanup) {
+      const jsonMode = Boolean(opts.json);
+      try {
+        await cleanupOrchestrator({
+          all: Boolean(opts.all),
+          logger: {
+            info: console.log,
+            warn: console.warn,
+            error: console.error,
+            debug: () => {},
+            child: () => ({ info: console.log, warn: console.warn, error: console.error, debug: () => {}, child: () => ({}) }),
+          },
+        });
+        outputResult({ message: "Cleanup complete" }, jsonMode);
+      } catch (err) {
+        outputError(jsonMode, "CLEANUP_FAILED", err instanceof Error ? err.message : String(err));
+      }
+    }
+  });
 
 program
   .command("run")
@@ -114,6 +137,10 @@ Examples:
     "--no-backup",
     "Skip backing up existing ~/.claude/CLAUDE.md before init. Use when you want to overwrite without saving the previous version.",
   )
+  .option(
+    "--dry-run",
+    "Show planned actions without executing. Displays workers, skills, and files that would be modified.",
+  )
   .action(async function (this: Command) {
     const opts = this.opts() as {
       worker: number;
@@ -124,6 +151,7 @@ Examples:
       headless?: boolean;
       progress?: boolean;
       noBackup?: boolean;
+      dryRun?: boolean;
     };
     const globalOpts = this.optsWithGlobals();
     const debug = Boolean(globalOpts.debug);
@@ -148,6 +176,7 @@ Examples:
         headless: Boolean(opts.headless),
         state_dir: stateDir,
         no_backup: Boolean(opts.noBackup),
+        dry_run: Boolean(opts.dryRun),
       });
       progress.stop("Orchestration completed");
       if (jsonMode) {
@@ -737,7 +766,7 @@ _${commandName.replace(/-/g, "_")}_completions() {
   commands="run config send status workers tasks events chains messages wait completion"
 
   if [[ \${cur} == -* ]] ; then
-    COMPREPLY=( $(compgen -W "--worker --magic --magic-max-chains --yes --enabled-zookeeper --headless --no-progress --no-backup --json --zookeeper --debug --state-dir --help --version" -- \${cur}) )
+    COMPREPLY=( $(compgen -W "--worker --magic --magic-max-chains --yes --enabled-zookeeper --headless --no-progress --no-backup --dry-run --json --zookeeper --debug --state-dir --help --version" -- \${cur}) )
     return 0
   fi
 
@@ -793,6 +822,7 @@ _${commandName.replace(/-/g, "_")}_completions() {
     '--headless[Run without TUI]' \\
     '--no-progress[Disable progress indicator]' \\
     '--no-backup[Skip backing up existing CLAUDE.md]' \\
+    '--dry-run[Show planned actions without executing]' \\
     '--json[Output in JSON format]' \\
     '-z[ZooKeeper connection string]:hosts' \\
     '--zookeeper[ZooKeeper connection string]:hosts' \\
@@ -881,6 +911,7 @@ complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l headless -d 'Run without TUI'
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l no-progress -d 'Disable progress indicator'
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l no-backup -d 'Skip backing up existing CLAUDE.md'
+complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:run -l dry-run -d 'Show planned actions without executing'
 
 # Events options
 complete -c ${commandName} -n __${commandName.replace(/-/g, "_")}_using_command\\:events -l tail -d 'Number of recent events to show'

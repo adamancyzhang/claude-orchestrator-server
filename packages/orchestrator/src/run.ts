@@ -59,12 +59,13 @@ import { InProcessSupervisor } from "./in-process-supervisor.js";
 import { GracefulShutdown } from "./graceful-shutdown.js";
 import {
   InitChecker,
+  CHAIN_SKILLS,
   createGlobalConfigStep,
   createSkillsStep,
   createTeamClaudeMdStep,
   createUserClaudeMdStep,
 } from "./init-checker.js";
-import { initializeWorktrees } from "./worktree-initializer.js";
+import { assignRoles, initializeWorktrees } from "./worktree-initializer.js";
 import { ensureCoRoot } from "./co-root-initializer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -129,6 +130,8 @@ export interface RunInput {
   state_dir?: string;
   // When true, skip backing up existing ~/.claude/CLAUDE.md before init.
   no_backup?: boolean;
+  // When true, show planned actions without executing anything.
+  dry_run?: boolean;
 }
 
 export interface OrchestratorPaths {
@@ -196,6 +199,112 @@ export function defaultPaths(): OrchestratorPaths {
   };
 }
 
+async function runDryRun(
+  input: RunInput,
+  paths: OrchestratorPaths,
+  projectRoot: string,
+  logger: ILogger,
+): Promise<void> {
+  // Load config so we can compute resolved values
+  let resolved;
+  try {
+    resolved = loadConfig({
+      cli_zookeeper: input.zk_hosts,
+      cli_debug: input.debug,
+    });
+  } catch (err) {
+    const cfgErr: OrchestratorError = {
+      code: "E003",
+      message: `${ERROR_CODES.E003.message}: ${String(err)}`,
+      fix: ERROR_CODES.E003.fix,
+    };
+    throw new Error(formatError(cfgErr));
+  }
+
+  const magicMode = input.magic === true;
+
+  // 1. Workers
+  const roles = assignRoles(input.worker_count, magicMode);
+  const roleCounts = new Map<string, number>();
+  for (const r of roles) {
+    roleCounts.set(r, (roleCounts.get(r) ?? 0) + 1);
+  }
+  const roleSummary = Array.from(roleCounts.entries())
+    .map(([role, count]) => `${count} ${role}${count > 1 ? "s" : ""}`)
+    .join(", ");
+  console.log(`[DRY RUN] Would create ${input.worker_count} workers: ${roleSummary}`);
+
+  // 2. Init steps — call check() to determine what would execute
+  const steps = [
+    createGlobalConfigStep(logger),
+    createUserClaudeMdStep(paths.template_dir, logger, input.no_backup),
+    createTeamClaudeMdStep(paths.template_dir, projectRoot, logger),
+    createSkillsStep(paths.skills_dir, projectRoot, logger),
+  ];
+
+  // Skills to install
+  if (fs.existsSync(paths.skills_dir)) {
+    const available = CHAIN_SKILLS.filter(
+      (s) => fs.existsSync(path.join(paths.skills_dir, s, "SKILL.md")),
+    );
+    if (available.length > 0) {
+      console.log(`[DRY RUN] Would install ${available.length} skills to .claude/skills/`);
+    }
+  }
+
+  // 3. Files that would be overwritten
+  const overwriteFiles: string[] = [];
+  const backupFiles: string[] = [];
+  for (const step of steps) {
+    try {
+      const details = await step.check();
+      if (details.needs_confirm) {
+        // Extract destination path from step id
+        if (step.id === "global_config") {
+          const dest = path.join(os.homedir(), ".claude-orchestrator", "config.json");
+          overwriteFiles.push(dest);
+        } else if (step.id === "user_claude_md") {
+          const dest = path.join(os.homedir(), ".claude", "CLAUDE.md");
+          overwriteFiles.push(dest);
+          if (!input.no_backup) backupFiles.push(`${dest}.bak`);
+        } else if (step.id === "team_claude_md") {
+          overwriteFiles.push(path.join(projectRoot, "CLAUDE.md"));
+        } else if (step.id === "skills") {
+          // Skills are listed separately above
+        }
+      }
+    } catch {
+      // If check fails, we can't determine — skip in dry-run
+    }
+  }
+
+  // .gitignore
+  const gitignorePath = path.join(projectRoot, ".gitignore");
+  const entries = [".claude-orchestrator/", ".claude/"];
+  let needsGitignore = false;
+  if (fs.existsSync(gitignorePath)) {
+    const content = fs.readFileSync(gitignorePath, "utf-8");
+    const lines = content.split("\n").map((l) => l.trim());
+    needsGitignore = entries.some(
+      (e) => !lines.some((l) => l === e || l === e.replace(/\/$/, "")),
+    );
+  } else {
+    needsGitignore = true;
+  }
+  if (needsGitignore) {
+    overwriteFiles.push(gitignorePath);
+  }
+
+  if (overwriteFiles.length > 0) {
+    const backupNote = backupFiles.length > 0
+      ? ` (backups: ${backupFiles.map((f) => path.basename(f)).join(", ")})`
+      : "";
+    console.log(`[DRY RUN] Would overwrite: ${overwriteFiles.map((f) => path.relative(projectRoot, f)).join(", ")}${backupNote}`);
+  }
+
+  console.log("[DRY RUN] No changes made.");
+}
+
 export async function runOrchestrator(
   input: RunInput,
   paths: OrchestratorPaths = defaultPaths(),
@@ -208,6 +317,12 @@ export async function runOrchestrator(
 
   // Phase 1: env / init
   const projectRoot = process.cwd();
+
+  // --- Dry-run mode: show planned actions and exit early ---
+  if (input.dry_run) {
+    await runDryRun(input, paths, projectRoot, logger);
+    return;
+  }
 
   // Ensure a git repository with at least one commit exists before
   // anything else (git worktree add requires a valid repo + HEAD).
